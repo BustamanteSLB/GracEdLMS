@@ -6,7 +6,7 @@ import { StatusBar } from 'expo-status-bar'
 const Profile = () => {
   return (
     <SafeAreaView className="flex-1 items-center justify-center bg-white">
-      <Text className="text-3xl font-bold">Profile</Text>
+      <Text className="text-3xl font-inter_bold">Profile</Text>
       <StatusBar style="auto"/>
     </SafeAreaView>
   )

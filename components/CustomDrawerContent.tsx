@@ -30,7 +30,7 @@ const CustomDrawerContent = (props:any) => {
           icon={() => (
             <Image
               source={require('../assets/icons/logout.png')}
-              tintColor="dc2626"
+              tintColor="#dc2626"
             />
           )}
           label={()=>(

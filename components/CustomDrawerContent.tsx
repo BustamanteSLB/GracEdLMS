@@ -29,7 +29,7 @@ const CustomDrawerContent = (props:any) => {
         <DrawerItem
           icon={() => (
             <Image
-              source={require('../assets/icons/logout')}
+              source={require('../assets/icons/logout.png')}
               tintColor="dc2626"
             />
           )}

@@ -1,17 +1,19 @@
-import { Text, View } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { Platform } from 'react-native'
 import React from 'react'
-import { StatusBar } from 'expo-status-bar'
-import { Link} from 'expo-router'
+import SignInAndroid from '@/screens/signin.android'
+import SignInIOS from '@/screens/signin.ios'
+import SignInWeb from '@/screens/signin.web'
 
 const SignIn = () => {
-  return (
-    <SafeAreaView className="flex-1 items-center justify-center ios:bg-secondary-ios android:bg-secondary-android web:bg-secondary-web">
-      <Text className="text-3xl font-pbold">Sign In</Text>
-      <Link href="/(drawer)/dashboard" className="text-pink-600 font-inter_regular">Go to Dashboard</Link>
-      <StatusBar style="auto"/>
-    </SafeAreaView>
-  )
+  if (Platform.OS === 'ios'){
+    return <SignInIOS/>
+  }
+  if (Platform.OS === 'web'){
+    return <SignInWeb/>
+  }
+  else{
+    return <SignInAndroid/>
+  }
 }
 
 export default SignIn

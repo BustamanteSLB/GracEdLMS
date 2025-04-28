@@ -2,6 +2,7 @@ import { SplashScreen, Stack } from "expo-router";
 import { useFonts } from 'expo-font';
 import "./globals.css";
 import { useEffect } from "react";
+import { DarkModeProvider, useDarkMode } from '../contexts/DarkModeContext';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -33,6 +34,8 @@ export default function RootLayout() {
     'Poppins-Thin': require('../assets/fonts/Poppins-Thin.ttf'),
   });
 
+  const { isDarkMode } = useDarkMode();
+  
   useEffect(()=>{
     if (error){
       throw error;
@@ -47,10 +50,14 @@ export default function RootLayout() {
   }
 
   return (
-    <Stack>
-      <Stack.Screen name="index" options={{ headerShown: false }} />
-      <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-      <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
-    </Stack>
+    <DarkModeProvider>
+      <Stack>
+        <Stack.Screen name="index" options={{ headerShown: false }} />
+        <Stack.Screen name="(admins)" options={{ headerShown: false }} />
+        <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+        <Stack.Screen name="(students)" options={{ headerShown: false }} />
+        <Stack.Screen name="(teachers)" options={{ headerShown: false }} />
+      </Stack>
+    </DarkModeProvider>
   );
 }

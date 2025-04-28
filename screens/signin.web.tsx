@@ -1,41 +1,48 @@
-import { Image, ScrollView, Text, TextInput, useColorScheme, View } from 'react-native'
+import { ScrollView, Text, TextInput, useColorScheme, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import React from 'react'
 import { StatusBar } from 'expo-status-bar'
-import { Link, useRouter} from 'expo-router'
+import { Image } from "expo-image";
+import { cssInterop } from "nativewind";
+import { useRouter } from 'expo-router'
 import CustomButton from '@/components/CustomButton'
+import { useDarkMode } from '../contexts/DarkModeContext';
 
 const SignInWeb = () => {
   const router = useRouter();
   const colorScheme = useColorScheme();
+  const { isDarkMode } = useDarkMode();
 
   const handleLogin = () => {
     console.log('Logging in...')
-    router.replace('/(drawer)/dashboard');
+    router.replace('/(students)/dashboard');
   }
 
-  const isDarkMode = colorScheme === 'dark';
+  cssInterop(Image, { className: "style" });
 
   return (
     <SafeAreaView className="flex-1 h-full bg-primary-web">
       <ScrollView contentContainerStyle={{ flexGrow:1, alignItems: 'center', justifyContent:'center', padding:16 }}>
-        <View className="w-full max-w-xl bg-white rounded-xl shadow-lg p-4">
+        <View className={`w-full max-w-xl rounded-xl p-4 ${isDarkMode ? 'bg-[#121212] shadow-none' : 'bg-white shadow-lg'}`}>
           <Image
             source={require('../assets/images/GCCS-logo.png')}
             style={{ alignSelf:'center', height:250, width:250 }}
-            resizeMode="contain"
+            contentFit="contain"
+            transition={200}
           />
-          <Text className="font-inter_black mt-4 text-center text-2xl text-black">Welcome to GracEdLMS!</Text>
-          <Text className="font-inter_bold mt-2 text-center">Please sign in to continue.</Text>
+          <Text className={`font-inter_black mt-4 text-center text-3xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'} `}>Welcome to GracEdLMS!</Text>
+          <Text className={`font-inter_bold mt-2 text-center ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>Please sign in to continue.</Text>
           <TextInput
-            className="w-full p-4 mt-4 mb-4 border border-gray-300 rounded-xl font-inter_regular"
-            placeholder="Enter email here"     
+            className={`w-full p-4 mt-4 mb-4 border rounded-xl font-inter_regular ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E] text-white' : 'border-gray-300'}`}
+            placeholder="Enter email here"
+            placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}     
             keyboardType="email-address"
             autoCapitalize="none"
           />
           <TextInput
-            className="w-full p-4 mb-4 border border-gray-300 rounded-xl font-inter_regular"
+            className={`w-full p-4 mb-4 border rounded-xl font-inter_regular ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E] text-white' : 'border-gray-300'}`}
             placeholder="Enter password here"
+            placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}  
             secureTextEntry
           />
           <CustomButton
@@ -47,7 +54,7 @@ const SignInWeb = () => {
           />
         </View>
       </ScrollView>
-      <StatusBar style={isDarkMode ? 'light' : 'dark'} backgroundColor={isDarkMode ? 'black' : 'white'} />
+      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'dark' : 'light'} />
     </SafeAreaView>
   )
 }

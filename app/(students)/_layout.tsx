@@ -3,30 +3,34 @@ import { Drawer } from 'expo-router/drawer';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Image, Platform } from 'react-native';
 import CustomDrawerContent from '@/components/CustomDrawerContent';
+import { useDarkMode } from '../../contexts/DarkModeContext';
 
 export default function DrawerLayout() {
+
+  const { isDarkMode } = useDarkMode();
+
   return (
     <GestureHandlerRootView className='flex-1'>
       <Drawer 
         drawerContent={(props) => <CustomDrawerContent {...props} />}
         screenOptions={{
-          drawerActiveTintColor:'black',
+          drawerActiveTintColor: 'black',
           drawerActiveBackgroundColor: Platform.select({
             android: '#4ADE80',
             ios: '#93C5FD',
             web: '#A78BFA'
           }),
           drawerHideStatusBarOnOpen: false,
-          drawerInactiveTintColor:'black',
+          drawerInactiveTintColor: isDarkMode ? '#E0E0E0' : 'black',
         }}
       >
         <Drawer.Screen
           name="dashboard"
           options={{
-            drawerIcon:()=>(
+            drawerIcon:({focused})=>(
               <Image
                 source={require('../../assets/icons/dashboard.png')}
-                tintColor='black'
+                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
               />
             ),
             drawerLabel: "Dashboard", 
@@ -55,10 +59,10 @@ export default function DrawerLayout() {
         <Drawer.Screen
           name="institution"
           options={{
-            drawerIcon:()=>(
+            drawerIcon:({focused})=>(
               <Image
                 source={require('../../assets/icons/institute.png')}
-                tintColor='black'
+                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
               />
             ),
             drawerLabel: "Institution",
@@ -87,10 +91,10 @@ export default function DrawerLayout() {
         <Drawer.Screen
           name="profile"
           options={{
-            drawerIcon:()=>(
+            drawerIcon:({focused})=>(
               <Image
                 source={require('../../assets/icons/account.png')}
-                tintColor='black'
+                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
               />
             ),
             drawerLabel: "Profile",
@@ -119,10 +123,10 @@ export default function DrawerLayout() {
         <Drawer.Screen
           name="activity"
           options={{
-            drawerIcon:()=>(
+            drawerIcon:({focused})=>(
               <Image
                 source={require('../../assets/icons/activity.png')}
-                tintColor='black'
+                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
               />
             ),
             drawerLabel: "Activity",
@@ -151,10 +155,10 @@ export default function DrawerLayout() {
         <Drawer.Screen
           name="courses"
           options={{
-            drawerIcon:()=>(
+            drawerIcon:({focused})=>(
               <Image
                 source={require('../../assets/icons/course_book.png')}
-                tintColor='black'
+                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
               />
             ),
             drawerLabel: "Courses",
@@ -183,10 +187,10 @@ export default function DrawerLayout() {
         <Drawer.Screen
           name="grades"
           options={{
-            drawerIcon:()=>(
+            drawerIcon:({focused})=>(
               <Image
                 source={require('../../assets/icons/grades.png')}
-                tintColor='black'
+                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
               />
             ),
             drawerLabel: "Grades",
@@ -215,10 +219,10 @@ export default function DrawerLayout() {
         <Drawer.Screen
           name="calendar-screen"
           options={{
-            drawerIcon:()=>(
+            drawerIcon:({focused})=>(
               <Image
                 source={require('../../assets/icons/calendar_month.png')}
-                tintColor='black'
+                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
               />
             ),
             drawerLabel: "Calendar",

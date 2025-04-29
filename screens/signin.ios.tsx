@@ -29,7 +29,7 @@ const SignInIOS = () => {
             contentFit="contain"
             transition={200}
           />
-          <Text className={`font-inter_black mt-4 text-center text-3xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'} `}>Welcome to GracEdLMS!</Text>
+          <Text className={`font-inter_black mt-4 text-center text-2xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'} `}>Welcome to GracEdLMS!</Text>
           <Text className={`font-inter_bold mt-2 text-center ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>Please sign in to continue.</Text>
           <TextInput
             className={`w-full p-4 mt-4 mb-4 border rounded-xl font-inter_regular ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E] text-white' : 'border-gray-300'}`}
@@ -37,12 +37,16 @@ const SignInIOS = () => {
             placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}     
             keyboardType="email-address"
             autoCapitalize="none"
+            selectionColor="#22C55E"
+            selectionHandleColor="#22C55E"
           />
           <TextInput
             className={`w-full p-4 mb-4 border rounded-xl font-inter_regular ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E] text-white' : 'border-gray-300'}`}
             placeholder="Enter password here"
             placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}  
             secureTextEntry
+            selectionColor="#22C55E"
+            selectionHandleColor="#22C55E"
           />
           <CustomButton
             containerStyles='bg-secondary-ios'
@@ -53,7 +57,7 @@ const SignInIOS = () => {
           />
         </View>
       </ScrollView>
-      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'dark' : 'light'} />
+      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'black' : 'white'}/>
     </SafeAreaView>
   )
 }

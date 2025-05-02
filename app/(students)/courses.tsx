@@ -1,15 +1,19 @@
-import { Text, View } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { Platform } from 'react-native'
 import React from 'react'
-import { StatusBar } from 'expo-status-bar'
+import CoursesAndroid from '@/screens/courses.android'
+import CoursesIOS from '@/screens/courses.ios'
+import CoursesWeb from '@/screens/courses.web'
 
 const Courses = () => {
-  return (
-    <SafeAreaView className="flex-1 items-center justify-center bg-white">
-      <Text className="text-3xl font-inter_bold">Courses</Text>
-      <StatusBar style="auto"/>
-    </SafeAreaView>
-  )
+  if (Platform.OS === 'ios'){
+    return <CoursesIOS/>
+  }
+  if (Platform.OS === 'web'){
+    return <CoursesWeb/>
+  }
+  else{
+    return <CoursesAndroid/>
+  }
 }
 
 export default Courses

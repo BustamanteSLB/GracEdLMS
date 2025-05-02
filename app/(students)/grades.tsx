@@ -1,15 +1,19 @@
-import { Text, View } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { Platform } from 'react-native'
 import React from 'react'
-import { StatusBar } from 'expo-status-bar'
+import GradesAndroid from '@/screens/grades.android'
+import GradesIOS from '@/screens/grades.ios'
+import GradesWeb from '@/screens/grades.web'
 
 const Grades = () => {
-  return (
-    <SafeAreaView className="flex-1 items-center justify-center bg-white">
-      <Text className="text-3xl font-inter_bold">Grades</Text>
-      <StatusBar style="auto"/>
-    </SafeAreaView>
-  )
+  if (Platform.OS === 'ios'){
+    return <GradesIOS/>
+  }
+  if (Platform.OS === 'web'){
+    return <GradesWeb/>
+  }
+  else{
+    return <GradesAndroid/>
+  }
 }
 
 export default Grades

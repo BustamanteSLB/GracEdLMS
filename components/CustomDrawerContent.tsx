@@ -1,4 +1,4 @@
-import { Platform, Switch, Text, View } from 'react-native'
+import { Alert, Platform, Switch, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import Divider from './Divider'
 import { DrawerContentScrollView, DrawerItem, DrawerItemList } from '@react-navigation/drawer'
@@ -18,10 +18,34 @@ const CustomDrawerContent = (props:any) => {
   
   const toggleSwitch = () => setIsEnabled(previousState => !previousState);
   
-  const handleLogout = () =>{
-    console.log('Logging out...')
-    router.replace('/(auth)/signin');
-  }
+  const handleLogout = () => {
+    if (Platform.OS === 'web') {
+      const confirmed = window.confirm('Are you sure you want to logout?');
+      if (confirmed) {
+        console.log('Logging out...');
+        router.replace('/(auth)/signin');
+      }
+    } else {
+      Alert.alert(
+        'Logout',
+        'Are you sure you want to logout?',
+        [
+          {
+            text: 'No',
+            style: 'cancel',
+          },
+          {
+            text: 'Yes',
+            onPress: () => {
+              console.log('Logging out...');
+              router.replace('/(auth)/signin');
+            },
+          },
+        ],
+        { cancelable: false }
+      );
+    }
+  };
 
   return (
     <SafeAreaView className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>

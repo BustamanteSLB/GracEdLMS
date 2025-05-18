@@ -1,8 +1,8 @@
 import { Platform } from 'react-native'
 import React from 'react'
-import ActivityAndroid from '@/screens/activity.android'
-import ActivityIOS from '@/screens/activity.ios'
-import ActivityWeb from '@/screens/activity.web'
+import ActivityAndroid from '@/screens/Teacher/activity.android'
+import ActivityIOS from '@/screens/Teacher/activity.ios'
+import ActivityWeb from '@/screens/Teacher/activity.web'
 
 const Activity = () => {
   if (Platform.OS === 'ios'){

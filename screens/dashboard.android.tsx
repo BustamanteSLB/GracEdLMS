@@ -8,6 +8,12 @@ import React from 'react'
 import { StatusBar } from 'expo-status-bar'
 import { useRouter } from 'expo-router';
 import { useDarkMode } from '../contexts/DarkModeContext';
+import ActivityIcon from '@/assets/icons/activity.svg';
+import CalendarIcon from '@/assets/icons/calendar_month.svg';
+import CoursesIcon from '@/assets/icons/course_book.svg'
+import GradesIcon from '@/assets/icons/grades.svg'
+import InstitutionIcon from '@/assets/icons/institution.svg'
+import ProfileIcon from '@/assets/icons/account.svg'
 
 cssInterop(FlashList, { className: "style" });
 cssInterop(Image, { className: "style" });
@@ -21,21 +27,39 @@ const DBAndroid: React.FC = () => {
   const data = [
     {
       description: 'Stay updated with recent interactions, announcements, and progress summaries in your learning journey.',
-      image: require('../assets/icons/activity.png'),
+      Icon: ActivityIcon,
       title: 'Activity',
       onPress: () => router.replace('/(students)/activity')
     },
     {
+      description: 'View and manage your academic calendar, including upcoming classes, deadlines, and events.',
+      Icon: CalendarIcon,
+      title: 'Calendar',
+      onPress: () => router.replace('/(students)/calendar-screen')
+    },
+    {
       description: 'Access your enrolled courses, explore new subjects, and track your learning progress in one place.',
-      image: require('../assets/icons/course_book.png'),
+      Icon: CoursesIcon,
       title: 'Courses',
       onPress: () => router.replace('/(students)/courses')
     },
     {
+      description: 'Check your grades, monitor academic performance, and review feedback from instructors.',
+      Icon: GradesIcon,
+      title: 'Grades',
+      onPress: () => router.replace('/(students)/grades')
+    },
+    {
       description: 'Browse institutions, discover new opportunities, and connect with the right place to grow your learning journey.',
-      image: require('../assets/icons/institute.png'),
-      title: 'Insitution',
+      Icon: InstitutionIcon,
+      title: 'Institution',
       onPress: () => router.replace('/(students)/institution')
+    },
+    {
+      description: 'Manage your profile, update personal information, and customize your learning preferences.',
+      Icon: ProfileIcon,
+      title: 'Profile',
+      onPress: () => router.replace('/(students)/profile')
     },
   ];
 
@@ -72,13 +96,7 @@ const DBAndroid: React.FC = () => {
             } 
             onPress={item.onPress}>
             <View>
-              <Image
-                source={item.image}
-                className="w-[50px] h-[50px]"
-                contentFit='contain'
-                transition={200}
-                tintColor={isDarkMode ? '#E0E0E0' : 'black'}
-              />
+              <item.Icon width={50} height={50} fill={`${isDarkMode ? '#E0E0E0' : 'black'}`} />
             </View>
             <View className="ml-[10px] mb-[10px] flex-shrink">
               <Text className={`text-[24px] font-inter_bold mb-[3px] ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>{item.title}</Text>

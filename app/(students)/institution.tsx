@@ -4,7 +4,7 @@ import InstitutionAndroid from '@/screens/institution.android'
 import InstitutionIOS from '@/screens/institution.ios'
 import InstitutionWeb from '@/screens/institution.web'
 
-const Insitution = () => {
+const Institution = () => {
   if (Platform.OS === 'ios'){
     return <InstitutionIOS/>
   }
@@ -16,4 +16,4 @@ const Insitution = () => {
   }
 }
 
-export default Insitution
+export default Institution

@@ -1,9 +1,17 @@
 import React from 'react';
 import { Drawer } from 'expo-router/drawer';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { Image, Platform } from 'react-native';
+import { Image, Platform, Pressable } from 'react-native';
 import CustomDrawerContent from '@/components/CustomDrawerContent';
 import { useDarkMode } from '../../contexts/DarkModeContext';
+import ActivityIcon from '@/assets/icons/activity.svg';
+import CalendarIcon from '@/assets/icons/calendar_month.svg';
+import CoursesIcon from '@/assets/icons/course_book.svg'
+import DashboardIcon from '@/assets/icons/dashboard.svg'
+import GradesIcon from '@/assets/icons/grades.svg'
+import InstitutionIcon from '@/assets/icons/institution.svg'
+import ProfileIcon from '@/assets/icons/account.svg'
+import DrawerIcon from '@/assets/icons/drawer_menu.svg'
 
 export default function DrawerLayout() {
 
@@ -13,7 +21,7 @@ export default function DrawerLayout() {
     <GestureHandlerRootView className='flex-1'>
       <Drawer 
         drawerContent={(props) => <CustomDrawerContent {...props} />}
-        screenOptions={{
+        screenOptions={({ navigation }) => ({
           drawerActiveTintColor: 'black',
           drawerActiveBackgroundColor: Platform.select({
             android: '#4ADE80',
@@ -22,15 +30,20 @@ export default function DrawerLayout() {
           }),
           drawerHideStatusBarOnOpen: false,
           drawerInactiveTintColor: isDarkMode ? '#E0E0E0' : 'black',
-        }}
+          headerLeft: () => (
+            <Pressable className="ml-2 mr-2" onPress={() => navigation.toggleDrawer()}>
+              <DrawerIcon width={24} height={24} fill="white"/>
+            </Pressable>
+          )
+        })}
       >
         <Drawer.Screen
           name="dashboard"
           options={{
             drawerIcon:({focused})=>(
-              <Image
-                source={require('../../assets/icons/dashboard.png')}
-                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
+              <DashboardIcon
+                width={24} height={24}
+                fill={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
               />
             ),
             drawerLabel: "Dashboard", 
@@ -60,9 +73,9 @@ export default function DrawerLayout() {
           name="institution"
           options={{
             drawerIcon:({focused})=>(
-              <Image
-                source={require('../../assets/icons/institute.png')}
-                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
+              <InstitutionIcon
+                width={24} height={24}
+                fill={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
               />
             ),
             drawerLabel: "Institution",
@@ -92,9 +105,9 @@ export default function DrawerLayout() {
           name="profile"
           options={{
             drawerIcon:({focused})=>(
-              <Image
-                source={require('../../assets/icons/account.png')}
-                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
+              <ProfileIcon
+                width={24} height={24}
+                fill={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
               />
             ),
             drawerLabel: "Profile",
@@ -124,9 +137,9 @@ export default function DrawerLayout() {
           name="activity"
           options={{
             drawerIcon:({focused})=>(
-              <Image
-                source={require('../../assets/icons/activity.png')}
-                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
+              <ActivityIcon
+                width={24} height={24}
+                fill={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
               />
             ),
             drawerLabel: "Activity",
@@ -156,9 +169,9 @@ export default function DrawerLayout() {
           name="courses"
           options={{
             drawerIcon:({focused})=>(
-              <Image
-                source={require('../../assets/icons/course_book.png')}
-                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
+              <CoursesIcon
+                width={24} height={24}
+                fill={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
               />
             ),
             drawerLabel: "Courses",
@@ -188,9 +201,9 @@ export default function DrawerLayout() {
           name="grades"
           options={{
             drawerIcon:({focused})=>(
-              <Image
-                source={require('../../assets/icons/grades.png')}
-                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
+              <GradesIcon
+                width={24} height={24}
+                fill={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
               />
             ),
             drawerLabel: "Grades",
@@ -220,9 +233,9 @@ export default function DrawerLayout() {
           name="calendar-screen"
           options={{
             drawerIcon:({focused})=>(
-              <Image
-                source={require('../../assets/icons/calendar_month.png')}
-                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
+              <CalendarIcon
+                width={24} height={24}
+                fill={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
               />
             ),
             drawerLabel: "Calendar",

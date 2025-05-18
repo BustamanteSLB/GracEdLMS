@@ -1,15 +1,19 @@
-import { Text, View } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { Platform } from 'react-native'
 import React from 'react'
-import { StatusBar } from 'expo-status-bar'
+import ManageTeachersAndroid from '@/screens/Admin/teacher-list.android'
+import ManageTeachersIOS from '@/screens/Admin/teacher-list.ios'
+import ManageTeachersWeb from '@/screens/Admin/teacher-list.web'
 
-const ManageTeachers = () => {
-  return (
-    <SafeAreaView className="flex-1 items-center justify-center bg-white">
-      <Text className="text-3xl font-inter_bold">Manage Teachers</Text>
-      <StatusBar style="auto"/>
-    </SafeAreaView>
-  )
+const ManageTeachers: React.FC = () => {
+  if (Platform.OS === 'ios'){
+    return <ManageTeachersIOS/>
+  }
+  if (Platform.OS === 'web'){
+    return <ManageTeachersWeb/>
+  }
+  else{
+    return <ManageTeachersAndroid/>
+  }
 }
 
 export default ManageTeachers

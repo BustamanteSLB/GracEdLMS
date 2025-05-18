@@ -1,8 +1,8 @@
 import { Platform } from 'react-native'
 import React from 'react'
-import DBAndroid from '@/screens/dashboard.android'
-import DBIOS from '@/screens/dashboard.ios'
-import DBWeb from '@/screens/dashboard.web'
+import DBAndroid from '@/screens/Admin/dashboard.android'
+import DBIOS from '@/screens/Admin/dashboard.ios'
+import DBWeb from '@/screens/Admin/dashboard.web'
 
 const Dashboard: React.FC = () => {
   if (Platform.OS === 'ios'){

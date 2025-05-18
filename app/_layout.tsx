@@ -3,7 +3,7 @@ import { useFonts } from 'expo-font';
 import "@/app/globals.css";
 import { useEffect } from "react";
 import { DarkModeProvider, useDarkMode } from '@/contexts/DarkModeContext';
-import { AuthProvider, useAuth } from '../contexts/AuthContext';
+import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 
 SplashScreen.preventAutoHideAsync();
 

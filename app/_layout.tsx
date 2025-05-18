@@ -1,10 +1,77 @@
-import { SplashScreen, Stack } from "expo-router";
+import { SplashScreen, Stack, useRouter, useSegments } from "expo-router";
 import { useFonts } from 'expo-font';
-import "./globals.css";
+import "@/app/globals.css";
 import { useEffect } from "react";
-import { DarkModeProvider, useDarkMode } from '../contexts/DarkModeContext';
+import { DarkModeProvider, useDarkMode } from '@/contexts/DarkModeContext';
+import { AuthProvider, useAuth } from '../contexts/AuthContext';
 
 SplashScreen.preventAutoHideAsync();
+
+function InitialLayout() {
+  const { isAuthenticated, user, isLoading } = useAuth();
+  const segments = useSegments();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!isLoading) {
+      const inAuthGroup = segments[0] === '(auth)';
+      // Define checks for being inside each role group
+      const inAdminGroup = segments[0] === '(admins)';
+      const inStudentGroup = segments[0] === '(students)';
+      const inTeacherGroup = segments[0] === '(teachers)';
+
+      if (isAuthenticated) {
+        // User IS authenticated
+        if (inAuthGroup) {
+          // If authenticated and currently on an auth page (like signin),
+          // redirect them to their correct dashboard based on their role.
+          if (user?.role === 'Admin' && !inAdminGroup) {
+             router.replace('/(admins)/dashboard');
+          } else if (user?.role === 'Student' && !inStudentGroup) {
+             router.replace('/(students)/dashboard');
+          } else if (user?.role === 'Teacher' && !inTeacherGroup) {
+             router.replace('/(teachers)/dashboard');
+          }
+          // If authenticated and already on the correct role dashboard group, do nothing.
+          // Example: Authenticated Admin user is already in the '(admins)' segment.
+        } else {
+            // User is authenticated and NOT on an auth page.
+            // Check if they are in the correct role group for their current path.
+            // If an Admin user is somehow in the '(students)' segment, redirect them.
+            if (user?.role === 'Admin' && !inAdminGroup && !inStudentGroup && !inTeacherGroup) {
+                // If authenticated admin is not in any role group (e.g., index or unknown path)
+                 router.replace('/(admins)/dashboard');
+            } else if (user?.role === 'Student' && !inStudentGroup && !inAdminGroup && !inTeacherGroup) {
+                 // If authenticated student is not in any role group
+                 router.replace('/(students)/dashboard');
+            } else if (user?.role === 'Teacher' && !inTeacherGroup && !inAdminGroup && !inStudentGroup) {
+                 // If authenticated teacher is not in any role group
+                 router.replace('/(teachers)/dashboard');
+            }
+            // If authenticated and in their correct role group already, do nothing.
+        }
+      } else {
+        // User is NOT authenticated
+        if (!inAuthGroup) {
+          // If NOT authenticated and trying to access any page outside the auth group,
+          // redirect them to the sign-in page.
+          router.replace('/(auth)/signin');
+        }
+        // If NOT authenticated and already on an auth page, do nothing (stay on the signin page).
+      }
+    }
+  }, [isAuthenticated, isLoading, user, segments, router]); // Keep router in dependencies
+
+  return (
+    <Stack>
+      <Stack.Screen name="index" options={{ headerShown: false }} />
+      <Stack.Screen name="(admins)" options={{ headerShown: false }} />
+      <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+      <Stack.Screen name="(students)" options={{ headerShown: false }} />
+      <Stack.Screen name="(teachers)" options={{ headerShown: false }} />
+    </Stack>
+  );
+}
 
 export default function RootLayout() {
   const [fontsLoaded, error] = useFonts({
@@ -50,14 +117,10 @@ export default function RootLayout() {
   }
 
   return (
-    <DarkModeProvider>
-      <Stack>
-        <Stack.Screen name="index" options={{ headerShown: false }} />
-        <Stack.Screen name="(admins)" options={{ headerShown: false }} />
-        <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-        <Stack.Screen name="(students)" options={{ headerShown: false }} />
-        <Stack.Screen name="(teachers)" options={{ headerShown: false }} />
-      </Stack>
-    </DarkModeProvider>
+    <AuthProvider>
+      <DarkModeProvider>
+        <InitialLayout />
+      </DarkModeProvider>
+    </AuthProvider>
   );
 }

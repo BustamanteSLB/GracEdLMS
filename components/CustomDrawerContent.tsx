@@ -6,24 +6,45 @@ import { Image } from "expo-image";
 import { cssInterop } from "nativewind";
 import { useRouter } from 'expo-router'
 import { useState } from 'react'
+import { useAuth } from '../contexts/AuthContext';
 import { useDarkMode } from '../contexts/DarkModeContext';
+import DarkModeIcon from '@/assets/icons/dark_mode.svg'
+import LogoutIcon from '@/assets/icons/logout.svg'
 
 const CustomDrawerContent = (props:any) => {
 
   cssInterop(Image, { className: "style" });
+  cssInterop(DarkModeIcon, { className: "style"});
 
   const router = useRouter();
   const { isDarkMode, toggleDarkMode } = useDarkMode();
   const [isEnabled, setIsEnabled] = useState(false);
+  const { logout, isLoading } = useAuth(); // Also get isLoading to potentially disable logout during initial load
   
   const toggleSwitch = () => setIsEnabled(previousState => !previousState);
   
-  const handleLogout = () => {
+  const handleLogout = async () => { // Make handleLogout async
+    const performLogout = async () => {
+      console.log('Attempting to log out...');
+      try {
+        await logout(); // Call the logout function from AuthContext
+        console.log('Logout successful.');
+        // The AuthContext state change should automatically trigger navigation in _layout.tsx
+        // router.replace('/(auth)/signin'); // This line is now often redundant due to _layout.tsx
+      } catch (error) {
+        console.error('Logout failed:', error);
+        Alert.alert('Logout Failed', 'An error occurred during logout.');
+        // Even if API call fails, AuthContext clears local storage, so still attempt redirect
+        // if you kept the router.replace above. If relying solely on _layout,
+        // the state would remain authenticated if the logout() call itself failed.
+        // Given logout primarily clears client state with JWT, error here is less likely from backend
+      }
+    };
+
     if (Platform.OS === 'web') {
       const confirmed = window.confirm('Are you sure you want to logout?');
       if (confirmed) {
-        console.log('Logging out...');
-        router.replace('/(auth)/signin');
+        performLogout(); // Call the async function
       }
     } else {
       Alert.alert(
@@ -37,8 +58,7 @@ const CustomDrawerContent = (props:any) => {
           {
             text: 'Yes',
             onPress: () => {
-              console.log('Logging out...');
-              router.replace('/(auth)/signin');
+              performLogout(); // Call the async function
             },
           },
         ],
@@ -61,10 +81,10 @@ const CustomDrawerContent = (props:any) => {
         </View>
         <Divider />
         <View className="flex-row items-center ios:p-1 android:p-1 web:p-4">
-          <Image
-            className="ios:ml-3 android:ml-3 web:ml-0 w-[24px] h-[24px]"
-            source={require('../assets/icons/dark_mode.png')}
-            tintColor={`${isDarkMode ? '#E0E0E0' : 'black'}`}
+          <DarkModeIcon
+            className="ios:ml-3 android:ml-3 web:ml-0"
+            width={24} height={24}
+            fill={isDarkMode ? '#E0E0E0' : 'black'}
           />
           <Text className={`font-inter_semibold mr-auto ios:ml-4 android:ml-4 web:ml-3 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>Dark Mode</Text>
           <Switch
@@ -84,10 +104,9 @@ const CustomDrawerContent = (props:any) => {
         <DrawerItemList {...props}/>
         <DrawerItem
           icon={() => (
-            <Image
-              className="w-[24px] h-[24px]"
-              source={require('../assets/icons/logout.png')}
-              tintColor="#dc2626"
+            <LogoutIcon
+              width={24} height={24}
+              fill="#dc2626"
             />
           )}
           label={()=>(

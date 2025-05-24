@@ -28,10 +28,23 @@ const DBWeb: React.FC = () => {
       onPress: () => router.replace('/(admins)/admin-list')
     },
     {
+      description: 'Add admin information.',
+      Icon: ActivityIcon,
+      title: 'Add Admin',
+      onPress: () => router.replace('/(admins)/add-admin'),
+    },
+    {
       description: 'Add, delete, update, and store student information.',
       Icon: ActivityIcon,
       title: 'Manage Students',
-      onPress: () => router.replace('/(admins)/student-list')
+      onPress: () => router.replace('/(admins)/student-list'),
+      // submenu: [
+      // {
+      //   Icon: ActivityIcon,
+      //   title: 'Add Admin',
+      //   onPress: () => router.replace('/(admins)/add-admin'),
+      // },
+      // ]
     },
     {
       description: 'Add, delete, update, and store teacher information.',

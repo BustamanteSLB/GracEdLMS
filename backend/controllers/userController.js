@@ -152,50 +152,108 @@ exports.updateUser = asyncHandler(async (req, res, next) => {
   }
 
   // Admin can update most fields. Password changes should be handled carefully.
-  const { password, sex, gender, ...otherUpdateData } = req.body;
+  // Explicitly exclude password from this general update route
+  const { password, ...updateData } = req.body;
 
   if (password) {
-    return next(new ErrorResponse('Password updates for other users should be handled via a dedicated reset mechanism, not direct update.', 400));
-  }
-  const updateDataPayload = { ...otherUpdateData };
-  if (sex !== undefined) {
-      const validSexValues = ['Male', 'Female', 'Other'];
-      if (!validSexValues.includes(sex)) {
-          return next(new ErrorResponse(`Invalid value for sex. Allowed values are: ${validSexValues.join(', ')}.`, 400));
-      }
-      updateDataPayload.sex = sex;
-  }
-  if (gender !== undefined) {
-      updateDataPayload.gender = gender;
+    // If password is sent, reject it or redirect to dedicated password update route
+    return next(new ErrorResponse('Password updates for other users should be handled via a dedicated password update route.', 400));
   }
 
-  // Admin can change role, status, etc.
-  if (otherUpdateData.role) {
-      const validRoles = ['Admin', 'Teacher', 'Student'];
-      if (!validRoles.includes(otherUpdateData.role)) {
-          return next(new ErrorResponse(`Invalid role: ${updateData.role}`, 400));
-      }
-      // If role changes, Mongoose discriminator key 'kind' needs to be updated too.
-      // This is complex with findByIdAndUpdate. It's often better to fetch, modify 'kind' and role, then save.
-      // Or, delete and recreate the user if a role change is a major structural change.
-      // For simplicity here, we'll assume 'kind' is handled or the update is minor.
-      // A more robust solution would involve changing the __t (or kind) field.
+  // Allow email and username to be updated
+  const fieldsToUpdate = {
+      username: updateData.username,
+      firstName: updateData.firstName,
+      middleName: updateData.middleName,
+      lastName: updateData.lastName,
+      email: updateData.email, // <<< ALLOW EMAIL CHANGE HERE
+      phoneNumber: updateData.phoneNumber,
+      address: updateData.address,
+      bio: updateData.bio,
+      profilePicture: updateData.profilePicture,
+      sex: updateData.sex,
+      gender: updateData.gender,
+      role: updateData.role,   // <<< ALLOW ROLE CHANGE BY ADMIN
+      status: updateData.status // <<< ALLOW STATUS CHANGE BY ADMIN
+  };
+
+  // Validate enum for sex if provided
+  const validSexValues = ['Male', 'Female', 'Other'];
+  if (fieldsToUpdate.sex && !validSexValues.includes(fieldsToUpdate.sex)) {
+      return next(new ErrorResponse(`Invalid value for sex. Allowed values are: ${validSexValues.join(', ')}.`, 400));
   }
 
+  // Validate enum for role if provided
+  const validRoleValues = ['Admin', 'Teacher', 'Student'];
+  if (fieldsToUpdate.role && !validRoleValues.includes(fieldsToUpdate.role)) {
+      return next(new ErrorResponse(`Invalid value for role. Allowed values are: ${validRoleValues.join(', ')}.`, 400));
+  }
 
-  const user = await User.findByIdAndUpdate(req.params.id, updateData, {
-    new: true,
-    runValidators: true,
-  }).select('-password');
+  // Validate enum for status if provided
+  const validStatusValues = ['active', 'inactive', 'suspended', 'pending', 'archived'];
+  if (fieldsToUpdate.status && !validStatusValues.includes(fieldsToUpdate.status)) {
+      return next(new ErrorResponse(`Invalid value for status. Allowed values are: ${validStatusValues.join(', ')}.`, 400));
+  }
+
+  // Remove undefined fields so they don't overwrite existing data with null
+  Object.keys(fieldsToUpdate).forEach(key => fieldsToUpdate[key] === undefined && delete fieldsToUpdate[key]);
+
+  if (Object.keys(fieldsToUpdate).length === 0) {
+      return next(new ErrorResponse('No details provided for update', 400));
+  }
+
+  // Find and update the user.
+  // Mongoose will run schema validators on the fields being updated.
+  const user = await User.findByIdAndUpdate(req.params.id, fieldsToUpdate, {
+      new: true, // Return the modified document rather than the original
+      runValidators: true, // Run schema validators on this update
+  }).select('-password'); // Exclude password from response
 
   if (!user) {
-    return next(new ErrorResponse(`User not found with id of ${req.params.id}`, 404));
+      return next(new ErrorResponse('User not found for update', 404));
   }
 
   res.status(200).json({
-    success: true,
-    data: user,
+      success: true,
+      data: user,
   });
+});
+
+// @desc    Update user password (Admin only)
+// @route   PUT /api/v1/users/:id/password
+// @access  Private/Admin
+exports.updateUserPassword = asyncHandler(async (req, res, next) => {
+    const { newPassword } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+        return next(new ErrorResponse('Invalid user ID', 400));
+    }
+
+    if (!newPassword) {
+        return next(new ErrorResponse('Please provide a new password', 400));
+    }
+
+    // You might want to add password complexity/length validation here as well
+    // if it's not already handled by the User model's pre-save hook.
+    if (newPassword.length < 8) { // Example validation
+        return next(new ErrorResponse('New password must be at least 8 characters long.', 400));
+    }
+
+    // Find the user by ID and select the password field so it can be modified and hashed
+    const user = await User.findById(req.params.id).select('+password');
+
+    if (!user) {
+        return next(new ErrorResponse(`User not found with id of ${req.params.id}`, 404));
+    }
+
+    // Update password field. The pre-save hook in the User model will hash this.
+    user.password = newPassword;
+    await user.save(); // Save the user to trigger the pre-save hook for hashing
+
+    res.status(200).json({
+        success: true,
+        message: 'User password updated successfully',
+    });
 });
 
 // @desc    Delete a user by ID (soft delete by Admin)

@@ -11,6 +11,7 @@ import { User } from '@/app/types/index';
 import CustomButton from '@/components/CustomButton'
 import EditIcon from '@/assets/icons/edit.svg';
 import DeleteIcon from '@/assets/icons/delete.svg';
+import { router } from 'expo-router'
 
 const ManageAdminsAndroid = () => {
 
@@ -58,6 +59,14 @@ const ManageAdminsAndroid = () => {
   useEffect(() => {
     fetchAdmins();
   }, [fetchAdmins]); // Dependency on fetchAdmins memoized function
+
+  //Function for editing an admin
+  const handleEditAdmin = (adminId: string) => {
+    router.push({
+      pathname: "/(admins)/edit-admin", // Adjust this path based on your expo-router structure
+      params: { id: adminId }
+    });
+  }
 
   // Function for soft-deleting an admin
   const handleDeleteAdmin = (adminId: string) => {
@@ -169,7 +178,7 @@ const ManageAdminsAndroid = () => {
               <View className='ml-auto flex-row'>
                 <CustomButton
                   containerStyles='bg-secondary-android h-[50px] mr-2 p-2'
-                  handlePress={() => console.log('Edit button pressed')}
+                  handlePress={() => handleEditAdmin(item._id)}
                   iconVector={<EditIcon width={24} height={24}/>}
                   title='Edit'
                 />

@@ -9,6 +9,7 @@ import apiClient, { ApiResponse } from '@/app/services/apiClient';
 import { User } from '@/app/types/index';
 import EditIcon from '@/assets/icons/edit.svg';
 import DeleteIcon from '@/assets/icons/delete.svg';
+import { router } from 'expo-router'
 
 const ManageAdminsWeb = () => {
 
@@ -56,6 +57,14 @@ const ManageAdminsWeb = () => {
   useEffect(() => {
     fetchAdmins();
   }, [fetchAdmins]); // Dependency on fetchAdmins memoized function
+
+  //Function for editing an admin
+    const handleEditAdmin = (adminId: string) => {
+      router.push({
+        pathname: "/(admins)/edit-admin", // Adjust this path based on your expo-router structure
+        params: { id: adminId }
+      });
+    }
 
   // Function for soft-deleting an admin
   const handleDeleteAdmin = (adminId: string) => {
@@ -169,7 +178,7 @@ const ManageAdminsWeb = () => {
               <View className='ml-auto flex-row'>
                 <TouchableOpacity
                   className='bg-green-500 rounded-xl h-[50px] justify-center items-center mr-2 p-2'
-                  onPress={() => console.log('Edit button pressed')}
+                  onPress={() => handleEditAdmin(item._id)}
                   activeOpacity={0.7}
                 >
                   <View className='flex-row'>

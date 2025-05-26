@@ -58,6 +58,11 @@ const ManageAdminsWeb = () => {
     fetchAdmins();
   }, [fetchAdmins]); // Dependency on fetchAdmins memoized function
 
+  // Function for adding an admin
+  const handleAddAdmin = () => {
+    router.push('/(admins)/add-admin'); // Adjust this path based on your expo-router structure
+  }
+
   //Function for editing an admin
     const handleEditAdmin = (adminId: string) => {
       router.push({
@@ -153,7 +158,23 @@ const ManageAdminsWeb = () => {
   // If not loading, no error, and admins exist, render the VirtualizedList
   return (
     <SafeAreaView className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} `}>
-      <Text className={`font-inter_bold mx-4 my-2 text-lg ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>Admins List</Text>
+      <View className='flex-row mt-2'>
+        <Text className={`font-inter_bold mx-4 my-2 text-lg ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+          Admins List
+        </Text>
+        <TouchableOpacity
+          className='rounded-xl h-[50px] justify-center items-center ml-auto mr-3 p-2'
+          onPress={() => handleAddAdmin()}
+          activeOpacity={0.7}
+          style={{ backgroundColor:'#60a5fa' }}
+        >
+          <View className='flex-row'>
+            <Text className='text-black font-psemibold text-lg'>
+              Add Admin
+            </Text>
+          </View>
+        </TouchableOpacity>
+      </View>
       <VirtualizedList
         data={admins}
         renderItem={({ item }: { item: User }) => {
@@ -189,7 +210,7 @@ const ManageAdminsWeb = () => {
                   </View>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  className='bg-red-500 rounded-xl h-[50px] justify-center items-center mr-2 p-2'
+                  className='bg-red-500 rounded-xl h-[50px] justify-center items-center p-2'
                   onPress={() => handleDeleteAdmin(item._id)}
                   activeOpacity={0.7}
                   disabled={isCurrentItemDeleting} // Disable button if currently deleting

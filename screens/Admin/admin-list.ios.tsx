@@ -61,6 +61,11 @@ const ManageAdminsIOS = () => {
     fetchAdmins();
   }, [fetchAdmins]); // Dependency on fetchAdmins memoized function
 
+  // Function for adding an admin
+  const handleAddAdmin = () => {
+    router.push('/(admins)/add-admin'); // Adjust this path based on your expo-router structure
+  }
+
   //Function for editing an admin
     const handleEditAdmin = (adminId: string) => {
       router.push({
@@ -154,7 +159,17 @@ const ManageAdminsIOS = () => {
 
   return (
     <SafeAreaView className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} `}>
-      <Text className={`font-inter_bold text-lg ml-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>List of Admins:</Text>
+      <View className='flex-row'>
+        <Text className={`font-inter_bold text-lg ml-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+          Admin List:
+        </Text>
+        <CustomButton
+          containerStyles='bg-[#60a5fa] h-[50px] ml-auto mr-3 p-2'
+          handlePress={handleAddAdmin}
+          title='Add Admin'
+          isLoading={false} // No loading state for adding admin
+        />
+      </View>
       <FlashList
         data={admins}
         renderItem={({ item }: { item: User }) => {

@@ -11,6 +11,7 @@ import { User } from '@/app/types/index';
 import CustomButton from '@/components/CustomButton';
 import EditIcon from '@/assets/icons/edit.svg';
 import DeleteIcon from '@/assets/icons/delete.svg';
+import { router } from 'expo-router';
 
 const ManageTeachersAndroid = () => {
 
@@ -58,6 +59,14 @@ const ManageTeachersAndroid = () => {
   useEffect(() => {
     fetchTeachers();
   }, [fetchTeachers]); // Dependency on fetchTeachers memoized function
+
+  // Function for editing an teacher
+  const handleEditTeacher = (teacherId: string) => {
+    router.push({
+      pathname: "/(admins)/edit-teacher", // Adjust this path based on your expo-router structure
+      params: { id: teacherId }
+    });
+  }
 
   // Function for soft-deleting a teacher
   const handleDeleteTeacher = (teacherId: string) => {
@@ -165,7 +174,7 @@ const ManageTeachersAndroid = () => {
               <View className='ml-auto flex-row'>
                 <CustomButton
                   containerStyles='bg-secondary-android h-[50px] mr-2 p-2'
-                  handlePress={() => console.log('Edit button pressed')}
+                  handlePress={() => handleEditTeacher(item._id)}
                   iconVector={<EditIcon width={24} height={24}/>}
                   title='Edit'
                 />

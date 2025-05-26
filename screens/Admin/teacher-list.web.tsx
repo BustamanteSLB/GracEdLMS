@@ -59,6 +59,11 @@ const ManageTeachersWeb = () => {
     fetchTeachers();
   }, [fetchTeachers]); // Dependency on fetchTeachers memoized function
 
+  // Function for adding an teacher
+  const handleAddTeacher = () => {
+    router.push('/(admins)/add-teacher'); // Adjust this path based on your expo-router structure
+  }
+
   // Function for editing an teacher
   const handleEditTeacher = (teacherId: string) => {
     router.push({
@@ -154,7 +159,23 @@ const ManageTeachersWeb = () => {
   // If not loading, no error, and admins exist, render the VirtualizedList
   return (
     <SafeAreaView className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} `}>
-      <Text className={`font-inter_bold mx-4 my-2 text-lg ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>Teachers List</Text>
+      <View className='flex-row mt-2'>
+        <Text className={`font-inter_bold mx-4 my-2 text-lg ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+          Teachers List
+        </Text>
+        <TouchableOpacity
+          className='rounded-xl h-[50px] justify-center items-center ml-auto mr-3 p-2'
+          onPress={() => handleAddTeacher()}
+          activeOpacity={0.7}
+          style={{ backgroundColor:'#60a5fa' }}
+        >
+          <View className='flex-row'>
+            <Text className='text-black font-psemibold text-lg'>
+              Add Teacher
+            </Text>
+          </View>
+        </TouchableOpacity>
+      </View>
       <VirtualizedList
         data={teachers}
         renderItem={({ item }: { item: User }) => {

@@ -202,6 +202,76 @@ export default function DrawerLayout() {
           }}
         />
         <Drawer.Screen
+          name="edit-student"
+          options={{
+            drawerIcon:({focused})=>(
+              <Image
+                className='w-[24] h-[24]'
+                source={require('@/assets/icons/add_student.png')}
+                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
+              />
+            ),
+            drawerItemStyle: { display: 'none' }, // Hide this item from the drawer
+            drawerLabel: "Edit Student", 
+            drawerLabelStyle:{
+              fontFamily: 'Inter-24pt-SemiBold'
+            },
+            headerShown: false,           
+            headerStyle: {
+              backgroundColor: Platform.select({
+                android: '#22C55E',
+                ios: '#3B82F6',
+                web: '#6D28D9',
+              }),
+            },
+            headerTintColor: 'white', 
+            headerTitleAlign: 'left',             
+            headerTitleStyle: {
+              fontFamily: 'Poppins-Bold',
+              marginTop: Platform.select({
+                web: 0,
+                default: 5
+              })
+            },
+            title:"Edit Student",
+          }}
+        />
+        <Drawer.Screen
+          name="edit-teacher"
+          options={{
+            drawerIcon:({focused})=>(
+              <Image
+                className='w-[24] h-[24]'
+                source={require('@/assets/icons/add_user.png')}
+                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
+              />
+            ),
+            drawerItemStyle: { display: 'none' }, // Hide this item from the drawer
+            drawerLabel: "Edit Teacher", 
+            drawerLabelStyle:{
+              fontFamily: 'Inter-24pt-SemiBold'
+            },
+            headerShown: false,           
+            headerStyle: {
+              backgroundColor: Platform.select({
+                android: '#22C55E',
+                ios: '#3B82F6',
+                web: '#6D28D9',
+              }),
+            },
+            headerTintColor: 'white', 
+            headerTitleAlign: 'left',             
+            headerTitleStyle: {
+              fontFamily: 'Poppins-Bold',
+              marginTop: Platform.select({
+                web: 0,
+                default: 5
+              })
+            },
+            title:"Edit Teacher",
+          }}
+        />
+        <Drawer.Screen
           name="calendar-screen"
           options={{
             drawerIcon:({focused})=>(

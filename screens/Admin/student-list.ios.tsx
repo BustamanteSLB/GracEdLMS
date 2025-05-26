@@ -60,6 +60,11 @@ const ManageStudentsIOS = () => {
     fetchStudents();
   }, [fetchStudents]); // Dependency on fetchStudents memoized function
 
+  // Function for adding an student
+  const handleAddStudent = () => {
+    router.push('/(admins)/add-student'); // Adjust this path based on your expo-router structure
+  }
+
   // Function for editing an student
   const handleEditStudent = (studentId: string) => {
     router.push({
@@ -153,7 +158,17 @@ const ManageStudentsIOS = () => {
 
   return (
     <SafeAreaView className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} `}>
-      <Text className={`font-inter_bold text-lg ml-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>List of Students:</Text>
+      <View className='flex-row'>
+        <Text className={`font-inter_bold text-lg ml-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+          Student List:
+        </Text>
+        <CustomButton
+          containerStyles='bg-[#60a5fa] h-[50px] ml-auto mr-3 p-2'
+          handlePress={handleAddStudent}
+          title='Add Student'
+          isLoading={false} // No loading state for adding student
+        />
+      </View>
       <FlashList
         data={students}
         renderItem={({ item }: { item: User }) => {

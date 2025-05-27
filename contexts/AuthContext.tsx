@@ -54,6 +54,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setUser(userData);
         await AsyncStorage.setItem('userToken', newToken);
         await AsyncStorage.setItem('userData', JSON.stringify(userData));
+        if (typeof window !== 'undefined' && window.localStorage) {
+          localStorage.setItem('token', newToken);
+        }
       } else {
         throw new Error(response.data.message || 'Login failed');
       }
@@ -76,6 +79,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setUser(null);
         await AsyncStorage.removeItem('userToken');
         await AsyncStorage.removeItem('userData');
+        if (typeof window !== 'undefined' && window.localStorage) {
+          localStorage.removeItem('token');
+        }
         setIsLoading(false);
         // Navigation to login screen will be handled by the RootLayout based on isAuthenticated
     }

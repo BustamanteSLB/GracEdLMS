@@ -24,7 +24,12 @@ const app = express();
 app.use(express.json());
 
 // Enable CORS (configure origins in production)
-app.use(cors());
+app.use(cors({
+  origin: 'http://localhost:8081', // or '*' for all origins (not recommended for production)
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 
 // Mount routers
 app.use("/api/v1/auth", authRoutes);

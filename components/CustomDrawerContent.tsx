@@ -1,4 +1,4 @@
-import { Alert, Platform, Switch, Text, View } from 'react-native'
+import { Alert, Platform, Switch, Text, View, TouchableOpacity } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import Divider from './Divider'
 import { DrawerContentScrollView, DrawerItem, DrawerItemList } from '@react-navigation/drawer'
@@ -71,13 +71,26 @@ const CustomDrawerContent = (props:any) => {
     <SafeAreaView className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
       <DrawerContentScrollView {...props}>
         <View className="items-center p-5 flex-row">
-          <Image
-            className='w-[72] h-[72]'
-            contentFit="contain"
-            source={require('../assets/images/GCCS-logo.png')}
-            transition={200}
-          />
-          <Text className={`font-pbold text-xl text-center flex-shrink ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>Grace Community Christian School</Text>
+          <TouchableOpacity
+            className="flex-row items-center w-full"
+            onPress={() => router.replace('/(students)/dashboard')}
+            activeOpacity={0.7}
+            style={{ flex: 1 }}
+          >
+            <Image
+              className='w-[72] h-[72]'
+              contentFit="contain"
+              source={require('../assets/images/GCCS-logo.png')}
+              transition={200}
+            />
+            <Text
+              className={`font-pbold text-xl text-left flex-shrink flex-wrap ml-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}
+              numberOfLines={2}
+              style={{ flexShrink: 1, flexWrap: 'wrap' }}
+            >
+              Grace Community Christian School
+            </Text>
+          </TouchableOpacity>
         </View>
         <Divider />
         <View className="flex-row items-center ios:p-1 android:p-1 web:p-4">

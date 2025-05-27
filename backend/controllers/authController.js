@@ -250,3 +250,13 @@ exports.updateDetails = asyncHandler(async (req, res, next) => {
         data: user,
     });
 });
+
+exports.authorize = (...roles) => {
+  return (req, res, next) => {
+    console.log('Authorize check:', req.user.role, roles);
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: `User role '${req.user.role}' is not authorized` });
+    }
+    next();
+  };
+};

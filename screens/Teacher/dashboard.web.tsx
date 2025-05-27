@@ -81,9 +81,16 @@ const DBWeb: React.FC = () => {
     };
   }, []);
   
+  // Add a mock preview of courses for the dashboard
+  const mockCourses = [
+    { _id: '1', name: 'Mathematics', section: 'G1 - Section 1', schoolYear: '2024-2025', adviser: 'Mr. Smith' },
+    { _id: '2', name: 'Science', section: 'G1 - Section 1', schoolYear: '2024-2025', adviser: 'Ms. Johnson' },
+    { _id: '3', name: 'English', section: 'G1 - Section 1', schoolYear: '2024-2025', adviser: 'Mr. Lee' },
+  ];
+
   return (
     <SafeAreaView className={`flex-1 justify-center ${isPortrait ? 'items-center' : 'items-start'} ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-      <Text className={`text-left self-start font-inter_bold ml-[12px] mt-[12px] ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'} sm:text-sm md:text-base lg:text-lg`}>Welcome, student.</Text>
+      <Text className={`text-left self-start font-inter_bold ml-[12px] mt-[12px] ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'} sm:text-sm md:text-base lg:text-lg`}>Welcome, teacher.</Text>
       <VirtualizedList
         data={data}
         renderItem={({ item }) => (

@@ -49,8 +49,8 @@ exports.login = asyncHandler(async (req, res, next) => {
     email: user.email,
     role: user.role,
     status: user.status,
-    sex: user.sex, 
-    gender: user.gender, 
+    sex: user.sex,
+    gender: user.gender,
     profilePicture: user.profilePicture,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
@@ -100,7 +100,8 @@ exports.register = asyncHandler(async (req, res, next) => {
       username, firstName, middleName, lastName, email, password, phoneNumber, address, role,
       sex,
       gender,
-      status, bio, profilePicture
+      status: status || 'pending', // Admin can set status, default to pending
+      bio, profilePicture
   };
 
   switch (role) {
@@ -114,7 +115,7 @@ exports.register = asyncHandler(async (req, res, next) => {
       newUser = await Student.create(userData);
       break;
     default:
-      return next(new ErrorResponse(`Invalid user role '${role}' specified`, 400));
+      return next(new ErrorResponse(`Invalid user role '${role}' specified for creation`, 400));
   }
 
   // Mongoose's toObject() or toJSON() with a transform can also remove password at schema level
@@ -195,11 +196,11 @@ exports.updatePassword = asyncHandler(async (req, res, next) => {
     await user.save(); // Pre-save hook in User model will hash it
 
     // Send new token as password change might invalidate old sessions if tokens include password related claims (not typical for simple JWT)
-    const token = signToken(user._id);
+    // const token = signToken(user._id); // Re-signing token is optional here
 
     res.status(200).json({
         success: true,
-        token,
+        // token,
         message: 'Password updated successfully'
     });
 });
@@ -219,8 +220,9 @@ exports.updateDetails = asyncHandler(async (req, res, next) => {
         profilePicture: req.body.profilePicture,
         sex: req.body.sex,
         gender: req.body.gender,
-        // Exclude email, password, role, status from this general update route
+        // Email, password, role, status are typically not updated via this route
         // Email change should be a separate process with verification
+        // For admin-initiated updates of other users, use userController.updateUser
     };
 
     // Validate enum for sex if provided
@@ -260,3 +262,4 @@ exports.authorize = (...roles) => {
     next();
   };
 };
+=======

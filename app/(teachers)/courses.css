@@ -1,0 +1,121 @@
+.courses-page {
+  padding: 2.5rem 2rem;
+  background: linear-gradient(120deg, #f3f0ff 0%, #fafaff 100%);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.courses-header {
+  font-size: 2.3rem;
+  font-weight: 800;
+  color: #23235b;
+  margin-bottom: 2.5rem;
+  letter-spacing: -1px;
+  text-align: center;
+}
+.courses-topbar {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  margin-bottom: 2.5rem;
+  width: 100%;
+  max-width: 700px;
+  justify-content: center;
+}
+.add-course-btn {
+  background: linear-gradient(90deg, #6c47ff 60%, #8f5fff 100%);
+  color: #fff;
+  font-weight: 700;
+  font-size: 1.2rem;
+  border: none;
+  border-radius: 12px;
+  padding: 1rem 2.5rem;
+  margin-bottom: 0;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(80,80,120,0.10);
+  transition: background 0.15s, box-shadow 0.15s, transform 0.12s;
+}
+.add-course-btn:hover {
+  background: linear-gradient(90deg, #5433d6 60%, #6c47ff 100%);
+  box-shadow: 0 4px 16px rgba(80,80,120,0.16);
+  transform: translateY(-2px) scale(1.03);
+}
+.courses-search {
+  flex: 1;
+  font-size: 1.05rem;
+  padding: 0.8rem 1.2rem;
+  border: 1.5px solid #d1d5db;
+  border-radius: 10px;
+  outline: none;
+  background: #fff;
+  color: #23235b;
+  transition: border 0.15s;
+  max-width: 320px;
+}
+.courses-search:focus {
+  border: 1.5px solid #6c47ff;
+}
+.courses-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2.5rem;
+  justify-content: center;
+  width: 100%;
+  max-width: 1100px;
+  min-height: 300px;
+}
+.empty-state {
+  width: 100%;
+  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #b0b3c6;
+  background: #fff;
+  border-radius: 18px;
+  box-shadow: 0 2px 12px rgba(80,80,120,0.04);
+  margin-top: 2rem;
+  padding: 2.5rem 0;
+  font-family: 'Segoe UI', Arial, sans-serif;
+}
+.empty-icon {
+  font-size: 3.2rem;
+  margin-bottom: 0.7rem;
+}
+.empty-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  margin-bottom: 0.3rem;
+  color: #23235b;
+}
+.empty-desc {
+  font-size: 1.05rem;
+  color: #888;
+}
+@media (max-width: 900px) {
+  .courses-list {
+    gap: 1.2rem;
+    max-width: 98vw;
+  }
+  .courses-topbar {
+    flex-direction: column;
+    gap: 1rem;
+    max-width: 98vw;
+  }
+}
+@media (max-width: 600px) {
+  .courses-header {
+    font-size: 1.3rem;
+    margin-bottom: 1.2rem;
+  }
+  .add-course-btn {
+    font-size: 1rem;
+    padding: 0.7rem 1.2rem;
+  }
+  .courses-search {
+    font-size: 0.95rem;
+    padding: 0.6rem 0.8rem;
+  }
+} 

@@ -1,11 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
+import CourseCard from '../components/CourseCard';
 
 // !! REPLACE WITH YOUR ACTUAL BACKEND URL !!
 // For Android emulator, if backend is on localhost: 'http://10.0.2.2:PORT'
 // For iOS simulator, if backend is on localhost: 'http://localhost:PORT'
 // For physical device, use your computer's local network IP: 'http://YOUR_COMPUTER_IP:PORT'
-const API_BASE_URL = 'http://192.168.100.5:5000/api/v1';
+const API_BASE_URL = 'http://192.168.1.3:5000/api/v1';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -16,16 +17,14 @@ const apiClient = axios.create({
 
 // Request Interceptor: Add token to headers
 apiClient.interceptors.request.use(
-  async (config: InternalAxiosRequestConfig) => {
-    const token = await AsyncStorage.getItem('userToken');
+  (config) => {
+    const token = localStorage.getItem('token');
     if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+      config.headers['Authorization'] = `Bearer ${token}`;
     }
     return config;
   },
-  (error: AxiosError) => {
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
 
 // Response Interceptor (Optional: for global error handling like 401 redirect)

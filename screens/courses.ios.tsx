@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar'
 import { useDarkMode } from '@/contexts/DarkModeContext'
 import { Image } from 'expo-image'
 import { cssInterop } from 'nativewind'
+import axios from 'axios'
 
 const CoursesIOS: React.FC = () => {
 

@@ -151,7 +151,7 @@ const ManageAdminsIOS = () => {
           {`No admin accounts found.`}
         </Text>
         <CustomButton
-          containerStyles='bg-secondary-android h-[50px] mt-4 p-2'
+          containerStyles='bg-secondary-ios h-[50px] mt-4 p-2'
           handlePress={handleAddAdmin}
           title='Add Admin'
         />

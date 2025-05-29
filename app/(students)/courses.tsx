@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react'
 import CoursesAndroid from '@/screens/courses.android'
 import CoursesIOS from '@/screens/courses.ios'
 import apiClient from '../services/apiClient'
+import AddCourseModal from '../components/AddCourseModal'
 
 type Course = {
   _id: string;
@@ -21,6 +22,7 @@ const TeacherCoursesWeb = () => {
   const [showAddStudent, setShowAddStudent] = useState<{visible: boolean, course: Course | null}>({visible: false, course: null});
   const [editCourse, setEditCourse] = useState({ courseCode: '', courseName: '', description: '' });
   const [studentEmail, setStudentEmail] = useState('');
+  const [showAddModal, setShowAddModal] = useState(false);
 
   useEffect(() => {
     const fetchCourses = async () => {
@@ -90,27 +92,41 @@ const TeacherCoursesWeb = () => {
     }
   };
 
+  // Add course handler for modal
+  const handleAddCourse = async (courseData: { name: string; section: string; schoolYear: string; adviser: string }) => {
+    try {
+      await apiClient.post('/courses', courseData);
+      setShowAddModal(false);
+      // Refresh courses
+      const response = await apiClient.get('/courses');
+      setCourses(response.data.data);
+    } catch (error) {
+      alert('Failed to add course.');
+      console.error('Add error:', error);
+    }
+  };
+
+  // Fetch adviser based on section (dummy for now)
+  const fetchAdviser = async (section: string) => {
+    // You can implement this if you have adviser logic
+    return '';
+  };
+
   return (
     <div style={{ padding: 32, background: '#fff', minHeight: '100vh' }}>
       <h1 style={{ fontSize: 32, fontWeight: 'bold', marginBottom: 24 }}>Teacher Courses</h1>
       <button
         style={{ background: '#6D28D9', color: 'white', border: 'none', borderRadius: 6, padding: '12px 32px', fontWeight: 'bold', fontSize: 18, cursor: 'pointer', marginBottom: 24 }}
-        onClick={async () => {
-          try {
-            const res = await apiClient.post('/courses', {
-              courseCode: `CODE${courses.length + 1}`,
-              courseName: `Sample Course ${courses.length + 1}`,
-              description: `Section ${courses.length + 1} - 2024-2025 - Adviser: Mr. Smith`,
-            });
-            setCourses([...courses, res.data.data]);
-          } catch (error) {
-            alert('Failed to add course.');
-            console.error('Add error:', error);
-          }
-        }}
+        onClick={() => setShowAddModal(true)}
       >
         + Add Course
       </button>
+      <AddCourseModal
+        open={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        onAdd={handleAddCourse}
+        fetchAdviser={fetchAdviser}
+      />
       {courses.length === 0 ? (
         <div style={{ marginTop: 24, color: '#888', fontSize: 20 }}>No courses found.</div>
       ) : (

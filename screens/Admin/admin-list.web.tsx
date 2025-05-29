@@ -4,22 +4,12 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { StatusBar } from 'expo-status-bar'
 import { useDarkMode } from '@/contexts/DarkModeContext'
 import { Image } from 'expo-image'
-import { StatusBar } from 'expo-status-bar'
 import { cssInterop } from 'nativewind'
-import React, { useEffect, useState } from 'react'
-import {
-  ActivityIndicator,
-  Text,
-  TouchableOpacity,
-  View,
-  VirtualizedList,
-  useColorScheme,
-  Alert as RNAlert
-} from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import apiClient, { ApiResponse } from '@/app/services/apiClient'
 import { User } from '@/app/types/index'
+import EditIcon from '@/assets/icons/edit.svg';
+import DeleteIcon from '@/assets/icons/delete.svg';
 
 // Cross-platform confirm: web uses window.confirm, native skips confirm
 function confirmDelete(message: string): boolean {
@@ -111,11 +101,6 @@ const AdminListItem = ({
     </View>
   </View>
 )
-import apiClient, { ApiResponse } from '@/app/services/apiClient';
-import { User } from '@/app/types/index';
-import EditIcon from '@/assets/icons/edit.svg';
-import DeleteIcon from '@/assets/icons/delete.svg';
-import { router } from 'expo-router'
 
 const ManageAdminsWeb = () => {
   const colorScheme = useColorScheme()
@@ -124,6 +109,7 @@ const ManageAdminsWeb = () => {
   const [admins, setAdmins] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const fetchAdmins = async () => {
     try {
@@ -172,66 +158,18 @@ const ManageAdminsWeb = () => {
       showAlert('Error', `Status ${code}: ${msg}`)
     }
   }
-  
-  interface UserListApiResponse extends ApiResponse {
-    data?: User[]; // Expecting an array of User objects in the data field
-  }
 
-  const colorScheme = useColorScheme();
-  const { isDarkMode } = useDarkMode();
-  const [admins, setAdmins] = useState<User[]>([]); // State to hold the list of admins
-  const [loading, setLoading] = useState(true); // State for loading indicator
-  const [error, setError] = useState<string | null>(null); // State for error messages
-  const [deletingId, setDeletingId] = useState<string | null>(null); // State to track which item is being deleted
-
-  // Fetch admins from the API
-  // Using useCallback to memoize the fetch function
-  const fetchAdmins = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null); // Clear previous errors
-
-      // Make API call to fetch users with role 'Admin'
-      const response = await apiClient.get<UserListApiResponse>('/users', {
-        params: { role: 'Admin' }, // Pass role as a query parameter
-      });
-
-      if (response.data.success && response.data.data) {
-        setAdmins(response.data.data); // Set the fetched list of admins
-      } else {
-        // Handle API response success: false
-        setError(response.data.message || 'Failed to fetch admins.');
-      }
-    } catch (err: any) {
-      // Handle network or API call errors
-      console.error('Error fetching admins:', err);
-      setError(
-        err.response?.data?.message || err.message || 'An error occurred while fetching admins.'
-      );
-    } finally {
-      setLoading(false); // Set loading to false after fetch
-    }
-  }, []); // Empty dependency array means this function is created once
-
-  // useEffect to call fetchAdmins when the component mounts
-  useEffect(() => {
-    fetchAdmins();
-  }, [fetchAdmins]); // Dependency on fetchAdmins memoized function
-
-  // Function for adding an admin
   const handleAddAdmin = () => {
-    router.push('/(admins)/add-admin'); // Adjust this path based on your expo-router structure
+    router.push('/(admins)/add-admin');
   }
 
-  //Function for editing an admin
-    const handleEditAdmin = (adminId: string) => {
-      router.push({
-        pathname: "/(admins)/edit-admin", // Adjust this path based on your expo-router structure
-        params: { id: adminId }
-      });
-    }
+  const handleEditAdmin = (adminId: string) => {
+    router.push({
+      pathname: "/(admins)/edit-admin",
+      params: { id: adminId }
+    });
+  }
 
-  // Function for soft-deleting an admin
   const handleDeleteAdmin = (adminId: string) => {
     const confirmDelete = window.confirm (
       'Are you sure you want to delete this admin account? It will be archived.'
@@ -239,13 +177,12 @@ const ManageAdminsWeb = () => {
 
     if (confirmDelete) {
       const deleteAdmin = async () => {
-        setDeletingId(adminId); // Set state to show loading on this specific item
+        setDeletingId(adminId);
         try {
           const response = await apiClient.delete<ApiResponse>(`/users/${adminId}`);
 
           if (response.data.success) {
             window.alert('Success: Admin account archived successfully.');
-            // Update the local state to remove the soft-deleted admin
             setAdmins((prevAdmins) =>
               prevAdmins.filter((admin) => admin._id !== adminId)
             );
@@ -258,7 +195,7 @@ const ManageAdminsWeb = () => {
             'Error: ' + (err.response?.data?.message || err.message || 'An error occurred during archival.')
           );
         } finally {
-          setDeletingId(null); // Clear deleting state
+          setDeletingId(null);
         }
       };
 
@@ -350,12 +287,6 @@ const ManageAdminsWeb = () => {
     )
   }
 
-  const getItemCount = (data?: User[]) => data?.length || 0
-  const getItem = (
-    data: User[] | null | undefined,
-    index: number
-  ) => data![index]
-
   return (
     <SafeAreaView
       className={`flex-1 ${
@@ -405,81 +336,6 @@ const ManageAdminsWeb = () => {
       <StatusBar
         style={colorScheme === 'dark' ? 'light' : 'dark'}
       />
-    <SafeAreaView className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} `}>
-      <View className='flex-row mt-2'>
-        <Text className={`font-inter_bold mx-4 my-2 text-lg ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-          Admins List
-        </Text>
-        <TouchableOpacity
-          className='rounded-xl h-[50px] justify-center items-center ml-auto mr-3 p-2'
-          onPress={() => handleAddAdmin()}
-          activeOpacity={0.7}
-          style={{ backgroundColor:'#60a5fa' }}
-        >
-          <View className='flex-row'>
-            <Text className='text-black font-psemibold text-lg'>
-              Add Admin
-            </Text>
-          </View>
-        </TouchableOpacity>
-      </View>
-      <VirtualizedList
-        data={admins}
-        renderItem={({ item }: { item: User }) => {
-          // Check if the item is the one being deleted
-          const isCurrentItemDeleting = deletingId === item._id;
-          return (
-            <View className={`flex-row items-center p-3 border-b ${isDarkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-              <Image
-                source={ item.profilePicture ? { uri: item.profilePicture } : require('@/assets/images/sample_profile_picture.png')} // Assuming profilePicture is a URL
-                className="w-12 h-12 rounded-full"
-                contentFit="cover"
-              />
-              <View className='flex-column ml-2 flex-shrink'>
-                <Text className={`font-inter_semibold text-lg ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                  {item.firstName} {item.lastName}
-                </Text>
-                <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                  {item.email}
-                </Text>
-              </View>
-        
-              <View className='ml-auto flex-row'>
-                <TouchableOpacity
-                  className='bg-green-500 rounded-xl h-[50px] justify-center items-center mr-2 p-2'
-                  onPress={() => handleEditAdmin(item._id)}
-                  activeOpacity={0.7}
-                >
-                  <View className='flex-row'>
-                    <EditIcon className='w-[24px] h-[24px] mr-1' />
-                    <Text className='text-black font-psemibold text-lg'>
-                      Edit
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  className='bg-red-500 rounded-xl h-[50px] justify-center items-center p-2'
-                  onPress={() => handleDeleteAdmin(item._id)}
-                  activeOpacity={0.7}
-                  disabled={isCurrentItemDeleting} // Disable button if currently deleting
-                >
-                  <View className='flex-row'>
-                    <DeleteIcon className='w-[24px] h-[24px] mr-1' />
-                    <Text className='text-black font-psemibold text-lg'>
-                      {isCurrentItemDeleting ? 'Deleting...' : 'Delete'}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )
-        }}
-        keyExtractor={(item) => item._id}
-        getItem={getItem}
-        getItemCount={getItemCount}
-        extraData={isDarkMode}
-      />
-      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'black' : 'white'}/>
     </SafeAreaView>
   )
 }

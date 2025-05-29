@@ -1,148 +1,142 @@
-.course-card-pro {
-  background: #ffe4e6 !important;
-  border: 4px solid #6c47ff !important;
-  border-radius: 30px !important;
-  box-shadow: 0 12px 40px rgba(80, 80, 120, 0.25) !important;
-  padding: 2.5rem 2.5rem 2rem 2.5rem !important;
-  max-width: 400px !important;
-  margin: 3rem auto !important;
-  font-family: 'Segoe UI', Arial, sans-serif !important;
-  transition: box-shadow 0.22s, transform 0.22s !important;
-  display: flex !important;
-  flex-direction: column !important;
-  align-items: flex-start !important;
-}
-.course-card-pro:hover {
-  box-shadow: 0 12px 40px rgba(80, 80, 120, 0.18);
-  transform: translateY(-4px) scale(1.025);
-}
-.course-card-top {
-  width: 100%;
+.modern-premium {
+  background: linear-gradient(135deg, #f8f5ff 60%, #f3e8ff 100%);
+  border: 2.5px solid #6c47ff;
+  border-radius: 32px;
+  box-shadow: 0 8px 32px rgba(108,71,255,0.13), 0 2px 8px rgba(80,80,120,0.08);
+  padding: 2.8rem 2.5rem 2.2rem 2.5rem;
+  margin: 2.5rem auto;
+  max-width: 420px;
+  transition: box-shadow 0.22s, transform 0.22s;
   display: flex;
-  justify-content: center;
-  margin-bottom: 1.2rem;
+  flex-direction: column;
+  align-items: flex-start;
+  font-family: 'Segoe UI', Arial, sans-serif;
 }
-.course-card-avatar {
-  width: 80px;
-  height: 80px;
-  background: linear-gradient(135deg, #6c47ff 60%, #fff 100%) !important;
+.modern-premium:hover {
+  box-shadow: 0 16px 48px rgba(108,71,255,0.18), 0 2px 8px rgba(80,80,120,0.10);
+  transform: translateY(-6px) scale(1.03);
+}
+.premium-avatar {
+  width: 72px;
+  height: 72px;
   border-radius: 50%;
+  background: linear-gradient(135deg, #6c47ff 60%, #fff 100%);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 3.5rem;
+  margin-bottom: 0.5rem;
   box-shadow: 0 4px 16px rgba(108,71,255,0.18);
-  margin-bottom: 0.2rem;
-  color: #fff;
-  border: 3px solid #fff;
+  border: 4px solid #fff;
+  margin-left: auto;
+  margin-right: auto;
 }
-.course-card-header {
+.premium-header {
   width: 100%;
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   margin-bottom: 1.2rem;
 }
-.course-card-header h2 {
-  font-size: 2rem;
+.premium-header h2 {
+  font-size: 2.1rem;
   font-weight: 900;
-  margin: 0 0 0.2rem 0;
   color: #6c47ff;
+  margin: 0 0 0.2rem 0;
   letter-spacing: -1px;
   text-shadow: 0 2px 8px #fff;
 }
-.course-code {
-  background: #6c47ff !important;
-  color: #fff !important;
-  font-size: 1.2rem !important;
-  font-weight: 900 !important;
-  padding: 0.4rem 1.2rem !important;
-  border-radius: 12px !important;
-  box-shadow: 0 2px 8px rgba(108,71,255,0.18) !important;
-  display: inline-block !important;
-  margin-top: 0.2rem !important;
+.premium-code {
+  background: #6c47ff;
+  color: #fff;
+  font-size: 1.15rem;
+  font-weight: 900;
+  padding: 0.4rem 1.2rem;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(108,71,255,0.18);
+  display: inline-block;
+  margin-top: 0.2rem;
 }
-.course-card-divider {
+.premium-divider {
   width: 100%;
   height: 3px;
-  background: linear-gradient(90deg, #6c47ff 0%, #fff 100%) !important;
+  background: linear-gradient(90deg, #6c47ff 0%, #fff 100%);
   border-radius: 2px;
   margin: 1.2rem 0 1.5rem 0;
 }
-.course-card-body {
-  color: #23235b !important;
-  font-size: 1.2rem !important;
-  margin-bottom: 2rem !important;
-  line-height: 2 !important;
-  width: 100% !important;
+.premium-body {
+  color: #23235b;
+  font-size: 1.18rem;
+  margin-bottom: 2rem;
+  line-height: 2;
+  width: 100%;
 }
 .label {
-  font-weight: 900 !important;
-  color: #6c47ff !important;
+  font-weight: 900;
+  color: #6c47ff;
 }
 .placeholder {
-  color: #bbb !important;
+  color: #bbb;
 }
-.course-details {
-  color: #888 !important;
-  font-size: 1.1rem !important;
-  margin-top: 1rem !important;
+.premium-details {
+  color: #888;
+  font-size: 1.1rem;
+  margin-top: 1rem;
 }
-.course-card-actions {
-  display: flex !important;
-  gap: 1.5rem !important;
-  margin-top: 1.5rem !important;
-  width: 100% !important;
+.premium-actions {
+  display: flex;
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+  width: 100%;
 }
-.btn-pro {
+.premium-btn {
   flex: 1;
-  padding: 1rem 0 !important;
-  border: none !important;
-  border-radius: 14px !important;
-  font-weight: 900 !important;
-  font-size: 1.2rem !important;
-  cursor: pointer !important;
-  transition: background 0.15s, box-shadow 0.15s, transform 0.12s !important;
-  box-shadow: 0 2px 8px rgba(80, 80, 120, 0.16) !important;
-  letter-spacing: 0.01em !important;
+  font-size: 1.15rem;
+  border-radius: 14px;
+  font-weight: 900;
+  padding: 1rem 0;
+  box-shadow: 0 2px 8px rgba(80, 80, 120, 0.16);
+  letter-spacing: 0.01em;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.12s;
+  border: none;
+  cursor: pointer;
 }
-.btn-pro.edit {
-  background: linear-gradient(90deg, #6c47ff 60%, #8f5fff 100%) !important;
-  color: #fff !important;
+.premium-btn.edit {
+  background: linear-gradient(90deg, #6c47ff 60%, #8f5fff 100%);
+  color: #fff;
 }
-.btn-pro.edit:hover {
-  background: linear-gradient(90deg, #5433d6 60%, #6c47ff 100%) !important;
-  transform: scale(1.08) !important;
+.premium-btn.edit:hover {
+  background: linear-gradient(90deg, #5433d6 60%, #6c47ff 100%);
+  transform: scale(1.08);
 }
-.btn-pro.add {
-  background: linear-gradient(90deg, #22c55e 60%, #4ade80 100%) !important;
-  color: #fff !important;
+.premium-btn.add {
+  background: linear-gradient(90deg, #22c55e 60%, #4ade80 100%);
+  color: #fff;
 }
-.btn-pro.add:hover {
-  background: linear-gradient(90deg, #16a34a 60%, #22c55e 100%) !important;
-  transform: scale(1.08) !important;
+.premium-btn.add:hover {
+  background: linear-gradient(90deg, #16a34a 60%, #22c55e 100%);
+  transform: scale(1.08);
 }
-.btn-pro.delete {
-  background: linear-gradient(90deg, #ef4444 60%, #f87171 100%) !important;
-  color: #fff !important;
+.premium-btn.delete {
+  background: linear-gradient(90deg, #ef4444 60%, #f87171 100%);
+  color: #fff;
 }
-.btn-pro.delete:hover {
-  background: linear-gradient(90deg, #b91c1c 60%, #ef4444 100%) !important;
-  transform: scale(1.08) !important;
+.premium-btn.delete:hover {
+  background: linear-gradient(90deg, #b91c1c 60%, #ef4444 100%);
+  transform: scale(1.08);
 }
 @media (max-width: 600px) {
-  .course-card-pro {
+  .modern-premium {
     max-width: 98vw;
     padding: 1.2rem 0.7rem 1.2rem 0.7rem;
   }
-  .course-card-header h2 {
+  .premium-header h2 {
     font-size: 1.1rem;
   }
-  .course-card-body {
+  .premium-body {
     font-size: 0.97rem;
   }
-  .btn-pro {
+  .premium-btn {
     font-size: 0.95rem;
     padding: 0.5rem 0;
   }
-} 
+}

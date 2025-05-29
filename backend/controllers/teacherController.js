@@ -23,7 +23,7 @@ exports.createTeacher = async (req, res) => {
 exports.getAllTeachers = async (req, res) => {
   try {
     const teachers = await Teacher.find({ status: { $ne: 'archived' } })
-      .populate('assignedCourses', 'courseCode courseName'); // Populate assigned courses
+      .populate('assignedCourses', 'courseCode courseName');
     res.status(200).json({
       success: true,
       data: teachers,

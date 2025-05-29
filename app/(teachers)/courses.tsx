@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import CourseCard from '../components/CourseCard';
 import apiClient from '../services/apiClient';
+import AddCourseModal from '../components/AddCourseModal';
 import './courses.css';
 
 type Course = {
@@ -16,15 +17,7 @@ const TeacherCoursesScreen = () => {
   const [courses, setCourses] = useState<Course[]>([]);
   const [search, setSearch] = useState('');
   const [filteredCourses, setFilteredCourses] = useState<Course[]>([]);
-
-  // For demo, show a sample course always
-  const sampleCourse = {
-    _id: 'CODE1',
-    name: 'Sample Course 1',
-    section: 'Section 1',
-    schoolYear: '2024-2025',
-    adviser: 'Mr. Smith',
-  };
+  const [showAddModal, setShowAddModal] = useState(false);
 
   // Fetch courses from backend
   const fetchCourses = async () => {
@@ -64,11 +57,34 @@ const TeacherCoursesScreen = () => {
     }
   };
 
+  // Add course
+  const handleAddCourse = async (courseData: Omit<Course, '_id'>) => {
+    try {
+      await apiClient.post('/courses', courseData);
+      setShowAddModal(false);
+      fetchCourses();
+    } catch (err) {
+      alert('Failed to add course');
+    }
+  };
+
+  // Fetch adviser based on section
+  const fetchAdviser = async (section: string) => {
+    try {
+      const res = await apiClient.get(`/advisers/${section}`);
+      return res.data.adviser;
+    } catch (err) {
+      return null;
+    }
+  };
+
   return (
     <div className="courses-page">
       <div className="courses-header">Teacher Courses</div>
       <div className="courses-topbar">
-        <button className="add-course-btn">+ Add Course</button>
+        <button className="add-course-btn" onClick={() => setShowAddModal(true)}>
+          + Add Course
+        </button>
         <input
           className="courses-search"
           type="text"
@@ -78,17 +94,6 @@ const TeacherCoursesScreen = () => {
         />
       </div>
       <div className="courses-list">
-        <CourseCard
-          title={sampleCourse.name}
-          code={sampleCourse._id}
-          section={sampleCourse.section}
-          schoolYear={sampleCourse.schoolYear}
-          adviser={sampleCourse.adviser}
-          details={`Section 1 - 2024-2025 - Adviser: Mr. Smith`}
-          onEdit={() => {}}
-          onAddStudent={() => {}}
-          onDelete={() => {}}
-        />
         {filteredCourses.length === 0 ? (
           <div className="empty-state">
             <span className="empty-icon">📦</span>
@@ -114,6 +119,13 @@ const TeacherCoursesScreen = () => {
           ))
         )}
       </div>
+
+      <AddCourseModal
+        open={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        onAdd={handleAddCourse}
+        fetchAdviser={fetchAdviser}
+      />
     </div>
   );
 };

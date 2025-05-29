@@ -4,7 +4,6 @@ const {
   getAllUsers,
   getUser,
   updateUser,
-  updateUserPassword,
   deleteUser,
   restoreUser,
 } = require('../controllers/userController');
@@ -26,10 +25,6 @@ router
   .get(authorize('Admin'), getUser) // Get a single user
   .put(authorize('Admin'), updateUser) // Update a user
   .delete(authorize('Admin'), deleteUser); // Soft delete a user
-
-router
-  .route('/:id/password') // NEW: Route for updating a user's password by ID
-  .put(authorize('Admin'), updateUserPassword);
 
 router
   .route('/:id/restore')

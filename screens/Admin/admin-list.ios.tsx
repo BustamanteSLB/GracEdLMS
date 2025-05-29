@@ -150,6 +150,11 @@ const ManageAdminsIOS = () => {
         <Text className={`font-inter_regular text-center mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'} `}>
           {`No admin accounts found.`}
         </Text>
+        <CustomButton
+          containerStyles='bg-secondary-android h-[50px] mt-4 p-2'
+          handlePress={handleAddAdmin}
+          title='Add Admin'
+        />
         <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'black' : 'white'}/>
       </SafeAreaView>
     );

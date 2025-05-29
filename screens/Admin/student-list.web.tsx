@@ -151,6 +151,17 @@ const ManageStudentsWeb = () => {
         <Text className={`font-inter_regular text-center mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'} `}>
           {`No student accounts found.`}
         </Text>
+        <TouchableOpacity
+          className='bg-secondary-web rounded-xl h-[50px] justify-center items-center p-2 mt-4'
+          onPress={() => handleAddStudent()}
+          activeOpacity={0.7}
+        >
+          <View className='flex-row'>
+            <Text className='text-black font-psemibold text-lg'>
+              Add Student
+            </Text>
+          </View>
+        </TouchableOpacity>
         <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'black' : 'white'}/>
       </SafeAreaView>
     );

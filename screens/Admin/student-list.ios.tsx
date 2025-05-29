@@ -149,6 +149,11 @@ const ManageStudentsIOS = () => {
           <Text className={`font-inter_regular text-center mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'} `}>
             {`No student accounts found.`}
           </Text>
+          <CustomButton
+            containerStyles='bg-secondary-ios h-[50px] mt-4 p-2'
+            handlePress={handleAddStudent}
+            title='Add Student'
+          />
           <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'black' : 'white'}/>
         </SafeAreaView>
       );

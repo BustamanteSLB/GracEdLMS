@@ -44,11 +44,6 @@ const userSchema = new mongoose.Schema({
     required: [true, 'Sex is required.'],
     default: null,
   },
-  gender: {
-    type: String,
-    trim: true,
-    default: null,
-  },
   password: {
     type: String,
     required: [true, 'Password is required.'],
@@ -80,10 +75,6 @@ const userSchema = new mongoose.Schema({
     required: true,
     enum: ['active', 'inactive', 'suspended', 'pending', 'archived'],
     default: 'pending', // Default status, might need activation
-  },
-  bio: {
-    type: String,
-    trim: true,
   },
   lastLogin: {
     type: Date,

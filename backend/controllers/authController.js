@@ -45,12 +45,14 @@ exports.login = asyncHandler(async (req, res, next) => {
     userId: user.userId,
     username: user.username,
     firstName: user.firstName,
+    middleName: user.middleName,
     lastName: user.lastName,
     email: user.email,
     role: user.role,
     status: user.status,
     sex: user.sex,
-    gender: user.gender,
+    phoneNumber: user.phoneNumber,
+    address: user.address,
     profilePicture: user.profilePicture,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
@@ -77,13 +79,13 @@ exports.register = asyncHandler(async (req, res, next) => {
     password,
     phoneNumber,
     address,
-    role, // Role must be provided
-    status, // Optional, defaults in schema
     sex,
-    gender,
-    bio, // Optional
+    role,
     profilePicture // Optional
   } = req.body;
+
+  // Default status for self-registration is 'pending'
+  const status = 'pending';
 
   // Basic check for core required fields (Mongoose schema will do more detailed validation)
   if (!username || !firstName || !lastName || !email || !password || !phoneNumber || !address || !role || !sex) {
@@ -99,9 +101,8 @@ exports.register = asyncHandler(async (req, res, next) => {
   const userData = {
       username, firstName, middleName, lastName, email, password, phoneNumber, address, role,
       sex,
-      gender,
-      status: status || 'pending', // Admin can set status, default to pending
-      bio, profilePicture
+      status, // Admin can set status, default to pending
+      profilePicture
   };
 
   switch (role) {
@@ -159,6 +160,51 @@ exports.getCurrentUser = asyncHandler(async (req, res, next) => {
   }
 
   res.status(200).json({ success: true, data: user });
+});
+
+// @desc    Update user details (for current user)
+// @route   PUT /api/v1/auth/updateme
+// @access  Private (Logged in user only)
+exports.updateMe = asyncHandler(async (req, res, next) => {
+    const fieldsToUpdate = {
+        firstName: req.body.firstName,
+        middleName: req.body.middleName,
+        lastName: req.body.lastName,
+        username: req.body.username,
+        phoneNumber: req.body.phoneNumber,
+        address: req.body.address,
+        profilePicture: req.body.profilePicture,
+        sex: req.body.sex,
+        // Removed bio and gender from updateable fields for auth/me
+        // Email and password are handled via separate routes for security reasons
+    };
+
+    // Validate enum for sex if provided
+    const validSexValues = ['Male', 'Female', 'Other'];
+    if (fieldsToUpdate.sex && !validSexValues.includes(fieldsToUpdate.sex)) {
+        return next(new ErrorResponse(`Invalid value for sex. Allowed values are: ${validSexValues.join(', ')}.`, 400));
+    }
+
+    // Remove undefined fields so they don't overwrite existing data with null
+    Object.keys(fieldsToUpdate).forEach(key => fieldsToUpdate[key] === undefined && delete fieldsToUpdate[key]);
+
+    if (Object.keys(fieldsToUpdate).length === 0) {
+        return next(new ErrorResponse('No details provided for update', 400));
+    }
+
+    const user = await User.findByIdAndUpdate(req.user.id, fieldsToUpdate, {
+        new: true,
+        runValidators: true,
+    }).select('-password');
+
+    if (!user) {
+        return next(new ErrorResponse('User not found', 404));
+    }
+
+    res.status(200).json({
+        success: true,
+        data: user,
+    });
 });
 
 // @desc    Logout user (Client-side responsibility for clearing token)

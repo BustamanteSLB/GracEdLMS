@@ -13,8 +13,8 @@ exports.createUser = asyncHandler(async (req, res, next) => {
   const {
     username, firstName, middleName, lastName, email, password, phoneNumber, address, role,
     sex,
-    gender,
-    status, bio, profilePicture
+    status, 
+    profilePicture
   } = req.body;
 
   // Add 'sex' to required field check
@@ -31,9 +31,8 @@ exports.createUser = asyncHandler(async (req, res, next) => {
   const userData = {
       username, firstName, middleName, lastName, email, password, phoneNumber, address, role,
       sex,
-      gender,
-      status: status || 'pending', // Admin can set status, default to pending
-      bio, profilePicture
+      status, // Admin can set status, default to pending
+      profilePicture
   };
 
   switch (role) {
@@ -169,10 +168,8 @@ exports.updateUser = asyncHandler(async (req, res, next) => {
       email: updateData.email, // <<< ALLOW EMAIL CHANGE HERE
       phoneNumber: updateData.phoneNumber,
       address: updateData.address,
-      bio: updateData.bio,
       profilePicture: updateData.profilePicture,
       sex: updateData.sex,
-      gender: updateData.gender,
       role: updateData.role,   // <<< ALLOW ROLE CHANGE BY ADMIN
       status: updateData.status // <<< ALLOW STATUS CHANGE BY ADMIN
   };
@@ -271,12 +268,12 @@ exports.deleteUser = asyncHandler(async (req, res, next) => {
   if (userToArchive._id.equals(req.user.id)) {
       return next(new ErrorResponse('You cannot archive your own account.', 400));
   }
-  if (userToArchive.role === 'Admin') {
+  /* if (userToArchive.role === 'Admin') {
       const activeAdminCount = await Admin.countDocuments({ status: 'active' });
       if (activeAdminCount <= 1 && userToArchive.status === 'active') {
           return next(new ErrorResponse('Cannot archive the last active admin account.', 400));
       }
-  }
+  } */
 
   userToArchive.status = 'archived';
   await userToArchive.save({ validateBeforeSave: false }); // Bypass some validations if needed for archival
@@ -317,5 +314,42 @@ exports.restoreUser = asyncHandler(async (req, res, next) => {
     success: true,
     message: `User ${user.username} status updated to '${user.status}' successfully`,
     data: user,
+  });
+});
+
+// @desc    Permanently delete a user by ID (by Admin)
+// @route   DELETE /api/v1/users/:id/permanent
+// @access  Private/Admin
+exports.permanentDeleteUser = asyncHandler(async (req, res, next) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return next(new ErrorResponse(`Invalid ID format: ${req.params.id}`, 400));
+  }
+
+  const userToDelete = await User.findById(req.params.id);
+
+  if (!userToDelete) {
+    return next(new ErrorResponse(`User not found with id of ${req.params.id}`, 404));
+  }
+
+  // Optional: Add checks to prevent deleting critical users, e.g., the last admin.
+  // This check is critical if an admin can delete other admins.
+  if (userToDelete.role === 'Admin') {
+    // Example: Prevent deleting the current logged-in admin (self-deletion) via this route
+    if (userToDelete._id.equals(req.user.id)) {
+         return next(new ErrorResponse('You cannot permanently delete your own account via this route.', 400));
+    }
+    // Example: Prevent deleting the last active admin (if that's a business rule)
+    // const activeAdminCount = await Admin.countDocuments({ status: 'active' });
+    // if (activeAdminCount <= 1 && userToDelete.status === 'active') { // Or check if it's the only Admin regardless of status
+    //     return next(new ErrorResponse('Cannot permanently delete the last admin account.', 400));
+    // }
+  }
+
+  await User.findByIdAndDelete(req.params.id);
+
+  res.status(200).json({ // 200 OK or 204 No Content are common for successful deletions
+    success: true,
+    message: `User ${userToDelete.username} (ID: ${req.params.id}) permanently deleted successfully.`,
+    // No data is typically sent back, or just a confirmation.
   });
 });

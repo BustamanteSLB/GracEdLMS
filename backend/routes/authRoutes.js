@@ -1,6 +1,6 @@
 // routes/authRoutes.js
 const express = require('express');
-const { login, logout, register, getCurrentUser } = require('../controllers/authController');
+const { login, logout, register, getCurrentUser, updateMe } = require('../controllers/authController');
 const { protect, authorize } = require('../middleware/authMiddleware'); // Assuming authorize is your role middleware
 const { body, validationResult } = require('express-validator');
 
@@ -43,10 +43,30 @@ const validateRegistration = [
     }
 ];
 
+// Validation for updateMe
+const validateUpdateMe = [
+  body('username').optional().notEmpty().withMessage('Username cannot be empty').trim().isLength({ min: 3 }).withMessage('Username must be at least 3 characters'),
+  body('firstName').optional().notEmpty().withMessage('First name cannot be empty').trim(),
+  body('middleName').optional().trim(),
+  body('lastName').optional().notEmpty().withMessage('Last name cannot be empty').trim(),
+  body('phoneNumber').optional().notEmpty().withMessage('Phone number cannot be empty').trim(),
+  body('address').optional().notEmpty().withMessage('Address cannot be empty').trim(),
+  body('sex').optional().isIn(['Male', 'Female', 'Other']).withMessage('Invalid value for sex. Allowed values are: Male, Female, Other.'),
+  // Removed validation for 'bio' and 'gender'
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      const messages = errors.array().map(err => err.msg);
+      return res.status(400).json({ success: false, message: messages.join('. ') });
+    }
+    next();
+  }
+];
 
 router.post('/login', validateLogin, login);
 router.post('/logout', protect, logout); // No body to validate generally
-router.post('/register', protect, authorize('Admin'), validateRegistration, register);
+router.post('/register', validateRegistration, register);
 router.get('/me', protect, getCurrentUser); // No body to validate
+router.put('/updateme', protect, validateUpdateMe, updateMe);
 
 module.exports = router;

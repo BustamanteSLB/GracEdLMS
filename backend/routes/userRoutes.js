@@ -7,6 +7,7 @@ const {
   updateUserPassword,
   deleteUser,
   restoreUser,
+  permanentDeleteUser
 } = require('../controllers/userController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 
@@ -34,5 +35,10 @@ router
 router
   .route('/:id/restore')
   .put(authorize('Admin'), restoreUser); // Restore a soft-deleted user
+
+// New route for permanent deletion
+router
+  .route('/:id/permanent')
+  .delete(authorize('Admin'), permanentDeleteUser);
 
 module.exports = router;

@@ -8,7 +8,8 @@ import React from 'react'
 import { StatusBar } from 'expo-status-bar'
 import { useRouter } from 'expo-router';
 import { useDarkMode } from '@/contexts/DarkModeContext';
-import ActivityIcon from '@/assets/icons/activity.svg';
+import AccountIcon from '@/assets/icons/account.svg';
+import ArchiveIcon from '@/assets/icons/archive.svg';
 import CoursesIcon from '@/assets/icons/course_book.svg'
 import InstitutionIcon from '@/assets/icons/institution.svg'
 
@@ -23,22 +24,16 @@ const DBIOS: React.FC = () => {
 
   const data = [
     {
-      description: 'Add, delete, update, and store admin information.',
-      Icon: ActivityIcon,
-      title: 'Manage Admins',
-      onPress: () => router.replace('/(admins)/admin-list')
+      description: 'Add, update, delete, and store user information.',
+      Icon: AccountIcon,
+      title: 'User Management',
+      onPress: () => router.replace('/(admins)/user-management')
     },
     {
-      description: 'Add, delete, update, and store student information.',
-      Icon: ActivityIcon,
-      title: 'Manage Students',
-      onPress: () => router.replace('/(admins)/student-list')
-    },
-    {
-      description: 'Add, delete, update, and store teacher information.',
-      Icon: CoursesIcon,
-      title: 'Manage Teachers',
-      onPress: () => router.replace('/(admins)/teacher-list')
+      description: 'View archived users and decide whether to restore or delete them.',
+      Icon: ArchiveIcon,
+      title: 'Archives',
+      onPress: () => router.replace('/(admins)/archives')
     },
     {
       description: 'Check the current date.',
@@ -94,7 +89,7 @@ const DBIOS: React.FC = () => {
         horizontal={!isPortrait}
         keyExtractor={(item, index) => index.toString()}
       />
-      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'black' : 'white'}/>
+      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
     </SafeAreaView>
   )
 }

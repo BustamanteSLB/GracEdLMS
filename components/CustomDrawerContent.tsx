@@ -1,13 +1,13 @@
-import { Alert, Platform, Switch, Text, View } from 'react-native'
+import { ActivityIndicator, Alert, Platform, Switch, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import Divider from './Divider'
 import { DrawerContentScrollView, DrawerItem, DrawerItemList } from '@react-navigation/drawer'
 import { Image } from "expo-image";
 import { cssInterop } from "nativewind";
 import { useRouter } from 'expo-router'
-import { useState } from 'react'
-import { useAuth } from '../contexts/AuthContext';
-import { useDarkMode } from '../contexts/DarkModeContext';
+import { useState, useCallback } from 'react'
+import { useAuth } from '@/contexts/AuthContext';
+import { useDarkMode } from '@/contexts/DarkModeContext';
 import DarkModeIcon from '@/assets/icons/dark_mode.svg'
 import LogoutIcon from '@/assets/icons/logout.svg'
 
@@ -23,28 +23,32 @@ const CustomDrawerContent = (props:any) => {
   
   const toggleSwitch = () => setIsEnabled(previousState => !previousState);
   
-  const handleLogout = async () => { // Make handleLogout async
-    const performLogout = async () => {
-      console.log('Attempting to log out...');
+  // Use useCallback for handleLogout to prevent unnecessary re-renders and ensure stable reference
+  const handleLogout = useCallback(async () => {
+    if (isLoading) { // Prevent multiple logout attempts while one is in progress
+      console.log('Logout already in progress.');
+      return;
+    }
+
+    const confirmAndPerformLogout = async () => {
+      console.log('Initiating logout process...');
       try {
         await logout(); // Call the logout function from AuthContext
-        console.log('Logout successful.');
-        // The AuthContext state change should automatically trigger navigation in _layout.tsx
-        // router.replace('/(auth)/signin'); // This line is now often redundant due to _layout.tsx
+        console.log('Logout successful, navigating to login screen...');
+        // AuthContext's logout function handles token clearing and navigation.
+        // No need for router.replace here, as AuthContext will do it.
       } catch (error) {
-        console.error('Logout failed:', error);
-        Alert.alert('Logout Failed', 'An error occurred during logout.');
-        // Even if API call fails, AuthContext clears local storage, so still attempt redirect
-        // if you kept the router.replace above. If relying solely on _layout,
-        // the state would remain authenticated if the logout() call itself failed.
-        // Given logout primarily clears client state with JWT, error here is less likely from backend
+        console.error('Error during logout confirmation flow:', error);
+        // AuthContext's logout should already handle displaying an alert if something critical fails.
+        // If it doesn't, you might add a generic alert here:
+        // Alert.alert('Logout Error', 'Failed to complete logout. Please try again.');
       }
     };
 
     if (Platform.OS === 'web') {
       const confirmed = window.confirm('Are you sure you want to logout?');
       if (confirmed) {
-        performLogout(); // Call the async function
+        confirmAndPerformLogout();
       }
     } else {
       Alert.alert(
@@ -57,15 +61,13 @@ const CustomDrawerContent = (props:any) => {
           },
           {
             text: 'Yes',
-            onPress: () => {
-              performLogout(); // Call the async function
-            },
+            onPress: confirmAndPerformLogout, // Directly call the async function
           },
         ],
         { cancelable: false }
       );
     }
-  };
+  }, [logout, isLoading]); // Depend on logout and isLoading from AuthContext
 
   return (
     <SafeAreaView className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
@@ -104,13 +106,19 @@ const CustomDrawerContent = (props:any) => {
         <DrawerItemList {...props}/>
         <DrawerItem
           icon={() => (
-            <LogoutIcon
-              width={24} height={24}
-              fill="#dc2626"
-            />
+            isLoading ? ( // Show loading indicator if logout is in progress
+              <ActivityIndicator size="small" color={isDarkMode ? 'white' : 'black'} />
+            ) : (
+              <LogoutIcon
+                width={24} height={24}
+                fill="#dc2626"
+              />
+            )
           )}
           label={()=>(
-            <Text className="font-inter_semibold text-red-600">Logout</Text>
+            <Text className="font-inter_semibold text-red-600">
+              {isLoading ? 'Logging Out...' : 'Logout'}
+            </Text>
           )}
           onPress={handleLogout}
         />

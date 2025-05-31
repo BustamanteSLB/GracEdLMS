@@ -5,7 +5,7 @@ import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 // For Android emulator, if backend is on localhost: 'http://10.0.2.2:PORT'
 // For iOS simulator, if backend is on localhost: 'http://localhost:PORT'
 // For physical device, use your computer's local network IP: 'http://YOUR_COMPUTER_IP:PORT'
-const API_BASE_URL = 'http://192.168.100.5:5000/api/v1';
+const API_BASE_URL = 'http://192.168.1.4:5000/api/v1';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,

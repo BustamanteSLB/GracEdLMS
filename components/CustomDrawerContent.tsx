@@ -10,6 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useDarkMode } from '@/contexts/DarkModeContext';
 import DarkModeIcon from '@/assets/icons/dark_mode.svg'
 import LogoutIcon from '@/assets/icons/logout.svg'
+import CoursesIcon from '@/assets/icons/course_book.svg'
 
 const CustomDrawerContent = (props:any) => {
 
@@ -103,7 +104,25 @@ const CustomDrawerContent = (props:any) => {
             value={isDarkMode}
           />
         </View>
-        <DrawerItemList {...props}/>
+        <DrawerItem
+          icon={() => (
+            <CoursesIcon width={24} height={24} fill={isDarkMode ? '#E0E0E0' : 'black'} />
+          )}
+          label={() => (
+            <Text className="font-inter_semibold">
+              Teacher Courses
+            </Text>
+          )}
+          onPress={() => router.push('/teachers/courses')}
+        />
+        <DrawerItemList {...{
+          ...props,
+          state: {
+            ...props.state,
+            routeNames: props.state.routeNames.filter((name: string) => name !== 'courses'),
+            routes: props.state.routes.filter((route: any) => route.name !== 'courses'),
+          },
+        }} />
         <DrawerItem
           icon={() => (
             isLoading ? ( // Show loading indicator if logout is in progress

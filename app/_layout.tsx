@@ -3,7 +3,7 @@ import { useFonts } from 'expo-font';
 import "@/app/globals.css";
 import { useEffect } from "react";
 import { DarkModeProvider, useDarkMode } from '@/contexts/DarkModeContext';
-import { AuthProvider, useAuth } from '@/contexts/AuthContext';
+import { AuthProvider, useAuth } from '../contexts/AuthContext';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -25,30 +25,36 @@ function InitialLayout() {
         if (inAuthGroup) {
           // If authenticated and currently on an auth page (like signin),
           // redirect them to their correct dashboard based on their role.
-          if (user?.role === 'Admin' && !inAdminGroup) {
+          if (user?.role === 'Admin') {
              router.replace('/(admins)/dashboard');
-          } else if (user?.role === 'Student' && !inStudentGroup) {
+          } else if (user?.role === 'Student') {
              router.replace('/(students)/dashboard');
-          } else if (user?.role === 'Teacher' && !inTeacherGroup) {
+          } else if (user?.role === 'Teacher') {
              router.replace('/(teachers)/dashboard');
           }
-          // If authenticated and already on the correct role dashboard group, do nothing.
-          // Example: Authenticated Admin user is already in the '(admins)' segment.
         } else {
-            // User is authenticated and NOT on an auth page.
-            // Check if they are in the correct role group for their current path.
-            // If an Admin user is somehow in the '(students)' segment, redirect them.
-            if (user?.role === 'Admin' && !inAdminGroup && !inStudentGroup && !inTeacherGroup) {
-                // If authenticated admin is not in any role group (e.g., index or unknown path)
-                 router.replace('/(admins)/dashboard');
-            } else if (user?.role === 'Student' && !inStudentGroup && !inAdminGroup && !inTeacherGroup) {
-                 // If authenticated student is not in any role group
-                 router.replace('/(students)/dashboard');
-            } else if (user?.role === 'Teacher' && !inTeacherGroup && !inAdminGroup && !inStudentGroup) {
-                 // If authenticated teacher is not in any role group
-                 router.replace('/(teachers)/dashboard');
+          // User is authenticated and NOT on an auth page.
+          // Check if they are accessing a role group they don't belong to
+          if (user?.role === 'Admin' && (inStudentGroup || inTeacherGroup)) {
+            // Admin trying to access student or teacher pages
+            router.replace('/(admins)/dashboard');
+          } else if (user?.role === 'Student' && (inAdminGroup || inTeacherGroup)) {
+            // Student trying to access admin or teacher pages
+            router.replace('/(students)/dashboard');
+          } else if (user?.role === 'Teacher' && (inAdminGroup || inStudentGroup)) {
+            // Teacher trying to access admin or student pages
+            router.replace('/(teachers)/dashboard');
+          } else if (!inAdminGroup && !inStudentGroup && !inTeacherGroup) {
+            // User is on index or unknown path, redirect to their role dashboard
+            if (user?.role === 'Admin') {
+              router.replace('/(admins)/dashboard');
+            } else if (user?.role === 'Student') {
+              router.replace('/(students)/dashboard');
+            } else if (user?.role === 'Teacher') {
+              router.replace('/(teachers)/dashboard');
             }
-            // If authenticated and in their correct role group already, do nothing.
+          }
+          // If user is in their correct role group, do nothing (let them stay)
         }
       } else {
         // User is NOT authenticated
@@ -60,7 +66,7 @@ function InitialLayout() {
         // If NOT authenticated and already on an auth page, do nothing (stay on the signin page).
       }
     }
-  }, [isAuthenticated, isLoading, user, segments, router]); // Keep router in dependencies
+  }, [isAuthenticated, isLoading, user, segments, router]);
 
   return (
     <Stack>

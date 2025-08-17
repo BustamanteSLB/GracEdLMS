@@ -10,11 +10,12 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   isLoggingOut: boolean; // New state
-  login: (email: string, password: string) => Promise<void>;
+  login: (identifier: string, password: string) => Promise<void>;
   register: (userData: UserCreationPayload) => Promise<void>;
   logout: () => Promise<void>;
   fetchCurrentUser: () => Promise<User | null>;
   updateUserContext: (updatedUserData: Partial<User>) => void;
+  forgotPassword: (email: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -69,7 +70,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           }
         }
       } catch (e) {
-        console.error('AuthContext: Failed to load auth data from storage', e);
         await AsyncStorage.removeItem('userToken');
         await AsyncStorage.removeItem('userData');
         setToken(null);
@@ -81,9 +81,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     loadAuthData();
   }, []); // Runs once on mount
 
-  const login = async (email: string, password: string) => {
+  const login = async (identifier: string, password: string) => { // Changed parameter name
     try {
-      const response = await apiClient.post<ApiResponse<User>>('/auth/login', { email, password });
+      const response = await apiClient.post<ApiResponse<User>>('/auth/login', { identifier, password }); // Changed request body
       if (response.data.success && response.data.token && response.data.data) {
         const { token: newToken, data: userData } = response.data;
         apiClient.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;
@@ -147,7 +147,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       return null;
     }
     if (!token) { // Check the token from AuthContext state
-      // console.log("AuthContext: No token, cannot fetch current user.");
       return null;
     }
 
@@ -185,6 +184,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     });
   };
 
+  const forgotPassword = async (email: string) => {
+    try {
+      // Explicitly send no authorization header for the forgot-password endpoint
+      const response = await apiClient.post<ApiResponse<any>>('/auth/forgot-password', { email }, { headers: {} });
+      if (!response.data.success) {
+        throw new Error(response.data.message || 'Forgot password request failed');
+      }
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.message || error.message || 'An unknown error occurred during password reset request';
+      console.error('AuthContext: Forgot password error:', errorMessage);
+      throw new Error(errorMessage);
+    }
+  };
+
   return (
     <AuthContext.Provider value={{
         user,
@@ -196,7 +209,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         register,
         logout,
         fetchCurrentUser,
-        updateUserContext
+        updateUserContext,
+        forgotPassword,
     }}>
       {children}
     </AuthContext.Provider>

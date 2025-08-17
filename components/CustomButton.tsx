@@ -22,8 +22,8 @@ const CustomButton: React.FC<CustomButtonProps> = ({ title, handlePress, contain
       disabled={isLoading}
     >
       <View className="flex-row">
-        {iconVector && <View style={{ marginRight: 8 }}>{iconVector}</View>}
-        {iconImage && <Image source={iconImage} style={{ tintColor }} className={`h-[24px] mr-[8px] w-[24px] ${iconStyles}`}/>}
+        {iconVector && <View style={{ alignItems:'center', justifyContent:'center', marginRight: 4 }}>{iconVector}</View>}
+        {iconImage && <Image source={iconImage} style={{ tintColor }} className={`h-[24px] mr-[4px] w-[24px] ${iconStyles}`}/>}
         <Text className={`text-black font-psemibold text-lg ${textStyles}`}>{title}</Text>
       </View>
     </TouchableOpacity>

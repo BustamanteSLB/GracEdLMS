@@ -70,7 +70,9 @@ const CustomDrawerContent = (props:any) => {
   }, [logout, isLoading]); // Depend on logout and isLoading from AuthContext
 
   return (
-    <SafeAreaView className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
+    <SafeAreaView
+      className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}
+    >
       <DrawerContentScrollView {...props}>
         <View className="items-center p-5 flex-row">
           <Image

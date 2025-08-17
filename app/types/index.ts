@@ -1,55 +1,79 @@
+// index.ts
 export interface User {
   _id: string;
-  userId: string; // YYYY-XXXXXX
+  userId: string;
   username: string;
   firstName: string;
-  middleName?: string;
+  middleName: string; // Optional
   lastName: string;
   email: string;
-  // password is not stored on client
   phoneNumber: string;
   address: string;
-  role: 'Admin' | 'Student' | 'Teacher';
-  sex: 'Male' | 'Female' | 'Other' | null;
-  gender?: string | null;
-  profilePicture?: string;
+  role: 'Admin' | 'Teacher' | 'Student';
+  profilePicture?: string; // Optional
   status: 'active' | 'inactive' | 'suspended' | 'pending' | 'archived';
-  bio?: string;
-  createdAt: string; // Date string
-  updatedAt: string; // Date string
-  lastLogin?: string; // Date string
+  sex: 'Male' | 'Female' | 'Other';
+  lastLogin?: Date; // Optional
+  temporaryPassword?: string; // Optional, for password reset flows
+  createdAt: Date;
+  updatedAt: Date;
 
   // Role-specific populated fields (optional, depends on API response for /auth/me)
-  enrolledCourses?: Course[];
-  assignedCourses?: Course[];
+  enrolledSubjects?: Subject[];
+  assignedSubjects?: Subject[];
 }
 
-export interface Course {
+export interface Subject {
     _id: string;
-    courseCode: string;
-    courseName: string;
+    subjectCode: string;
+    subjectName: string;
     description?: string;
-    teacher?: Partial<User>; // Only relevant fields like name, email
-    students?: Partial<User>[];
-    activities?: Partial<Activity>[];
-    // ... other course fields
+    teacher?: User; // Changed to User from Partial<User>
+    students?: User[]; // Changed to User[] from Partial<User>[]
+    activities?: Activity[]; // Changed to Activity[] from Partial<Activity>[]
+    announcements?: Announcement[]; // Added announcements to align with modals
+    discussions?: Discussion[]; // Added discussions to align with modals
+    isArchived: boolean;
+    archivedAt?: string;
+    archivedBy?: User;
+    gradeLevel?: string;
+    section?: string;
+    schoolYear?: string; // Added schoolYear to align with modals
+    createdAt?: string; // Added createdAt to align with subjects.web.tsx and Subject.js
+    updatedAt?: string; // Added updatedAt to align with subjects.web.tsx and Subject.js
 }
 
 export interface Activity {
     _id: string;
     title: string;
     description?: string;
-    course: string; // Course ID
+    subject: string; // Subject ID
     dueDate?: string;
     maxPoints?: number;
-    // ... other activity fields
+    createdAt?: string;
+    updatedAt?: string;
+}
+
+export interface Announcement { // Added interface for announcements
+  _id: string;
+  title: string;
+  content: string;
+  date: string;
+}
+
+export interface Discussion { // Added interface for discussions
+  _id: string;
+  title: string;
+  author: string;
+  date: string;
+  comments: { _id: string; author: string; content: string; date: string; }[];
 }
 
 export interface Grade {
     _id: string;
     student: string; // Student ID
     activity: Partial<Activity>; // Activity ID or populated object
-    course: string; // Course ID
+    subject: string; // Subject ID
     score: number;
     gradedBy: Partial<User>; // User ID or populated object
     comments?: string;
@@ -59,7 +83,7 @@ export interface Grade {
 
 // Add more types as needed (e.g., for API payloads)
 export interface LoginPayload {
-  email: string;
+  identifier: string;
   password: string;
 }
 
@@ -74,9 +98,7 @@ export interface UserCreationPayload {
   address: string;
   role: 'Admin' | 'Student' | 'Teacher';
   sex: 'Male' | 'Female' | 'Other'; // <--- ADDED (sex is required)
-  gender?: string;
   status?: 'active' | 'inactive' | 'suspended' | 'pending' | 'archived';
-  bio?: string;
   profilePicture?: string;
 }
 
@@ -90,10 +112,9 @@ export interface UserUpdatePayload {
   // password updated separately
   phoneNumber?: string;
   address?: string;
-  sex?: 'Male' | 'Female' | 'Other'; // <--- ADDED
-  gender?: string; // <--- ADDED
-  status?: 'active' | 'inactive' | 'suspended' | 'pending' | 'archived'; // If admin updates
-  bio?: string;
+  // Role, status, sex, profilePicture can also be updated (if permitted by API)
+  // For user's own profile, role and status usually not updated
+  // sex and profilePicture should be explicitly set if changed
+  sex?: 'Male' | 'Female' | 'Other';
   profilePicture?: string;
-  role?: 'Admin' | 'Student' | 'Teacher'; // If admin updates
 }

@@ -265,40 +265,6 @@ export default function DrawerLayout() {
           }}
         />
         <Drawer.Screen
-          name="courses/[id]"
-          options={{
-            drawerIcon:({focused})=>(
-              <CoursesIcon
-                width={24} height={24}
-                fill={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
-              />
-            ),
-            drawerItemStyle: { display: 'none' },
-            drawerLabel: "Course Details",
-            drawerLabelStyle:{
-              fontFamily: 'Inter-24pt-SemiBold'
-            },            
-            headerStyle: {
-              backgroundColor: Platform.select({
-                android: '#22C55E',
-                ios: '#3B82F6',
-                web: '#6D28D9',
-              }),
-            },
-            headerShown: true,
-            headerTintColor: 'white', 
-            headerTitleAlign: 'left',             
-            headerTitleStyle: {
-              fontFamily: 'Poppins-Bold',
-              marginTop: Platform.select({
-                web: 0,
-                default: 5
-              })
-            },
-            title:"Course Details",
-          }}
-        />
-        <Drawer.Screen
           name="grades"
           options={{
             drawerIcon:({focused})=>(

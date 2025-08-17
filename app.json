@@ -33,6 +33,13 @@
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow GracEdLMS to access your photos to upload profile pictures.",
+          "cameraPermission": "Allow GracEdLMS to access your camera to take profile pictures."
+        }
       ]
     ],
     "experiments": {

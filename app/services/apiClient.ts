@@ -17,10 +17,33 @@ const apiClient = axios.create({
 // Request Interceptor: Add token to headers
 apiClient.interceptors.request.use(
   async (config: InternalAxiosRequestConfig) => {
-    const token = await AsyncStorage.getItem('userToken');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+    console.log('API Client: Request Interceptor - Checking for token...');
+
+    // For specific routes like forgot-password, ensure no Authorization header is sent.
+    if (config.url?.includes('/auth/forgot-password')) {
+      console.log('API Client: Ensuring no token for forgot-password route.');
+      if (config.headers.Authorization) {
+        delete config.headers.Authorization;
+        console.log('API Client: Removed Authorization header for forgot-password.');
+      }
+      return config;
     }
+
+    // Prefer token from apiClient defaults if set by AuthContext, fallback to AsyncStorage
+    // This handles cases where AuthContext might not have updated AsyncStorage yet.
+    if (!config.headers.Authorization) {
+        const token = await AsyncStorage.getItem('userToken');
+        console.log('API Client: Token from AsyncStorage:', token ? 'Token found' : 'No token found');
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`;
+          console.log('API Client: Authorization header set.');
+        } else {
+          console.log('API Client: No token found in AsyncStorage, Authorization header not set.');
+        }
+    } else {
+      console.log('API Client: Authorization header already exists.');
+    }
+    console.log('API Client: Final request config headers:', config.headers);
     return config;
   },
   (error: AxiosError) => {
@@ -28,19 +51,15 @@ apiClient.interceptors.request.use(
   }
 );
 
-// Response Interceptor (Optional: for global error handling like 401 redirect)
+// Response Interceptor
 apiClient.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
     if (error.response?.status === 401) {
-      // Token might be invalid or expired
-      console.log('API Client: Unauthorized access (401). Clearing token and redirecting to login.');
-      await AsyncStorage.removeItem('userToken');
-      await AsyncStorage.removeItem('userData');
-      // TODO: Implement navigation to login screen.
-      // This is tricky to do directly here. Usually handled by AuthContext or root navigator.
-      // For now, we'll just reject and let the calling component handle it.
-      // Example: import { router } from 'expo-router'; router.replace('/(auth)/signin');
+      // Log observed 401, but let the calling function (e.g., in AuthContext) handle the logout logic
+      console.warn('API Client: Intercepted a 401 Unauthorized error.');
+      console.log('API Client: 401 Error Details:', error.response);
+      // No automatic AsyncStorage.removeItem here, as AuthContext.logout will handle it.
     }
     return Promise.reject(error);
   }

@@ -7,6 +7,7 @@ import { cssInterop } from 'nativewind'
 import { Image } from 'expo-image'
 import apiClient, { ApiResponse } from '@/app/services/apiClient';
 import { User } from '@/app/types/index';
+import DeleteIcon from '@/assets/icons/delete.svg';
 
 cssInterop(Image, { className: "style" });
 
@@ -151,19 +152,22 @@ const ArchivesWeb = () => {
   return (
     <SafeAreaView className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} `}>
       <View className='flex-row mt-2'>
-        <Text className={`font-inter_bold mx-4 my-2 text-lg ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+        <Text className={`font-inter_bold mx-4 mt-2 text-lg ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
           Archived Users List
         </Text>
         <TouchableOpacity
-          className='rounded-xl h-[50px] justify-center items-center ml-auto mr-3 p-2'
+          className={`rounded-lg justify-center items-center ml-auto mr-3 p-2 ${isDarkMode ? 'bg-blue-600' : 'bg-blue-500'}`}
           onPress={fetchUsers}
           activeOpacity={0.7}
-          style={{ backgroundColor:'#60a5fa' }}
         >
           <View className='flex-row'>
-            <Text className='text-black font-psemibold text-lg'>
-              Refresh
-            </Text>
+            <Image
+              className="w-[24] h-[24]"
+              contentFit="contain"
+              source={require('@/assets/icons/refresh.png')}
+              cachePolicy="memory-disk"
+              tintColor={loading ? '#999' : isDarkMode ? '#E0E0E0' : 'white'}
+            />
           </View>
         </TouchableOpacity>
       </View>
@@ -203,28 +207,26 @@ const ArchivesWeb = () => {
 
               <View className='ml-auto flex-row self-start'>
                <TouchableOpacity
-                  className='bg-green-500 rounded-xl h-[50px] justify-center items-center mr-2 p-2'
+                  className={`rounded-lg justify-center items-center mr-1 p-2 ${isDarkMode ? 'bg-green-600' : 'bg-green-500'}`}
                   onPress={() => handleRestoreUser(item._id, item.username)}
                   activeOpacity={0.7}
                   disabled={isRestoring || isDeleting || !!actionLoading} // Disable if any action is loading
                 >
-                  <View className='flex-row'>
-                    <Text className='text-black font-psemibold text-lg'>
-                      Restore
-                    </Text>
-                  </View>
+                  <Image
+                    className="w-[24] h-[24]"
+                    contentFit="contain"
+                    source={require('@/assets/icons/restore.png')}
+                    cachePolicy="memory-disk"
+                    tintColor={loading ? '#999' : isDarkMode ? '#E0E0E0' : 'white'}
+                  />
                 </TouchableOpacity>
                 <TouchableOpacity
-                  className='bg-red-500 rounded-xl h-[50px] justify-center items-center p-2'
+                  className={`rounded-lg justify-center items-center p-2 ${isDarkMode ? 'bg-red-600' : 'bg-red-500'}`}
                   onPress={() => handlePermanentDeleteUser(item._id, item.username)}
                   activeOpacity={0.7}
                   disabled={isDeleting || isRestoring || !!actionLoading}
                 >
-                  <View className='flex-row'>
-                    <Text className='text-black font-psemibold text-lg'>
-                      Delete
-                    </Text>
-                  </View>
+                  <DeleteIcon width={24} height={24} fill={isDarkMode ? '#E0E0E0' : 'white'} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -236,6 +238,7 @@ const ArchivesWeb = () => {
         extraData={isDarkMode}
         onRefresh={fetchUsers}
         refreshing={refreshing}
+        showsVerticalScrollIndicator={false}
       />
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'}/>
     </SafeAreaView>

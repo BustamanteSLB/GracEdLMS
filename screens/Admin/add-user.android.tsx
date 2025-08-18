@@ -104,110 +104,140 @@ const AddUserAndroid = () => { // Renamed from RegisterAndroid to AddUserAndroid
             <Text className={`font-inter_black mt-4 text-center text-2xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'} `}>
               Add User Account
             </Text>
-            <Text className={`ml-2 mt-4 font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Username:
-            </Text>
+            <View className='flex-row items-center mt-2'>
+              <Text className={`font-inter_bold mr-1 ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>*</Text>
+              <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Username
+              </Text>
+            </View>
             <View className={`flex-row items-center border rounded-xl mt-2 mb-2 px-3 py-2
               ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>
               <TextInput
                 className={`h-full flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
                 placeholder="Enter username"
-                placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
                 autoCapitalize="none"
                 selectionColor="#22C55E"
                 selectionHandleColor="#22C55E"
                 value={username}
                 onChangeText={setUsername}
+                maxLength={30}
               />
             </View>
-            <Text className={`ml-2 font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              First Name:
-            </Text>
+            <View className='flex-row items-center mt-2'>
+              <Text className={`font-inter_bold mr-1 ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>*</Text>
+              <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                First Name
+              </Text>
+            </View>
             <View className={`flex-row items-center border rounded-xl mt-2 mb-2 px-3 py-2
               ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>
               <TextInput
                 className={`h-full flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
                 placeholder="Enter first name"
-                placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
                 autoCapitalize="words" // Changed to words for names
                 selectionColor="#22C55E"
                 selectionHandleColor="#22C55E"
                 value={firstName}
                 onChangeText={setFirstName}
+                maxLength={50}
               />
             </View>
-            <Text className={`ml-2 font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Middle Name (Optional):
-            </Text>
+            <View className='flex-row items-center'>
+              <Text className={`ml-2 font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Middle Name
+              </Text>
+              <Text className={`ml-1 font-inter_bold text-base italic ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                - Optional
+              </Text>
+            </View>
             <View className={`flex-row items-center border rounded-xl mt-2 mb-2 px-3 py-2
               ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>
               <TextInput
                 className={`h-full flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
                 placeholder="Enter middle name"
-                placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
                 autoCapitalize="words" // Changed to words for names
                 selectionColor="#22C55E"
                 selectionHandleColor="#22C55E"
                 value={middleName}
                 onChangeText={setMiddleName}
+                maxLength={50}
               />
             </View>
-            <Text className={`ml-2 font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Last Name:
-            </Text>
+            <View className='flex-row items-center mt-2'>
+              <Text className={`font-inter_bold mr-1 ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>*</Text>
+              <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Last Name
+              </Text>
+            </View>
             <View className={`flex-row items-center border rounded-xl mt-2 mb-2 px-3 py-2
               ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>
               <TextInput
                 className={`h-full flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
                 placeholder="Enter last name"
-                placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
                 autoCapitalize="words" // Changed to words for names
                 selectionColor="#22C55E"
                 selectionHandleColor="#22C55E"
                 value={lastName}
                 onChangeText={setLastName}
+                maxLength={50}
               />
             </View>
-            <Text className={`ml-2 font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Phone Number:
-            </Text>
+            <View className='flex-row items-center mt-2'>
+              <Text className={`font-inter_bold mr-1 ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>*</Text>
+              <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Phone Number
+              </Text>
+            </View>
             <View className={`flex-row items-center border rounded-xl mt-2 mb-2 px-3 py-2
               ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>
               <TextInput
                 className={`h-full flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
                 placeholder="Enter phone number"
-                placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
                 keyboardType='phone-pad'
                 selectionColor="#22C55E"
                 selectionHandleColor="#22C55E"
                 value={phoneNumber}
                 onChangeText={setPhoneNumber}
-                maxLength={16} // Added max length for phone number
+                maxLength={13} // Added max length for phone number
               />
             </View>
             <Text className={`ml-2 mb-2 font-inter_regular text-xs ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>
               Format: +639XXXXXXXXX or 09XXXXXXXXX
             </Text>
-            <Text className={`ml-2 font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Address:
-            </Text>
+            <View className='flex-row items-center'>
+              <Text className={`ml-2 font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Address
+              </Text>
+              <Text className={`ml-1 font-inter_bold text-base italic ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                - Optional
+              </Text>
+            </View>
             <View className={`flex-row items-center border rounded-xl mt-2 mb-2 px-3 py-2
               ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>
               <TextInput
                 className={`h-full flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
                 placeholder="Enter address"
-                placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
                 autoCapitalize='words' // Changed to words for address
                 multiline={true}
                 selectionColor="#22C55E"
                 selectionHandleColor="#22C55E"
                 value={address}
                 onChangeText={setAddress}
+                maxLength={150}
               />
             </View>
-            <Text className={`ml-2 font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Sex:
-            </Text>
+            <View className='flex-row items-center mt-2'>
+              <Text className={`font-inter_bold mr-1 ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>*</Text>
+              <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Sex
+              </Text>
+            </View>
             <View className={`overflow-hidden border rounded-xl mb-2 ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>
               <Picker
                 style={{ backgroundColor: isDarkMode ? '#1E1E1E' : 'white', color: isDarkMode ? '#E0E0E0' : 'black', height: 55, width: '100%', fontFamily: 'Inter-18pt-Regular', fontSize: 14, padding: 12 }}
@@ -222,9 +252,12 @@ const AddUserAndroid = () => { // Renamed from RegisterAndroid to AddUserAndroid
                 <Picker.Item label="Other" value="Other" style={{ fontFamily:'Inter-18pt-Regular', fontSize: 14}}/>
               </Picker>
             </View>
-            <Text className={`ml-2 font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Role:
-            </Text>
+            <View className='flex-row items-center mt-2'>
+              <Text className={`font-inter_bold mr-1 ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>*</Text>
+              <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Role
+              </Text>
+            </View>
             <View className={`overflow-hidden border rounded-xl mb-2 ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>
               <Picker
                 style={{ backgroundColor: isDarkMode ? '#1E1E1E' : 'white', color: isDarkMode ? '#E0E0E0' : 'black', height: 55, width: '100%', fontFamily: 'Inter-18pt-Regular', fontSize: 14, padding: 12 }}
@@ -239,38 +272,46 @@ const AddUserAndroid = () => { // Renamed from RegisterAndroid to AddUserAndroid
                 <Picker.Item label="Teacher" value="Teacher" style={{ fontFamily:'Inter-18pt-Regular', fontSize: 14}}/>
               </Picker>
             </View>
-            <Text className={`ml-2 font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Email:
-            </Text>
+            <View className='flex-row items-center mt-2'>
+              <Text className={`font-inter_bold mr-1 ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>*</Text>
+              <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Email
+              </Text>
+            </View>
             <View className={`flex-row items-center border rounded-xl mt-2 mb-2 px-3 py-2
               ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>
               <TextInput
                 className={`h-full flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
                 placeholder="Enter email"
-                placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
                 keyboardType="email-address"
                 autoCapitalize="none"
                 selectionColor="#22C55E"
                 selectionHandleColor="#22C55E"
                 value={email}
                 onChangeText={setEmail}
+                maxLength={50}
               />
             </View>
-            <Text className={`ml-2 font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Password:
-            </Text>
+            <View className='flex-row items-center mt-2'>
+              <Text className={`font-inter_bold mr-1 ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>*</Text>
+              <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Password
+              </Text>
+            </View>
             <View className={`flex-row items-center border rounded-xl mt-2 mb-2 px-3 py-2
               ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>
               <TextInput
                 className={`h-full flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
                 placeholder="Enter password"
-                placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
                 autoCapitalize="none"
                 selectionColor="#22C55E"
                 selectionHandleColor="#22C55E"
                 secureTextEntry={isSecure}
                 value={password}
                 onChangeText={setPassword}
+                maxLength={25}
               />
               <TouchableOpacity onPress={toggleSecure}>
                 <Image
@@ -286,21 +327,25 @@ const AddUserAndroid = () => { // Renamed from RegisterAndroid to AddUserAndroid
                 />
               </TouchableOpacity>
             </View>
-            <Text className={`ml-2 font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Confirm Password:
-            </Text>
+            <View className='flex-row items-center mt-2'>
+              <Text className={`font-inter_bold mr-1 ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>*</Text>
+              <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Confirm Password
+              </Text>
+            </View>
             <View className={`flex-row items-center border rounded-xl mt-2 mb-4 px-3 py-2
               ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>
               <TextInput
                 className={`h-full flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
                 placeholder="Confirm password"
-                placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
                 autoCapitalize="none"
                 selectionColor="#22C55E"
                 selectionHandleColor="#22C55E"
                 secureTextEntry={isConfirmSecure}
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
+                maxLength={25}
               />
               <TouchableOpacity onPress={toggleConfirmSecure}>
                 <Image

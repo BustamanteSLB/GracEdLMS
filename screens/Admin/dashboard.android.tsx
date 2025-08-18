@@ -10,8 +10,11 @@ import { useRouter } from 'expo-router';
 import { useDarkMode } from '@/contexts/DarkModeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import AccountIcon from '@/assets/icons/account.svg';
+import ActivityIcon from '@/assets/icons/activity.svg';
 import ArchiveIcon from '@/assets/icons/archive.svg';
+import CalendarIcon from '@/assets/icons/calendar_month.svg'
 import CoursesIcon from '@/assets/icons/course_book.svg'
+import GradesIcon from '@/assets/icons/grades.svg'
 import InstitutionIcon from '@/assets/icons/institution.svg'
 
 cssInterop(FlashList, { className: "style" });
@@ -32,14 +35,26 @@ const DBAndroid: React.FC = () => {
       onPress: () => router.replace('/(admins)/user-management')
     },
     {
+      description: 'Manage subjects, manage subject content, and track student progress in one place.',
+      Icon: CoursesIcon,
+      title: 'Subjects',
+      onPress: () => router.replace('/(admins)/subjects')
+    },
+    {
       description: 'View archived users and decide whether to restore or delete them.',
       Icon: ArchiveIcon,
       title: 'Archives',
       onPress: () => router.replace('/(admins)/archives')
     },
     {
-      description: 'Check the current date.',
-      Icon: InstitutionIcon,
+      description: 'View archived subjects and decide whether to restore or delete them.',
+      Icon: ArchiveIcon,
+      title: 'Subject Archives',
+      onPress: () => router.replace('/(admins)/subject-archives')
+    },
+    {
+      description: 'Check the current date, and manage events for all users.',
+      Icon: CalendarIcon,
       title: 'Calendar',
       onPress: () => router.replace('/(admins)/calendar-screen')
     },
@@ -47,7 +62,6 @@ const DBAndroid: React.FC = () => {
 
   const [isPortrait, setIsPortrait] = useState(true);
 
-  
   useEffect(() => {
     const updateOrientation = () => {
       const { width, height } = Dimensions.get('window');

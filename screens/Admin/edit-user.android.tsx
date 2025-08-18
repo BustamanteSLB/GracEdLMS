@@ -220,11 +220,12 @@ const EditUserAndroid = () => {
               <TextInput
                 className={`flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
                 placeholder="Enter first name"
-                placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
                 autoCapitalize="none"
                 selectionColor="#22C55E"
                 value={username}
                 onChangeText={setUsername}
+                maxLength={30}
               />
             </View>
             <Text className={`ml-2 mb-1 font-inter_semibold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
@@ -235,11 +236,12 @@ const EditUserAndroid = () => {
               <TextInput
                 className={`flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
                 placeholder="Enter first name"
-                placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
                 autoCapitalize="none"
                 selectionColor="#22C55E"
                 value={firstName}
                 onChangeText={setFirstName}
+                maxLength={50}
               />
             </View>
             <Text className={`ml-2 mb-1 font-inter_semibold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
@@ -250,11 +252,12 @@ const EditUserAndroid = () => {
               <TextInput
                 className={`flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
                 placeholder="Enter middle name"
-                placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
                 autoCapitalize="none"
                 selectionColor="#22C55E"
                 value={middleName}
                 onChangeText={setMiddleName}
+                maxLength={50}
               />
             </View>
             <Text className={`ml-2 mb-1 font-inter_semibold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
@@ -265,11 +268,12 @@ const EditUserAndroid = () => {
               <TextInput
                 className={`flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
                 placeholder="Enter last name"
-                placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
                 autoCapitalize="none"
                 selectionColor="#22C55E"
                 value={lastName}
                 onChangeText={setLastName}
+                maxLength={50}
               />
             </View>
             <Text className={`ml-2 mb-1 font-inter_semibold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
@@ -332,11 +336,12 @@ const EditUserAndroid = () => {
                 className={`flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
                 placeholder="Enter email"
                 keyboardType="email-address"
-                placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
                 autoCapitalize="none"
                 selectionColor="#22C55E"
                 value={email}
                 onChangeText={setEmail}
+                maxLength={50}
               />
             </View>
             <Text className={`ml-2 mb-1 font-inter_semibold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
@@ -347,11 +352,12 @@ const EditUserAndroid = () => {
               <TextInput
                 className={`flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
                 placeholder="Enter new password"
-                placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
                 autoCapitalize="none"
                 selectionColor="#22C55E"
                 value={newPassword}
                 onChangeText={setNewPassword}
+                maxLength={25}
               />
             </View>
             <Text className={`ml-2 mb-1 font-inter_semibold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
@@ -362,11 +368,12 @@ const EditUserAndroid = () => {
               <TextInput
                 className={`flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
                 placeholder="Confirm new password"
-                placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
                 autoCapitalize="none"
                 selectionColor="#22C55E"
                 value={confirmNewPassword}
                 onChangeText={setConfirmNewPassword}
+                maxLength={25}
               />
             </View>
             <Text className={`ml-2 mb-1 font-inter_semibold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
@@ -378,12 +385,12 @@ const EditUserAndroid = () => {
                 className={`flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
                 placeholder="Enter phone number"
                 keyboardType="phone-pad"
-                placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
                 autoCapitalize="none"
                 selectionColor="#22C55E"
                 value={phoneNumber}
                 onChangeText={setPhoneNumber}
-                maxLength={16}
+                maxLength={13}
               />
             </View>
             <Text className={`ml-2 mb-2 font-inter_regular text-xs ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>
@@ -397,18 +404,19 @@ const EditUserAndroid = () => {
               <TextInput
                 className={`flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
                 placeholder="Enter address"
-                placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
                 autoCapitalize="none"
                 multiline={true}
                 selectionColor="#22C55E"
                 value={address}
                 onChangeText={setAddress}
+                maxLength={150}
               />
             </View>
             <CustomButton
               containerStyles='bg-secondary-android h-[55px] mt-2'
               handlePress={handleEditUser}
-              title={submitting ? 'Editing' : 'Edit User'}
+              title={submitting ? 'Editing...' : 'Edit User'}
               isLoading={submitting}
             />
             <TouchableOpacity

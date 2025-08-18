@@ -36,6 +36,12 @@ const DBIOS: React.FC = () => {
       onPress: () => router.replace('/(admins)/archives')
     },
     {
+      description: 'View archived subjects and decide whether to restore or delete them.',
+      Icon: ArchiveIcon,
+      title: 'Subject Archives',
+      onPress: () => router.replace('/(admins)/subject-archives')
+    },
+    {
       description: 'Check the current date.',
       Icon: InstitutionIcon,
       title: 'Calendar',

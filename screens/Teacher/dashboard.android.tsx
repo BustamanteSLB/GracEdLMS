@@ -8,6 +8,7 @@ import React from 'react'
 import { StatusBar } from 'expo-status-bar'
 import { useRouter } from 'expo-router';
 import { useDarkMode } from '@/contexts/DarkModeContext';
+import { useAuth } from '@/contexts/AuthContext';
 import ActivityIcon from '@/assets/icons/activity.svg';
 import CalendarIcon from '@/assets/icons/calendar_month.svg';
 import CoursesIcon from '@/assets/icons/course_book.svg'
@@ -23,48 +24,48 @@ const DBAndroid: React.FC = () => {
   const colorScheme = useColorScheme();
   const { isDarkMode } = useDarkMode();
   const router = useRouter();
+  const { user } = useAuth();
 
   const data = [
     {
-      description: 'Stay updated with recent interactions, announcements, and progress summaries in your learning journey.',
+      description: 'Create and manage activities (quizzes, exams, etc.) you will assign for your students.',
       Icon: ActivityIcon,
       title: 'Activity',
-      onPress: () => router.replace('/(students)/activity')
+      onPress: () => router.replace('/(teachers)/activity')
     },
     {
-      description: 'View and manage your academic calendar, including upcoming classes, deadlines, and events.',
+      description: 'See the current date and view events managed by your institution.',
       Icon: CalendarIcon,
       title: 'Calendar',
-      onPress: () => router.replace('/(students)/calendar-screen')
+      onPress: () => router.replace('/(teachers)/calendar-screen')
     },
     {
-      description: 'Access your enrolled courses, explore new subjects, and track your learning progress in one place.',
+      description: 'Create and manage your subjects, manage subject content, and track student progress in one place.',
       Icon: CoursesIcon,
-      title: 'Courses',
-      onPress: () => router.replace('/(students)/courses')
+      title: 'Subjects',
+      onPress: () => router.replace('/(teachers)/subjects')
     },
     {
-      description: 'Check your grades, monitor academic performance, and review feedback from instructors.',
+      description: 'Check your students grades, monitor their academic performance, and provide feedback on their work.',
       Icon: GradesIcon,
       title: 'Grades',
-      onPress: () => router.replace('/(students)/grades')
+      onPress: () => router.replace('/(teachers)/grades')
     },
     {
-      description: 'Browse institutions, discover new opportunities, and connect with the right place to grow your learning journey.',
+      description: 'View your institution details, including their vision and mission, websites, and contact information.',
       Icon: InstitutionIcon,
       title: 'Institution',
-      onPress: () => router.replace('/(students)/institution')
+      onPress: () => router.replace('/(teachers)/institution')
     },
     {
       description: 'Manage your profile, update personal information, and customize your learning preferences.',
       Icon: ProfileIcon,
       title: 'Profile',
-      onPress: () => router.replace('/(students)/profile')
+      onPress: () => router.replace('/(teachers)/profile')
     },
   ];
 
   const [isPortrait, setIsPortrait] = useState(true);
-
   
   useEffect(() => {
     const updateOrientation = () => {
@@ -82,9 +83,14 @@ const DBAndroid: React.FC = () => {
     };
   }, []);
 
+  if (!user) {
+    // Handle case where user is not loaded yet, or redirect
+    return <Text>Loading...</Text>;
+  }
+
   return (
     <SafeAreaView className={`flex-1 items-center justify-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-      <Text className={`text-left self-start font-inter_semibold ml-[10px] ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>Welcome, student.</Text>
+      <Text className={`text-left self-start font-inter_semibold ml-[10px] ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>Welcome, {user.firstName}! Your role is: {user.role}</Text>
       <FlashList
         data={data}
         renderItem={({ item }) => (

@@ -7,11 +7,13 @@ import { Image, ImageBackground } from 'expo-image'
 import { cssInterop } from 'nativewind'
 import { useAuth } from '@/contexts/AuthContext';
 import CustomButton from '@/components/CustomButton'
+import { useRouter } from 'expo-router'
 
 const ProfileAndroid: React.FC = () => {
 
   const colorScheme = useColorScheme();
   const { isDarkMode } = useDarkMode();
+  const router = useRouter();
   const { user, fetchCurrentUser, isLoading: authIsLoading, isLoggingOut } = useAuth(); // Get isLoading and isLoggingOut
   cssInterop(Image, { className: "style" });
   cssInterop(ImageBackground, { className: "style" });
@@ -182,7 +184,7 @@ const ProfileAndroid: React.FC = () => {
           <CustomButton
             containerStyles={`bg-secondary-android h-[55px] mb-2`}
             title="Edit Profile"
-            handlePress={() => console.log('Edit Profile Pressed')}
+            handlePress={() => router.push('/(teachers)/edit-profile')}
           />
         </View>
       </ScrollView>

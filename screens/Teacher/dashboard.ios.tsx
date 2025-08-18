@@ -29,37 +29,37 @@ const DBIOS: React.FC = () => {
       description: 'Stay updated with recent interactions, announcements, and progress summaries in your learning journey.',
       Icon: ActivityIcon,
       title: 'Activity',
-      onPress: () => router.replace('/(students)/activity')
+      onPress: () => router.replace('/(teachers)/activity')
     },
     {
       description: 'View and manage your academic calendar, including upcoming classes, deadlines, and events.',
       Icon: CalendarIcon,
       title: 'Calendar',
-      onPress: () => router.replace('/(students)/calendar-screen')
+      onPress: () => router.replace('/(teachers)/calendar-screen')
     },
     {
       description: 'Access your enrolled courses, explore new subjects, and track your learning progress in one place.',
       Icon: CoursesIcon,
       title: 'Courses',
-      onPress: () => router.replace('/(students)/courses')
+      onPress: () => router.replace('/(teachers)/subjects')
     },
     {
       description: 'Check your grades, monitor academic performance, and review feedback from instructors.',
       Icon: GradesIcon,
       title: 'Grades',
-      onPress: () => router.replace('/(students)/grades')
+      onPress: () => router.replace('/(teachers)/grades')
     },
     {
       description: 'Browse institutions, discover new opportunities, and connect with the right place to grow your learning journey.',
       Icon: InstitutionIcon,
       title: 'Institution',
-      onPress: () => router.replace('/(students)/institution')
+      onPress: () => router.replace('/(teachers)/institution')
     },
     {
       description: 'Manage your profile, update personal information, and customize your learning preferences.',
       Icon: ProfileIcon,
       title: 'Profile',
-      onPress: () => router.replace('/(students)/profile')
+      onPress: () => router.replace('/(teachers)/profile')
     },
   ];
 

@@ -38,10 +38,10 @@ const DBIOS: React.FC = () => {
       onPress: () => router.replace('/(students)/calendar-screen')
     },
     {
-      description: 'Access your enrolled courses, explore new subjects, and track your learning progress in one place.',
+      description: 'Access your enrolled subjects, explore new subjects, and track your learning progress in one place.',
       Icon: CoursesIcon,
       title: 'Courses',
-      onPress: () => router.replace('/(students)/courses')
+      onPress: () => router.replace('/(students)/subjects')
     },
     {
       description: 'Check your grades, monitor academic performance, and review feedback from instructors.',

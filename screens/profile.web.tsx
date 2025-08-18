@@ -8,6 +8,7 @@ import { cssInterop } from 'nativewind'
 import { useAuth } from '@/contexts/AuthContext';
 import EmailIcon from '@/assets/icons/email.svg'
 import CustomButton from '@/components/CustomButton'
+import { router } from 'expo-router'
 
 const ProfileWeb: React.FC = () => {
 
@@ -36,7 +37,7 @@ const ProfileWeb: React.FC = () => {
 
   if (authIsLoading || (!user && !isLoggingOut)) {
     return (
-      <SafeAreaView className='flex-1 items-center justify-center bg-primary-android'>
+      <SafeAreaView className={`flex-1 items-center justify-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
         <ActivityIndicator size="large" color={isDarkMode ? '#E0E0E0' : '#121212'} />
         <Text className={`mt-4 text-lg font-inter_semibold ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
           Loading Profile...
@@ -83,7 +84,7 @@ const ProfileWeb: React.FC = () => {
         />
         <Image
           className='w-[150] h-[150] mt-[-80] rounded-full'
-          source={require('@/assets/images/sample_profile_picture.png')}
+          source={ user?.profilePicture ? { uri: user?.profilePicture } : require('@/assets/images/sample_profile_picture.png')}
         />
         <View className='p-1 mt-3'>
           <Text className={`font-inter_bold text-center text-xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
@@ -183,7 +184,7 @@ const ProfileWeb: React.FC = () => {
           <CustomButton
             containerStyles={`bg-secondary-web h-[55px] mb-2`}
             title="Edit Profile"
-            handlePress={() => console.log('Edit Profile Pressed')}
+            handlePress={() => router.push('/(students)/edit-profile')}
           />
         </View>
       </ScrollView>

@@ -20,7 +20,7 @@ const ActivityIOS: React.FC = () => {
         source={require('@/assets/images/activity.png')}
         transition={200}
       />
-      <Text className={`font-inter_regular text-center ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>No course activity yet.</Text>
+      <Text className={`font-inter_regular text-center ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>No subject activity yet.</Text>
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'black' : 'white'}/>
     </SafeAreaView>
   )

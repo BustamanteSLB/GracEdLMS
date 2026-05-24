@@ -7,9 +7,11 @@ import { Image } from 'expo-image'
 import { cssInterop } from 'nativewind'
 import apiClient from '@/app/services/apiClient'
 import { useAuth } from '@/contexts/AuthContext'
-import { Picker } from '@react-native-picker/picker'
 import * as DocumentPicker from 'expo-document-picker'
+import AddFile from '@/assets/icons/add_file.svg'
 import AttachIcon from '@/assets/icons/attach.svg'
+import FileIcon from '@/assets/icons/file.svg'
+import Dropdown, { DropdownItem } from '@/components/Dropdown'
 
 cssInterop(Image, { className: "style" });
 
@@ -34,10 +36,20 @@ interface Subject {
   subjectId: string;
   subjectName: string;
   subjectDescription?: string;
-  teacher: User;
+  subjectImage?: string;
+  teachers: Array<{
+    teacher: User;
+    quarters: {
+      firstQuarter: boolean;
+      secondQuarter: boolean;
+      thirdQuarter: boolean;
+      fourthQuarter: boolean;
+    };
+    isAssignedToAllQuarters: boolean;
+  }>;
   section: string;
-  semester: string;
-  academicYear: string;
+  gradeLevel?: string;
+  schoolYear?: string;
   status: 'active' | 'inactive' | 'archived';
   students: string[];
 }
@@ -66,6 +78,7 @@ interface Grade {
 }
 
 interface Activity {
+  allowLateSubmissions: boolean
   _id: string;
   title: string;
   description?: string;
@@ -104,8 +117,28 @@ interface MainListItem {
   data?: Activity;
 }
 
+// Helper function to validate and get file URL
+const getFileUrl = (fileUrl: string) => {
+  if (fileUrl.startsWith('https://storage.googleapis.com/') || 
+      fileUrl.startsWith('https://firebasestorage.googleapis.com/')) {
+    return fileUrl;
+  }
+  
+  if (fileUrl.startsWith('/uploads/') || fileUrl.startsWith('uploads/')) {
+    console.warn('Legacy file path detected:', fileUrl);
+    return null;
+  }
+  
+  return fileUrl;
+};
+
+const handleFileError = (fileUrl: string) => {
+  console.warn('Failed to load file:', fileUrl);
+};
+
 // Student's activity page
 const ActivityWeb: React.FC = () => {
+  document.title = 'Activities - GracEdLMS'
   const colorScheme = useColorScheme();
   const { isDarkMode } = useDarkMode();
   const { width } = useWindowDimensions();
@@ -127,6 +160,9 @@ const ActivityWeb: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUndoingSubmission, setIsUndoingSubmission] = useState(false);
 
+  // File error state
+  const [fileLoadError, setFileLoadError] = useState<{[key: string]: boolean}>({});
+
   // Derived data for filters
   const enrolledSubjects = useMemo(() => {
     const uniqueSubjects = activities.reduce((acc, activity) => {
@@ -138,15 +174,34 @@ const ActivityWeb: React.FC = () => {
     return uniqueSubjects.sort((a, b) => a.subjectName.localeCompare(b.subjectName));
   }, [activities]);
 
+  // Memoized dropdown options for filters
+  const subjectFilterOptions: DropdownItem[] = useMemo(() => {
+    const options: DropdownItem[] = [
+      { label: 'All Subjects', value: '' }
+    ];
+    
+    enrolledSubjects.forEach((subject) => {
+      options.push({
+        label: subject.subjectName,
+        value: subject._id
+      });
+    });
+    
+    return options;
+  }, [enrolledSubjects]);
+
+  const statusFilterOptions: DropdownItem[] = useMemo(() => [
+    { label: 'All Status', value: '' },
+    { label: 'Active', value: 'active' },
+    { label: 'Overdue', value: 'overdue' },
+    { label: 'Graded', value: 'graded' },
+  ], []);
+
   // Filtered activities
   const filteredActivities = useMemo(() => {
     let filtered = activities;
     const now = new Date();
 
-    // Only show visible activities (visibleDate <= now) - REMOVE THIS RESTRICTION FOR NOW
-    // filtered = filtered.filter(activity => new Date(activity.visibleDate) <= now);
-
-    // Search filter
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase().trim();
       filtered = filtered.filter(activity => {
@@ -160,12 +215,10 @@ const ActivityWeb: React.FC = () => {
       });
     }
 
-    // Subject filter
     if (subjectFilter) {
       filtered = filtered.filter(activity => activity.subject._id === subjectFilter);
     }
 
-    // Status filter (based on deadline and grading status)
     if (statusFilter) {
       filtered = filtered.filter(activity => {
         const deadline = new Date(activity.deadline);
@@ -175,17 +228,20 @@ const ActivityWeb: React.FC = () => {
           case 'graded':
             return isGraded;
           case 'active':
-            return !isGraded && deadline > now;
+            return !isGraded && (deadline > now || activity.allowLateSubmissions);
           case 'overdue':
-            return !isGraded && deadline < now;
+            return !isGraded && deadline < now && !activity.allowLateSubmissions;
           default:
             return true;
         }
       });
     }
 
-    // Sort by deadline (soonest first)
-    return filtered.sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime());
+    return filtered.sort((a, b) => {
+      const deadlineA = new Date(a.deadline).getTime();
+      const deadlineB = new Date(b.deadline).getTime();
+      return deadlineA - deadlineB;
+    });
   }, [activities, searchQuery, subjectFilter, statusFilter]);
 
   // Fetch activities from student's enrolled subjects
@@ -200,61 +256,42 @@ const ActivityWeb: React.FC = () => {
       setLoading(true);
       setError(null);
 
-      console.log('🔍 Fetching activities for student:', user.firstName, user.lastName);
-
-      // First, get all subjects
       const subjectsResponse = await apiClient.get('/subjects');
       const allSubjects = subjectsResponse.data.data || [];
       
-      console.log('📚 Total subjects found:', allSubjects.length);
-      
-      // Filter subjects where this student is enrolled
       const studentSubjects = allSubjects.filter((subject: Subject) => {
         const isEnrolled = subject.students && subject.students.some((studentId: any) => {
-          // Handle both string IDs and populated objects
           const id = typeof studentId === 'string' ? studentId : studentId._id;
           return id === user._id;
         });
         return isEnrolled;
       });
 
-      console.log('📖 Student enrolled subjects:', studentSubjects.length, studentSubjects.map((s: { subjectName: any }) => s.subjectName));
-
       if (studentSubjects.length === 0) {
-        console.log('⚠️ No enrolled subjects found for student');
         setActivities([]);
         setLoading(false);
         return;
       }
 
-      // Then, fetch activities for each enrolled subject
       const allActivities: Activity[] = [];
       
       for (const subject of studentSubjects) {
         try {
-          console.log(`🔍 Fetching activities for subject: ${subject.subjectName}`);
           const activitiesResponse = await apiClient.get<ActivityResponse>(`/subjects/${subject._id}/activities`);
           
           if (activitiesResponse.data.success && activitiesResponse.data.data) {
-            console.log(`📝 Found ${activitiesResponse.data.data.length} activities for ${subject.subjectName}`);
-            
-            // Add subject info to each activity first
             const activitiesWithSubject = activitiesResponse.data.data.map((activity: Activity) => ({
               ...activity,
               subject: subject,
-              myGrade: undefined // Initialize as undefined
+              quarter: activity.quarter || 'First Quarter',
+              myGrade: undefined
             }));
 
-            // Then, fetch student's grades for this subject
             try {
               const gradesResponse = await apiClient.get(`/subjects/${subject._id}/students/${user._id}/grades`);
               const subjectGrades = gradesResponse.data.data || [];
 
-              console.log(`📊 Found ${subjectGrades.length} grades for ${subject.subjectName}`);
-
-              // Map grades to activities, with null checking
               const activitiesWithGrades = activitiesWithSubject.map((activity: Activity) => {
-                // Find the grade for this specific activity with null checking
                 const myGrade = subjectGrades.find((grade: Grade) => 
                   grade && grade.activity && grade.activity._id === activity._id
                 );
@@ -268,19 +305,14 @@ const ActivityWeb: React.FC = () => {
               allActivities.push(...activitiesWithGrades);
             } catch (gradesError: any) {
               console.warn(`Failed to fetch grades for subject ${subject.subjectName}:`, gradesError);
-              // Continue with activities without grades
               allActivities.push(...activitiesWithSubject);
             }
-          } else {
-            console.log(`📝 No activities found for ${subject.subjectName}`);
           }
         } catch (subjectError: any) {
           console.warn(`Failed to fetch activities for subject ${subject.subjectName}:`, subjectError);
-          // Continue with other subjects even if one fails
         }
       }
 
-      console.log('✅ Total activities fetched:', allActivities.length);
       setActivities(allActivities);
     } catch (err: any) {
       console.error('Error fetching student activities:', err);
@@ -345,12 +377,10 @@ const ActivityWeb: React.FC = () => {
     }
   };
 
-  // Remove file from submission
   const removeFile = (index: number) => {
     setSubmissionFiles(prevFiles => prevFiles.filter((_, i) => i !== index));
   };
 
-  // Handle Turn In Activity
   const handleTurnInActivity = async () => {
     if (!selectedActivity || !user) return;
 
@@ -372,7 +402,6 @@ const ActivityWeb: React.FC = () => {
         }
       });
 
-      console.log(`➡️ Sending POST /activities/${selectedActivity._id}/turn-in`);
       const res = await apiClient.post(
         `/activities/${selectedActivity._id}/turn-in`,
         formData,
@@ -383,19 +412,36 @@ const ActivityWeb: React.FC = () => {
           timeout: 60000,
         }
       );
-      console.log('✅ Turn In Activity response:', res.data);
       
-      // Refresh activities to show updated submission status
-      await fetchStudentActivities();
-      
-      // Re-select the activity to refresh the view
-      const updatedActivity = activities.find(act => act._id === selectedActivity._id);
-      if (updatedActivity) {
-        setSelectedActivity(updatedActivity);
-      }
-      
-      // Clear submission files
       setSubmissionFiles([]);
+      
+      const activityResponse = await apiClient.get(`/activities/${selectedActivity._id}`);
+      const updatedActivity = activityResponse.data.data;
+      
+      setActivities(prevActivities => 
+        prevActivities.map(act => {
+          if (act._id === selectedActivity._id) {
+            return {
+              ...act,
+              ...updatedActivity,
+              subject: act.subject,
+              myGrade: act.myGrade,
+            };
+          }
+          return act;
+        })
+      );
+
+      setSelectedActivity(prevActivity => {
+        if (!prevActivity || prevActivity._id !== selectedActivity._id) return prevActivity;
+        
+        return {
+          ...prevActivity,
+          ...updatedActivity,
+          subject: prevActivity.subject,
+          myGrade: prevActivity.myGrade,
+        };
+      });
       
       if (Platform.OS === 'web') {
         window.alert('Activity turned in successfully!');
@@ -415,26 +461,36 @@ const ActivityWeb: React.FC = () => {
     }
   };
 
-  // Handle Undo Turn In Activity
   const handleUndoTurnInActivity = async () => {
     if (!selectedActivity || !user) return;
 
     try {
       setIsUndoingSubmission(true);
-      console.log(`➡️ Sending POST /activities/${selectedActivity._id}/undo-turn-in`);
       const res = await apiClient.post(`/activities/${selectedActivity._id}/undo-turn-in`);
-      console.log('✅ Undo Turn In Activity response:', res.data);
       
-      // Refresh activities to show updated submission status
-      await fetchStudentActivities();
+      setActivities(prevActivities => 
+        prevActivities.map(act => {
+          if (act._id === selectedActivity._id) {
+            const updatedSubmissions = act.submissions 
+              ? act.submissions.filter(sub => sub.student._id !== user._id)
+              : [];
+            
+            return { ...act, submissions: updatedSubmissions };
+          }
+          return act;
+        })
+      );
+
+      setSelectedActivity(prevActivity => {
+        if (!prevActivity || prevActivity._id !== selectedActivity._id) return prevActivity;
+        
+        const updatedSubmissions = prevActivity.submissions 
+          ? prevActivity.submissions.filter(sub => sub.student._id !== user._id)
+          : [];
+        
+        return { ...prevActivity, submissions: updatedSubmissions };
+      });
       
-      // Re-select the activity to refresh the view
-      const updatedActivity = activities.find(act => act._id === selectedActivity._id);
-      if (updatedActivity) {
-        setSelectedActivity(updatedActivity);
-      }
-      
-      // Clear submission files
       setSubmissionFiles([]);
       
       if (Platform.OS === 'web') {
@@ -455,16 +511,37 @@ const ActivityWeb: React.FC = () => {
     }
   };
 
+  // Helper function to get teacher names from teachers array
+  const getTeacherNames = (subject: Subject): string => {
+    if (!subject.teachers || subject.teachers.length === 0) {
+      return 'No teacher assigned';
+    }
+
+    return subject.teachers.map((ta) => {
+      const teacher = ta.teacher;
+      if (!teacher) return 'Unknown';
+      
+      return getUserFullName(teacher);
+    }).join(', ');
+  };
+
   // Helper functions
   const getActivityStatus = (activity: Activity) => {
     const now = new Date();
     const deadline = new Date(activity.deadline);
 
-    // Check if student has been graded for this activity
     const isGraded = activity.myGrade !== undefined;
 
     if (isGraded) return { status: 'graded', color: '#8B5CF6', text: 'Graded' };
-    if (deadline < now) return { status: 'overdue', color: '#EF4444', text: 'Overdue' };
+    
+    if (deadline < now && activity.allowLateSubmissions) {
+      return { status: 'late-allowed', color: '#F59E0B', text: 'Late OK' };
+    }
+    
+    if (deadline < now && !activity.allowLateSubmissions) {
+      return { status: 'overdue', color: '#EF4444', text: 'Overdue' };
+    }
+    
     return { status: 'active', color: '#10B981', text: 'Active' };
   };
 
@@ -499,6 +576,62 @@ const ActivityWeb: React.FC = () => {
     setStatusFilter('');
   };
 
+  // Render attachment link
+  const renderAttachmentLink = (attachmentPath: string) => {
+    const fileUrl = getFileUrl(attachmentPath);
+    
+    if (!fileUrl || fileLoadError[fileUrl]) {
+      return (
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            padding: 8,
+            backgroundColor: isDarkMode ? '#2A2A2A' : '#E8E8E8',
+            borderRadius: 6,
+          }}
+        >
+          <Image
+            className="w-[16] h-[16] mr-2"
+            contentFit="contain"
+            source={require('@/assets/icons/import_file.png')}
+            tintColor={isDarkMode ? '#6B7280' : '#9CA3AF'}
+          />
+          <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>
+            File unavailable
+          </Text>
+        </View>
+      );
+    }
+
+    return (
+      <TouchableOpacity
+        onPress={() => {
+          try {
+            if (Platform.OS === 'web') {
+              window.open(fileUrl, '_blank');
+            }
+          } catch (error) {
+            console.error('Failed to open file:', error);
+            setFileLoadError(prev => ({ ...prev, [fileUrl]: true }));
+          }
+        }}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          padding: 8,
+          backgroundColor: isDarkMode ? '#2A2A2A' : '#E8E8E8',
+          borderRadius: 6,
+        }}
+      >
+        <AttachIcon width={16} height={16} fill={isDarkMode ? '#A78BFA' : '#6D28D9'} style={{ marginRight: 8 }} />
+        <Text className={`font-inter_regular text-sm underline ${isDarkMode ? 'text-blue-400' : 'text-blue-700'}`}>
+          {fileUrl.split('/').pop() || 'Download attachment'}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
   // Generate subject initials and color
   const getSubjectInitials = (subjectName: string) => {
     const words = subjectName.split(' ');
@@ -517,13 +650,11 @@ const ActivityWeb: React.FC = () => {
     return colors[Math.abs(hash) % colors.length];
   };
 
-  // Function to handle activity selection from sidebar
   const handleActivitySelect = (activity: Activity) => {
     setSelectedActivity(activity);
-    setSubmissionFiles([]); // Clear any previous submission files
+    setSubmissionFiles([]);
   };
 
-  // Get time remaining until deadline
   const getTimeRemaining = (deadline: string) => {
     const now = new Date();
     const due = new Date(deadline);
@@ -544,14 +675,22 @@ const ActivityWeb: React.FC = () => {
     }
   };
 
-  // Check if student has submitted this activity
   const getMySubmission = (activity: Activity) => {
-    return activity.submissions?.find(sub => sub.student._id === user?._id);
+    return activity.submissions?.find(sub => sub && sub.student && sub.student._id === user?._id);
   };
 
-  // Check if deadline has passed
   const isDeadlinePassed = (activity: Activity) => {
     return new Date() > new Date(activity.deadline);
+  };
+
+  const canSubmit = (activity: Activity) => {
+    const deadlinePassed = isDeadlinePassed(activity);
+    const isGraded = activity.myGrade !== undefined;
+    
+    if (isGraded) return false;
+    if (!deadlinePassed) return true;
+    
+    return activity.allowLateSubmissions;
   };
 
   // Prepare sidebar virtualized list data
@@ -612,7 +751,7 @@ const ActivityWeb: React.FC = () => {
             className='w-full items-center rounded-lg p-3 mb-2'
             style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5' }}
           >
-            <ActivityIndicator size="small" color={isDarkMode ? '#E0E0E0' : '#000'} />
+            <ActivityIndicator size="small" color="#3B82F6" />
             <Text className={`font-inter_regular text-sm mt-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
               Loading...
             </Text>
@@ -654,18 +793,26 @@ const ActivityWeb: React.FC = () => {
             }}
             activeOpacity={0.7}
           >
-            {/* Subject Badge */}
             <View className='flex-row'>
-              <View
-                className='w-[36px] h-[36px] rounded-md items-center justify-center mr-2'
-                style={{ backgroundColor: subjectColor }}
-              >
-                <Text className='font-inter_bold text-xs text-white'>
-                  {subjectInitials}
-                </Text>
-              </View>
+              {/* Subject Image or Icon */}
+              {activity.subject.subjectImage ? (
+                <Image
+                  source={{ uri: activity.subject.subjectImage }}
+                  className='w-[36px] h-[36px] rounded-md mr-2'
+                  contentFit="cover"
+                />
+              ) : (
+                <View
+                  className='w-[36px] h-[36px] rounded-md items-center justify-center mr-2'
+                  style={{ backgroundColor: subjectColor }}
+                >
+                  <Text className='font-inter_bold text-xs text-white'>
+                    {subjectInitials}
+                  </Text>
+                </View>
+              )}
+              
               <View className='flex-1'>
-                {/* Activity Title */}
                 <Text 
                   className={`font-inter_bold text-base ${
                     isSelected 
@@ -677,7 +824,6 @@ const ActivityWeb: React.FC = () => {
                 >
                   {activity.title}
                 </Text>
-                {/* Subject Name */}
                 <Text 
                   className={`font-inter_regular text-xs ${
                     isSelected 
@@ -689,7 +835,6 @@ const ActivityWeb: React.FC = () => {
                 >
                   {activity.subject.subjectName}
                 </Text>
-                {/* Due Date and Status */}
                 <View className='flex-row items-center justify-between mt-1'>
                   <Text 
                     className={`font-inter_regular text-xs ${
@@ -756,6 +901,8 @@ const ActivityWeb: React.FC = () => {
         if (!item.data) return null;
         const activity = item.data;
         const statusInfo = getActivityStatus(activity);
+        const subjectColor = getSubjectColor(activity.subject._id);
+        const subjectInitials = getSubjectInitials(activity.subject.subjectName);
         
         return (
           <View 
@@ -786,16 +933,42 @@ const ActivityWeb: React.FC = () => {
               {activity.title}
             </Text>
 
-            {/* Subject Information */}
+            {/* Subject Information with Image */}
             <View className='mb-3 p-3 rounded-lg' style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F3F4F6' }}>
-              <Text className={`font-inter_semibold text-sm mb-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                Subject: {activity.subject.subjectName}
+              <View className='flex-row items-center mb-2'>
+                {/* Subject Image or Icon */}
+                {activity.subject.subjectImage ? (
+                  <Image
+                    source={{ uri: activity.subject.subjectImage }}
+                    className='w-12 h-12 rounded-lg mr-3'
+                    contentFit="cover"
+                  />
+                ) : (
+                  <View
+                    className='w-12 h-12 rounded-lg items-center justify-center mr-3'
+                    style={{ backgroundColor: subjectColor }}
+                  >
+                    <Text className='font-inter_bold text-lg text-white'>
+                      {subjectInitials}
+                    </Text>
+                  </View>
+                )}
+                
+                <View className='flex-1'>
+                  <Text className={`font-inter_semibold text-base mb-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                    {activity.subject.subjectName}
+                  </Text>
+                  <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                    {activity.subject.gradeLevel} - {activity.subject.section}
+                  </Text>
+                </View>
+              </View>
+              
+              <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                Quarter: {activity.quarter} ({activity.subject.schoolYear})
               </Text>
               <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                Section: {activity.subject.section} • {activity.subject.semester} {activity.subject.academicYear}
-              </Text>
-              <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                Teacher: {getUserFullName(activity.subject.teacher)}
+                Teacher: {getTeacherNames(activity.subject)}
               </Text>
             </View>
 
@@ -808,6 +981,7 @@ const ActivityWeb: React.FC = () => {
                 <View className='p-3 rounded-lg' style={{ backgroundColor: isDarkMode ? '#2D1B69' : '#EDE9FE' }}>
                   <Text className={`font-inter_semibold text-lg ${isDarkMode ? 'text-purple-300' : 'text-purple-800'}`}>
                     {activity.myGrade.score}
+                    {activity.myGrade.bonusPoints && activity.myGrade.bonusPoints > 0 && ` + ${activity.myGrade.bonusPoints} bonus`}
                     {activity.points && ` / ${activity.points}`}
                   </Text>
                   {activity.myGrade.comments && (
@@ -815,8 +989,8 @@ const ActivityWeb: React.FC = () => {
                       Feedback: "{activity.myGrade.comments}"
                     </Text>
                   )}
-                  <Text className={`font-inter_regular text-xs mt-1 ${isDarkMode ? 'text-purple-400' : 'text-purple-600'}`}>
-                    Graded on: {formatDate(activity.myGrade.updatedAt)} by {getUserFullName(activity.myGrade.gradedBy)}
+                  <Text className={`font-inter_regular text-xs mt-1 ${isDarkMode ? 'text-purple-200' : 'text-purple-600'}`}>
+                    Graded by: {getUserFullName(activity.myGrade.gradedBy)} on {formatDate(activity.myGrade.updatedAt)}
                   </Text>
                 </View>
               </View>
@@ -832,7 +1006,7 @@ const ActivityWeb: React.FC = () => {
               </Text>
             </View>
 
-            {/* Deadline and Time Remaining */}
+            {/* Deadline */}
             <View className='mb-4'>
               <Text className={`font-inter_semibold text-sm mb-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
                 Deadline:
@@ -844,6 +1018,19 @@ const ActivityWeb: React.FC = () => {
                 <Text className={`font-inter_semibold text-sm ${getActivityStatus(activity).status === 'overdue' ? 'text-red-500' : 'text-orange-500'}`}>
                   {getTimeRemaining(activity.deadline)}
                 </Text>
+              )}
+              {activity.allowLateSubmissions && (
+                <View className={`flex-row items-center mt-2 p-2 rounded-md ${isDarkMode ? 'bg-[#2D1B69]' : 'bg-[#FEF3C7]'}`}>
+                  <Image
+                    className="w-4 h-4 mr-2"
+                    contentFit="contain"
+                    source={require('@/assets/icons/info.png')}
+                    tintColor={isDarkMode ? '#FCD34D' : '#F59E0B'}
+                  />
+                  <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-yellow-300' : 'text-yellow-800'}`}>
+                    Late submissions are allowed for this activity
+                  </Text>
+                </View>
               )}
             </View>
 
@@ -865,25 +1052,7 @@ const ActivityWeb: React.FC = () => {
                 <Text className={`font-inter_semibold text-sm mb-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
                   Attachment:
                 </Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    const url = `http://192.168.100.5:5000/${activity.attachmentPath}`;
-                    if (Platform.OS === 'web') {
-                      window.open(url, '_blank');
-                    }
-                  }}
-                  className='flex-row items-center'
-                >
-                  <AttachIcon 
-                    width={16} 
-                    height={16} 
-                    style={{ marginRight: 4 }} 
-                    fill={isDarkMode ? '#A78BFA' : '#6D28D9'} 
-                  />
-                  <Text className={`font-inter_regular text-sm underline ${isDarkMode ? 'text-blue-400' : 'text-blue-700'}`}>
-                    {activity.attachmentPath.split('/').pop()}
-                  </Text>
-                </TouchableOpacity>
+                {renderAttachmentLink(activity.attachmentPath)}
               </View>
             )}
           </View>
@@ -896,6 +1065,7 @@ const ActivityWeb: React.FC = () => {
         const isSubmitted = mySubmission && mySubmission.status === 'submitted';
         const deadlinePassed = isDeadlinePassed(activityData);
         const isGraded = activityData.myGrade !== undefined;
+        const canStillSubmit = canSubmit(activityData);
         
         return (
           <View className={`w-full ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} p-4 rounded-lg`}>
@@ -903,96 +1073,75 @@ const ActivityWeb: React.FC = () => {
               Your Submission
             </Text>
             
-            {/* Only show submission section if not graded */}
-            {!isGraded && (
-              <View className='mb-4 p-3 rounded-lg' style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F3F4F6', borderTopWidth: 2, borderTopColor: isDarkMode ? '#374151' : '#D1D5DB' }}>
-                {isSubmitted && mySubmission ? (
-                  // Show submitted work
-                  <View>
-                    <View className='flex-row items-center mb-2'>
-                      <View
-                        style={{
-                          backgroundColor: '#10B981',
-                          paddingHorizontal: 8,
-                          paddingVertical: 4,
-                          borderRadius: 12,
-                          marginRight: 8,
-                        }}
-                      >
-                        <Text className='text-white font-inter_semibold text-xs'>
-                          SUBMITTED
-                        </Text>
-                      </View>
-                      <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                        on {formatDate(mySubmission.submissionDate)}
+            <View className='mb-4 p-3 rounded-lg' style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F3F4F6', borderTopWidth: 2, borderTopColor: isDarkMode ? '#374151' : '#D1D5DB' }}>
+              {isSubmitted && mySubmission ? (
+                <View>
+                  <View className='flex-row items-center mb-2'>
+                    <View
+                      style={{
+                        backgroundColor: isGraded ? '#8B5CF6' : '#10B981',
+                        paddingHorizontal: 8,
+                        paddingVertical: 4,
+                        borderRadius: 12,
+                        marginRight: 8,
+                      }}
+                    >
+                      <Text className='text-white font-inter_semibold text-xs'>
+                        {isGraded ? 'GRADED' : 'SUBMITTED'}
                       </Text>
                     </View>
-
-                    {/* Show submitted files */}
-                    {mySubmission.attachmentPaths && mySubmission.attachmentPaths.length > 0 && (
-                      <View className='mb-3'>
-                        <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                          Submitted Files:
-                        </Text>
-                        {mySubmission.attachmentPaths.map((path, idx) => (
-                          <TouchableOpacity
-                            key={idx}
-                            onPress={() => {
-                              const url = `http://192.168.100.5:5000/${path}`;
-                              if (Platform.OS === 'web') {
-                                window.open(url, '_blank');
-                              }
-                            }}
-                            style={{
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              marginBottom: 4,
-                              padding: 8,
-                              backgroundColor: isDarkMode ? '#2A2A2A' : '#E8E8E8',
-                              borderRadius: 6,
-                            }}
-                          >
-                            <Image
-                              className="w-[16] h-[16] mr-2"
-                              contentFit="contain"
-                              source={require('@/assets/icons/import_file.png')}
-                              tintColor={isDarkMode ? '#A78BFA' : '#6D28D9'}
-                            />
-                            <Text className={`font-inter_regular text-sm underline ${isDarkMode ? 'text-blue-400' : 'text-blue-700'}`}>
-                              {path.split('/').pop()}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    )}
-
-                    {/* Undo submission button (only if deadline not passed) */}
-                    {!deadlinePassed && (
-                      <TouchableOpacity
-                        onPress={handleUndoTurnInActivity}
-                        disabled={isUndoingSubmission}
-                        style={{
-                          backgroundColor: '#EF4444',
-                          borderRadius: 8,
-                          paddingVertical: 10,
-                          paddingHorizontal: 16,
-                          opacity: isUndoingSubmission ? 0.6 : 1,
-                        }}
-                      >
-                        {isUndoingSubmission ? (
-                          <ActivityIndicator size="small" color="white" />
-                        ) : (
-                          <Text className='text-white font-inter_semibold text-sm text-center'>
-                            Undo Submission
-                          </Text>
-                        )}
-                      </TouchableOpacity>
-                    )}
+                    <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                      on {formatDate(mySubmission.submissionDate)}
+                    </Text>
                   </View>
-                ) : (
-                  // Show submission interface
+
+                  {mySubmission.attachmentPaths && mySubmission.attachmentPaths.length > 0 && (
+                    <View className='mb-3'>
+                      <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                        Submitted Files:
+                      </Text>
+                      {mySubmission.attachmentPaths.map((path, idx) => (
+                        <View key={idx} style={{ marginBottom: 4 }}>
+                          {renderAttachmentLink(path)}
+                        </View>
+                      ))}
+                    </View>
+                  )}
+
+                  {!isGraded && canStillSubmit && (
+                    <TouchableOpacity
+                      onPress={handleUndoTurnInActivity}
+                      disabled={isUndoingSubmission}
+                      style={{
+                        backgroundColor: '#EF4444',
+                        borderRadius: 8,
+                        paddingVertical: 10,
+                        paddingHorizontal: 16,
+                        opacity: isUndoingSubmission ? 0.6 : 1,
+                      }}
+                    >
+                      {isUndoingSubmission ? (
+                        <ActivityIndicator size="small" color="white" />
+                      ) : (
+                        <Text className='text-white font-inter_semibold text-sm text-center'>
+                          Undo Submission
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  )}
+
+                  {isGraded && (
+                    <View className='mt-2 p-2 rounded-lg' style={{ backgroundColor: isDarkMode ? '#065F46' : '#ECFDF5' }}>
+                      <Text className={`font-inter_regular text-xs text-center ${isDarkMode ? 'text-green-200' : 'text-green-700'}`}>
+                        This activity has been graded. Your submission is shown above for reference.
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              ) : (
+                !isGraded && (
                   <View>
-                    {deadlinePassed ? (
+                    {!canStillSubmit ? (
                       <View>
                         <View
                           style={{
@@ -1005,18 +1154,18 @@ const ActivityWeb: React.FC = () => {
                           }}
                         >
                           <Text className='text-white font-inter_semibold text-xs'>
-                            DEADLINE PASSED
+                            SUBMISSIONS CLOSED
                           </Text>
                         </View>
                         <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-red-400' : 'text-red-600'}`}>
-                          You can no longer submit this activity.
+                          The deadline has passed and late submissions are not allowed.
                         </Text>
                       </View>
                     ) : (
                       <View>
                         <View
                           style={{
-                            backgroundColor: '#6B7280',
+                            backgroundColor: deadlinePassed ? '#F59E0B' : '#6B7280',
                             paddingHorizontal: 8,
                             paddingVertical: 4,
                             borderRadius: 12,
@@ -1025,11 +1174,25 @@ const ActivityWeb: React.FC = () => {
                           }}
                         >
                           <Text className='text-white font-inter_semibold text-xs'>
-                            NOT SUBMITTED
+                            {deadlinePassed ? 'LATE SUBMISSION' : 'NOT SUBMITTED'}
                           </Text>
                         </View>
 
-                        {/* File attachment section */}
+                        {deadlinePassed && (
+                          <View
+                            style={{
+                              backgroundColor: isDarkMode ? '#2D1B69' : '#FEF3C7',
+                              padding: 8,
+                              borderRadius: 6,
+                              marginBottom: 12,
+                            }}
+                          >
+                            <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-yellow-300' : 'text-yellow-800'}`}>
+                              ⚠️ The deadline has passed. This will be marked as a late submission.
+                            </Text>
+                          </View>
+                        )}
+
                         <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
                           Attach Files (Optional):
                         </Text>
@@ -1047,12 +1210,7 @@ const ActivityWeb: React.FC = () => {
                           }}
                         >
                           <View className='flex-row items-center justify-center'>
-                            <Image
-                              className="w-[20] h-[20] mr-1"
-                              contentFit="contain"
-                              source={require('@/assets/icons/add_file.png')}
-                              tintColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
-                            />
+                            <AddFile width={20} height={20} fill={isDarkMode ? '#9CA3AF' : '#6B7280'} style={{ marginRight: 4 }} />
                             <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
                               {submissionFiles.length > 0
                                 ? `${submissionFiles.length} file(s) selected`
@@ -1061,7 +1219,6 @@ const ActivityWeb: React.FC = () => {
                           </View>
                         </TouchableOpacity>
 
-                        {/* Show selected files */}
                         {submissionFiles.length > 0 && (
                           <View className='mb-3'>
                             <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
@@ -1081,12 +1238,7 @@ const ActivityWeb: React.FC = () => {
                                 }}
                               >
                                 <View className='flex-row items-center flex-1'>
-                                  <Image
-                                    className="w-[16] h-[16] mr-2"
-                                    contentFit="contain"
-                                    source={require('@/assets/icons/import_file.png')}
-                                    tintColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
-                                  />
+                                  <FileIcon width={16} height={16} fill={isDarkMode ? '#9CA3AF' : '#6B7280'} style={{ marginRight: 8 }} />
                                   <Text className={`font-inter_regular text-sm flex-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`} numberOfLines={1}>
                                     {Platform.OS === 'web' ? (file as File).name : (file as DocumentPicker.DocumentPickerAsset).name}
                                   </Text>
@@ -1109,7 +1261,6 @@ const ActivityWeb: React.FC = () => {
                           </View>
                         )}
 
-                        {/* Submit button */}
                         <TouchableOpacity
                           onPress={handleTurnInActivity}
                           disabled={isSubmitting}
@@ -1137,21 +1288,21 @@ const ActivityWeb: React.FC = () => {
                       </View>
                     )}
                   </View>
-                )}
-              </View>
-            )}
+                )
+              )}
+            </View>
           </View>
         );
       
       default:
         return null;
     }
-  }, [isDarkMode, error, formatDate, getUserFullName, getActivityStatus, getMySubmission, isDeadlinePassed, submissionFiles, pickDocuments, removeFile, handleTurnInActivity, handleUndoTurnInActivity, isSubmitting, isUndoingSubmission, getTimeRemaining]);
+  }, [isDarkMode, error, formatDate, getUserFullName, getActivityStatus, getMySubmission, isDeadlinePassed, submissionFiles, pickDocuments, removeFile, handleTurnInActivity, handleUndoTurnInActivity, isSubmitting, isUndoingSubmission, getTimeRemaining, getSubjectColor, getSubjectInitials, getTeacherNames]);
 
   if (loading) {
     return (
       <SafeAreaView className={`flex-1 items-center justify-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-        <ActivityIndicator size="large" color={isDarkMode ? '#E0E0E0' : '#000000'} />
+        <ActivityIndicator size="large" color="#3B82F6" />
         <Text className={`font-inter_regular mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
           Loading your activities...
         </Text>
@@ -1223,7 +1374,6 @@ const ActivityWeb: React.FC = () => {
           <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
             {filteredActivities.length} of {activities.length} activities
           </Text>
-          {/* Role indicator */}
           <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-blue-400' : 'text-blue-600'} mt-1`}>
             🎓 Student View
           </Text>
@@ -1257,7 +1407,7 @@ const ActivityWeb: React.FC = () => {
       <ScrollView 
         contentContainerStyle={{ height: '100%', flexDirection: width < 768 ? 'column' : 'row' }}
       >
-        {/* Side Bar - Short Activity Details */}
+        {/* Side Bar */}
         <View className={`p-4 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}
           style={{
             borderRightWidth: width >= 768 ? 1 : 0,
@@ -1269,7 +1419,6 @@ const ActivityWeb: React.FC = () => {
             <Text className={`font-inter_semibold text-lg mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
               Activities:
             </Text>
-            {/* Search Bar */}
             <TextInput
               className={`border rounded-md px-3 py-2 font-inter_regular text-sm ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E] text-white' : 'border-gray-300 text-black'}`}
               placeholder='Search...'
@@ -1277,59 +1426,23 @@ const ActivityWeb: React.FC = () => {
               value={searchQuery}
               onChangeText={setSearchQuery}
             />
-            {/* Filters */}
-            <View className='mt-2 flex-row'>
-              <Picker
-                selectedValue={subjectFilter}
-                onValueChange={setSubjectFilter}
-                style={{ 
-                  backgroundColor: isDarkMode ? '#1E1E1E' : 'white',
-                  borderWidth: 1,
-                  borderColor: isDarkMode ? '#1E1E1E' : '#d1d5db', 
-                  borderRadius: 6,
-                  color: isDarkMode ? '#E0E0E0' : 'black',
-                  fontFamily: 'Inter-18pt-Regular',
-                  fontSize: 14, 
-                  padding: 8,
-                  marginBottom: 8,
-                  marginRight: 4,
-                  width: width < 768 ? '50%' : '100%',
-                }}
-                dropdownIconColor={isDarkMode ? '#E0E0E0' : 'black'}
-                mode="dropdown"
-              >
-                <Picker.Item label="All Subjects" value="" />
-                {enrolledSubjects.map(subject => (
-                  <Picker.Item 
-                    key={subject._id} 
-                    label={subject.subjectName} 
-                    value={subject._id} 
-                  />
-                ))}
-              </Picker>
-              <Picker
-                selectedValue={statusFilter}
-                onValueChange={setStatusFilter}
-                style={{ 
-                  backgroundColor: isDarkMode ? '#1E1E1E' : 'white',
-                  borderWidth: 1,
-                  borderColor: isDarkMode ? '#1E1E1E' : '#d1d5db', 
-                  borderRadius: 6,
-                  color: isDarkMode ? '#E0E0E0' : 'black',
-                  fontFamily: 'Inter-18pt-Regular',
-                  fontSize: 14, 
-                  padding: 8,
-                  marginBottom: 8,
-                  width: width < 768 ? '50%' : '100%',
-                }}
-                dropdownIconColor={isDarkMode ? '#E0E0E0' : 'black'}
-                mode="dropdown"
-              >
-                <Picker.Item label="All Status" value="" />
-                <Picker.Item label="Active" value="active" />
-                <Picker.Item label="Overdue" value="overdue" />
-                <Picker.Item label="Graded" value="graded" />
-              </Picker>
+            <View className='mt-2 mb-2 flex-row' style={{ gap: 8 }}>
+              <View style={{ flex: 1 }}>
+                <Dropdown
+                  data={subjectFilterOptions}
+                  selectedValue={subjectFilter}
+                  onValueChange={setSubjectFilter}
+                  placeholder="All Subjects"
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Dropdown
+                  data={statusFilterOptions}
+                  selectedValue={statusFilter}
+                  onValueChange={setStatusFilter}
+                  placeholder="All Status"
+                />
+              </View>
             </View>
             <VirtualizedList
               data={sidebarListData}
@@ -1346,7 +1459,7 @@ const ActivityWeb: React.FC = () => {
               windowSize={10}
             />
         </View>
-        {/* Main List - Full Activity Details and Submission */}
+        {/* Main List */}
         <View
           className='p-4'
           style={{ 

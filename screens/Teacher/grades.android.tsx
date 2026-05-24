@@ -1,4 +1,6 @@
-import { Text, View, useColorScheme, ActivityIndicator, ScrollView, TouchableOpacity, VirtualizedList, TextInput, useWindowDimensions } from 'react-native'
+import { Text, View, useColorScheme, ActivityIndicator, ScrollView, TouchableOpacity, TextInput, Modal, Platform, Alert, Pressable } from 'react-native'
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { SafeAreaView } from 'react-native-safe-area-context'
 import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { StatusBar } from 'expo-status-bar'
@@ -7,8 +9,10 @@ import { Image } from 'expo-image'
 import { cssInterop } from 'nativewind'
 import apiClient from '@/app/services/apiClient'
 import { useAuth } from '@/contexts/AuthContext'
-import { Picker } from '@react-native-picker/picker'
 import { FlashList } from '@shopify/flash-list';
+import DropdownMobile, { DropdownMobileItem } from '@/components/DropdownMobile'
+import MoreVertIcon from '@/assets/icons/more_vert.svg'
+import DeleteIcon from '@/assets/icons/delete.svg'
 
 cssInterop(Image, { className: "style" });
 
@@ -33,14 +37,22 @@ interface Subject {
   subjectId: string;
   subjectName: string;
   subjectDescription?: string;
-  teacher: User;
+  subjectImage?: string;
+  teachers: Array<{
+    teacher: User;
+    quarters: {
+      firstQuarter: boolean;
+      secondQuarter: boolean;
+      thirdQuarter: boolean;
+      fourthQuarter: boolean;
+    };
+    isAssignedToAllQuarters: boolean;
+  }>;
   section: string;
-  semester: string;
-  academicYear: string;
-  status: 'active' | 'inactive' | 'archived';
-  students: (User[] | string[]);
   gradeLevel?: string;
   schoolYear?: string;
+  status: 'active' | 'inactive' | 'archived';
+  students: (User[] | string[]);
 }
 
 interface Activity {
@@ -50,7 +62,7 @@ interface Activity {
   visibleDate: string;
   deadline: string;
   points: number | null;
-  quarter?: number;
+  quarter: string;
   activityType?: 'written' | 'performance';
   createdBy: User;
   subject: Subject;
@@ -100,7 +112,6 @@ interface Quiz {
   updatedAt: string;
 }
 
-// Combined item type for activities and quizzes
 interface GradeItem {
   _id: string;
   title: string;
@@ -119,34 +130,90 @@ interface StudentGradeRow {
   percentage: number;
 }
 
-// VirtualizedList item types
-type SidebarItemType = 'loading' | 'empty' | 'subject';
-type MainItemType = 'loading' | 'empty' | 'grades-table';
+// Helper function to export grades to CSV
+const exportGradesToCSV = async (
+  subjectName: string,
+  gradeLevel: string,
+  section: string,
+  schoolYear: string,
+  quarter: string,
+  gradeItems: GradeItem[],
+  gradeTableData: StudentGradeRow[],
+  getUserFullName: (user: User) => string
+) => {
+  try {
+    const headers = [
+      'Student Name',
+      ...gradeItems.map(item => `${item.title} (${item.type === 'activity' ? 'Activity' : 'Quiz'} - ${item.points} pts)`),
+      'Total Score',
+      'Total Percentage (%)'
+    ];
 
-interface SidebarListItem {
-  id: string;
-  type: SidebarItemType;
-  data?: Subject;
-}
+    const rows = gradeTableData.map(row => {
+      const studentName = getUserFullName(row.student);
+      const scores = gradeItems.map(item => {
+        const itemData = row.items[item._id];
+        if (itemData) {
+          if (item.type === 'activity' && 'score' in itemData) {
+            return itemData.score.toString();
+          } else if (item.type === 'quiz' && 'quizScore' in itemData) {
+            return itemData.quizScore?.toString() || '-';
+          }
+        }
+        return '-';
+      });
 
-interface MainListItem {
-  id: string;
-  type: MainItemType;
-  data?: Subject;
-  students?: User[];
-  gradeItems?: GradeItem[];
-  grades?: Grade[];
-  quizzes?: Quiz[];
-}
+      return [
+        studentName,
+        ...scores,
+        row.total.toString(),
+        `${row.percentage.toFixed(2)}%`
+      ];
+    });
 
-// Teacher's grades page
+    const csvContent = [
+      [`Subject: ${subjectName}`],
+      [`Grade Level: ${gradeLevel} - ${section}`],
+      [`School Year: ${schoolYear}`],
+      [`Quarter: ${quarter}`],
+      [`Generated: ${new Date().toLocaleString()}`],
+      [],
+      headers,
+      ...rows
+    ]
+      .map(row => row.map(cell => `"${cell}"`).join(','))
+      .join('\n');
+
+    const fileName = `${subjectName.replace(/\s+/g, '_')}_${quarter.replace(/\s+/g, '_')}_Grades_${new Date().getTime()}.csv`;
+    const fileUri = `${FileSystem.documentDirectory}${fileName}`;
+
+    await FileSystem.writeAsStringAsync(fileUri, csvContent, {
+      encoding: 'utf8',
+    });
+
+    if (await Sharing.isAvailableAsync()) {
+      await Sharing.shareAsync(fileUri, {
+        mimeType: 'text/csv',
+        dialogTitle: 'Export Grades',
+        UTI: 'public.comma-separated-values-text',
+      });
+      return true;
+    } else {
+      Alert.alert('Error', 'Sharing is not available on this device');
+      return false;
+    }
+  } catch (error) {
+    console.error('Error exporting CSV:', error);
+    Alert.alert('Error', 'Failed to export grades. Please try again.');
+    return false;
+  }
+};
+
 const GradesAndroid: React.FC = () => {
   const colorScheme = useColorScheme();
   const { isDarkMode } = useDarkMode();
-  const { width } = useWindowDimensions();
   const { user } = useAuth();
 
-  // State management
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [grades, setGrades] = useState<Grade[]>([]);
@@ -156,11 +223,16 @@ const GradesAndroid: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   
-  // Filter states - Change to use string quarters
-  const [selectedSubject, setSelectedSubject] = useState<Subject | null>(null);
+  const [selectedSubject, setSelectedSubject] = useState<string>('');
   const [selectedQuarter, setSelectedQuarter] = useState<string>('First Quarter');
+  const [selectedSchoolYear, setSelectedSchoolYear] = useState<string>('');
 
-  // Fetch data similar to activity.web.tsx
+  const [previewModalVisible, setPreviewModalVisible] = useState(false);
+  const [actionsModalVisible, setActionsModalVisible] = useState(false);
+  const [actionsModalSubject, setActionsModalSubject] = useState<Subject | null>(null);
+
+  const quarters = ['First Quarter', 'Second Quarter', '3rd Quarter', '4th Quarter'];
+
   const fetchTeacherData = async () => {
     if (!user || user.role !== 'Teacher') {
       setError('Unauthorized: Teacher access required');
@@ -172,14 +244,19 @@ const GradesAndroid: React.FC = () => {
       setLoading(true);
       setError(null);
 
-      // Fetch subjects assigned to this teacher
       const subjectsResponse = await apiClient.get('/subjects');
       const allSubjects = subjectsResponse.data.data || [];
       
-      // Filter subjects where this teacher is assigned
-      const teacherSubjects = allSubjects.filter((subject: Subject) => 
-        subject.teacher && subject.teacher._id === user._id
-      );
+      const teacherSubjects = allSubjects.filter((subject: Subject) => {
+        if (!subject.teachers || !Array.isArray(subject.teachers)) {
+          return false;
+        }
+        return subject.teachers.some((ta: any) => 
+          ta.teacher?._id === user._id || 
+          ta.teacher?.email === user.email ||
+          ta.teacher?.username === user.username
+        );
+      });
 
       if (teacherSubjects.length === 0) {
         setSubjects([]);
@@ -190,7 +267,6 @@ const GradesAndroid: React.FC = () => {
         return;
       }
 
-      // Fetch populated subject data (with students)
       const populatedSubjects: Subject[] = [];
       for (const subject of teacherSubjects) {
         try {
@@ -204,17 +280,28 @@ const GradesAndroid: React.FC = () => {
       }
       setSubjects(populatedSubjects);
 
-      // Fetch all students
       try {
-        const studentsResponse = await apiClient.get('/users?role=Student&limit=1000');
-        if (studentsResponse.data.success) {
-          setAllStudents(studentsResponse.data.data);
+        let allStudentsData: User[] = [];
+        let page = 1;
+        let hasMore = true;
+
+        while (hasMore) {
+          const studentsResponse = await apiClient.get(`/users?role=Student&status=active&page=${page}&limit=100`);
+          const students = studentsResponse.data.data || [];
+          
+          if (students.length === 0) {
+            hasMore = false;
+          } else {
+            allStudentsData = [...allStudentsData, ...students];
+            page++;
+          }
         }
+
+        setAllStudents(allStudentsData);
       } catch (error) {
         console.warn('Could not fetch all students');
       }
 
-      // Fetch activities for teacher's subjects
       const teacherActivities: Activity[] = [];
       for (const subject of teacherSubjects) {
         try {
@@ -223,7 +310,7 @@ const GradesAndroid: React.FC = () => {
             const activitiesWithSubject = activitiesResponse.data.data.map((activity: Activity) => ({
               ...activity,
               subject: subject,
-              quarter: activity.quarter || 1 // Default to quarter 1 if not specified
+              quarter: activity.quarter || 'First Quarter',
             }));
             teacherActivities.push(...activitiesWithSubject);
           }
@@ -231,9 +318,9 @@ const GradesAndroid: React.FC = () => {
           console.warn(`Failed to fetch activities for subject ${subject.subjectName}`);
         }
       }
+      
       setActivities(teacherActivities);
 
-      // Fetch grades for teacher's activities
       const teacherGrades: Grade[] = [];
       for (const activity of teacherActivities) {
         try {
@@ -251,13 +338,11 @@ const GradesAndroid: React.FC = () => {
       }
       setGrades(teacherGrades);
 
-      // Fetch quizzes for teacher's subjects with detailed quiz data
       const teacherQuizzes: Quiz[] = [];
       for (const subject of teacherSubjects) {
         try {
           const quizzesResponse = await apiClient.get(`/quizzes?subject=${subject._id}`);
           if (quizzesResponse.data.success && quizzesResponse.data.data) {
-            // Fetch detailed quiz data including submissions
             const detailedQuizzes = await Promise.all(
               quizzesResponse.data.data.map(async (quiz: Quiz) => {
                 try {
@@ -291,16 +376,6 @@ const GradesAndroid: React.FC = () => {
       }
       setQuizzes(teacherQuizzes);
 
-      console.log('Fetched quizzes with submissions:', teacherQuizzes.map(q => ({
-        title: q.title,
-        quarter: q.quarter,
-        submissionsCount: q.quizSubmissions?.length || 0,
-        submissions: q.quizSubmissions?.map(sub => ({
-          studentId: sub.student._id,
-          score: sub.quizScore,
-          status: sub.status
-        })) || []
-      })));
     } catch (err: any) {
       console.error('Error fetching teacher data:', err);
       setError(err.response?.data?.message || err.message || 'Failed to fetch data');
@@ -313,47 +388,45 @@ const GradesAndroid: React.FC = () => {
     fetchTeacherData();
   }, [user]);
 
-  // Helper function to get user full name
   const getUserFullName = (user: User) => {
     return user.middleName 
-      ? `${user.lastName.toUpperCase()}, ${user.firstName.toUpperCase()} ${user.middleName.toUpperCase()}`
-      : `${user.lastName.toUpperCase()}, ${user.firstName.toUpperCase()}`;
+      ? `${user.lastName}, ${user.firstName} ${user.middleName}`
+      : `${user.lastName}, ${user.firstName}`;
   };
 
-  // Helper function to get quarter string from number
-  const getQuarterString = (quarterNum: number): string => {
-    switch (quarterNum) {
-      case 1: return 'First Quarter';
-      case 2: return 'Second Quarter';
-      case 3: return '3rd Quarter';
-      case 4: return '4th Quarter';
-      default: return 'First Quarter';
-    }
-  };
+  const schoolYearFilterOptions: DropdownMobileItem[] = useMemo(() => {
+    const uniqueSchoolYears = Array.from(
+      new Set(subjects.map(s => s.schoolYear).filter(Boolean))
+    ).sort((a, b) => b!.localeCompare(a!));
 
-  // Helper function to get quarter number from string
-  const getQuarterNumber = (quarterStr: string): number => {
-    switch (quarterStr) {
-      case 'First Quarter': return 1;
-      case 'Second Quarter': return 2;
-      case '3rd Quarter': return 3;
-      case '4th Quarter': return 4;
-      default: return 1;
-    }
-  };
+    const options: DropdownMobileItem[] = [
+      { label: 'All School Years', value: '' }
+    ];
 
-  // Combine activities and quizzes into grade items
+    uniqueSchoolYears.forEach(year => {
+      options.push({
+        label: `S.Y. ${year}`,
+        value: year as string
+      });
+    });
+
+    return options;
+  }, [subjects]);
+
+  const currentSubject = useMemo(() => {
+    if (!selectedSubject) return null;
+    return subjects.find(s => s._id === selectedSubject) || null;
+  }, [selectedSubject, subjects]);
+
   const getGradeItems = useMemo(() => {
-    if (!selectedSubject) return [];
+    if (!currentSubject) return [];
 
     const items: GradeItem[] = [];
 
-    // Add activities
     activities
       .filter(activity => {
-        const matchesSubject = activity.subject._id === selectedSubject._id;
-        const activityQuarter = getQuarterString(activity.quarter || 1);
-        const matchesQuarter = activityQuarter === selectedQuarter;
+        const matchesSubject = activity.subject._id === currentSubject._id;
+        const matchesQuarter = activity.quarter === selectedQuarter;
         return matchesSubject && matchesQuarter;
       })
       .forEach(activity => {
@@ -362,17 +435,16 @@ const GradesAndroid: React.FC = () => {
           title: activity.title,
           type: 'activity',
           points: activity.points || 0,
-          quarter: getQuarterString(activity.quarter || 1),
+          quarter: activity.quarter,
           subject: activity.subject,
           createdAt: activity.createdAt,
           data: activity
         });
       });
 
-    // Add quizzes
     quizzes
       .filter(quiz => {
-        const matchesSubject = quiz.subject._id === selectedSubject._id;
+        const matchesSubject = quiz.subject._id === currentSubject._id;
         const matchesQuarter = quiz.quarter === selectedQuarter;
         const isGradeable = quiz.status === 'published' || quiz.status === 'graded' || quiz.status === 'closed';
         return matchesSubject && matchesQuarter && isGradeable;
@@ -390,42 +462,29 @@ const GradesAndroid: React.FC = () => {
         });
       });
 
-    console.log('Grade items for quarter', selectedQuarter, ':', items.map(i => ({
-      title: i.title,
-      type: i.type,
-      points: i.points,
-      quarter: i.quarter
-    })));
-
     return items.sort((a, b) => a.title.localeCompare(b.title));
-  }, [activities, quizzes, selectedSubject, selectedQuarter]);
+  }, [activities, quizzes, currentSubject, selectedQuarter]);
 
-  // Get students for selected subject
   const subjectStudents = useMemo(() => {
-    if (!selectedSubject) return [];
+    if (!currentSubject) return [];
     
     let students: User[] = [];
-    if (selectedSubject.students && selectedSubject.students.length > 0) {
-      if (typeof selectedSubject.students[0] === 'object' && selectedSubject.students[0] !== null && 'firstName' in selectedSubject.students[0]) {
-        // students is array of User objects
-        students = selectedSubject.students as User[];
+    if (currentSubject.students && currentSubject.students.length > 0) {
+      if (typeof currentSubject.students[0] === 'object' && currentSubject.students[0] !== null && 'firstName' in currentSubject.students[0]) {
+        students = currentSubject.students as User[];
       } else {
-        // students is array of IDs, map to User objects from allStudents
-        const studentIds = selectedSubject.students as string[];
+        const studentIds = currentSubject.students as string[];
         students = allStudents.filter(s => studentIds.includes(s._id));
       }
     }
     
     return students.sort((a, b) => getUserFullName(a).localeCompare(getUserFullName(b)));
-  }, [selectedSubject, allStudents]);
+  }, [currentSubject, allStudents]);
 
-  // Prepare grade table data with both activities and quizzes
   const gradeTableData = useMemo((): StudentGradeRow[] => {
-    if (!selectedSubject || getGradeItems.length === 0 || subjectStudents.length === 0) {
+    if (!currentSubject || getGradeItems.length === 0 || subjectStudents.length === 0) {
       return [];
     }
-
-    console.log('Preparing grade table data for', subjectStudents.length, 'students and', getGradeItems.length, 'items');
 
     return subjectStudents.map(student => {
       const items: { [itemId: string]: Grade | QuizSubmission | null } = {};
@@ -467,15 +526,6 @@ const GradesAndroid: React.FC = () => {
           if (item.points) {
             maxTotal += item.points;
           }
-
-          console.log('Quiz submission check:', {
-            quizTitle: quiz.title,
-            studentName: getUserFullName(student),
-            submissionFound: !!submission,
-            submissionScore: submission?.quizScore,
-            submissionStatus: submission?.status,
-            totalSubmissions: quiz.quizSubmissions?.length || 0
-          });
         }
       });
 
@@ -488,652 +538,559 @@ const GradesAndroid: React.FC = () => {
         percentage
       };
     });
-  }, [selectedSubject, subjectStudents, getGradeItems, grades, quizzes]);
+  }, [currentSubject, subjectStudents, getGradeItems, grades, quizzes]);
 
-  // Filter subjects by search query
-  const filteredSubjects = useMemo(() => {
-    if (!searchQuery.trim()) return subjects;
-    
-    const query = searchQuery.toLowerCase();
-    return subjects.filter(subject => 
-      subject.subjectName.toLowerCase().includes(query) ||
-      subject.section.toLowerCase().includes(query) ||
-      subject.gradeLevel?.toLowerCase().includes(query) ||
-      subject.schoolYear?.toLowerCase().includes(query)
-    );
-  }, [subjects, searchQuery]);
+  const filteredSubjectOptions = useMemo(() => {
+    return subjects.filter(subject => {
+      const matchesSearch = !searchQuery || 
+        subject.subjectName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        subject.section.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        subject.gradeLevel?.toLowerCase().includes(searchQuery.toLowerCase());
+      
+      const matchesSchoolYear = !selectedSchoolYear || subject.schoolYear === selectedSchoolYear;
+      
+      return matchesSearch && matchesSchoolYear;
+    });
+  }, [subjects, searchQuery, selectedSchoolYear]);
 
-  // Generate subject initials and color
-  const getSubjectInitials = (subjectName: string) => {
-    const words = subjectName.split(' ');
-    if (words.length >= 2) {
-      return `${words[0][0]}${words[1][0]}`.toUpperCase();
-    }
-    return subjectName.substring(0, 2).toUpperCase();
+  const handleViewGrades = (subject: Subject) => {
+    setSelectedSubject(subject._id);
+    setPreviewModalVisible(true);
   };
 
-  const getSubjectColor = (subjectId: string) => {
-    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#F97316', '#14B8A6', '#EC4899'];
-    let hash = 0;
-    for (let i = 0; i < subjectId.length; i++) {
-      hash = subjectId.charCodeAt(i) + ((hash << 5) - hash);
+  const handleExportCSV = async () => {
+    if (!currentSubject || gradeTableData.length === 0) {
+      Alert.alert('No Data', 'No data to export. Please select a subject with students and grades.');
+      return;
     }
+
+    const success = await exportGradesToCSV(
+      currentSubject.subjectName,
+      currentSubject.gradeLevel || 'N/A',
+      currentSubject.section,
+      currentSubject.schoolYear || 'N/A',
+      selectedQuarter,
+      getGradeItems,
+      gradeTableData,
+      getUserFullName
+    );
+
+    if (success) {
+      Alert.alert('Success', 'Grades exported successfully!');
+    }
+  };
+
+  const openActionsMenu = (subject: Subject) => {
+    setActionsModalSubject(subject);
+    setActionsModalVisible(true);
+  };
+
+  const getConsistentColor = (str: string) => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#F97316', '#14B8A6', '#EC4899'];
     return colors[Math.abs(hash) % colors.length];
   };
 
-  const clearFilters = () => {
-    setSearchQuery('');
-    setSelectedSubject(null);
-    setSelectedQuarter('First Quarter');
-  };
+  const renderSubjectItem = useCallback(({ item }: { item: Subject }) => {
+    const activitiesCount = activities.filter(a => a.subject._id === item._id && a.quarter === selectedQuarter).length;
+    const quizzesCount = quizzes.filter(q => q.subject._id === item._id && q.quarter === selectedQuarter).length;
+    const totalItems = activitiesCount + quizzesCount;
+    const initials = item.subjectName.slice(0, 2).toUpperCase();
+    const bgColor = getConsistentColor(item.subjectName);
 
-  // Handle subject selection
-  const handleSubjectSelect = (subject: Subject) => {
-    setSelectedSubject(subject);
-  };
-
-  // Prepare sidebar virtualized list data
-  const sidebarListData = useMemo((): SidebarListItem[] => {
-    if (loading) {
-      return [{ id: 'loading', type: 'loading' }];
-    }
-    
-    if (filteredSubjects.length === 0) {
-      return [{ id: 'empty', type: 'empty' }];
-    }
-    
-    return filteredSubjects.map(subject => ({
-      id: subject._id,
-      type: 'subject' as SidebarItemType,
-      data: subject
-    }));
-  }, [loading, filteredSubjects]);
-
-  // Prepare main virtualized list data
-  const mainListData = useMemo((): MainListItem[] => {
-    if (error) {
-      return [{ id: 'error', type: 'empty' }];
-    }
-    
-    if (!selectedSubject) {
-      return [{ id: 'empty', type: 'empty' }];
-    }
-    
-    return [
-      { 
-        id: `${selectedSubject._id}-grades`, 
-        type: 'grades-table' as MainItemType, 
-        data: selectedSubject,
-        students: subjectStudents,
-        gradeItems: getGradeItems,
-        grades: grades,
-        quizzes: quizzes
-      }
-    ];
-  }, [error, selectedSubject, subjectStudents, getGradeItems, grades, quizzes]);
-
-  // Sidebar item renderer
-  const renderSidebarItem = useCallback(({ item }: { item: SidebarListItem }) => {
-    switch (item.type) {
-      case 'loading':
-        return (
-          <View 
-            className='w-full items-center rounded-lg p-3 mb-2'
-            style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5' }}
-          >
-            <ActivityIndicator size="small" color={isDarkMode ? '#E0E0E0' : '#000'} />
-            <Text className={`font-inter_regular text-sm mt-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Loading...
-            </Text>
-          </View>
-        );
-      
-      case 'empty':
-        return (
-          <View 
-            className='w-full items-center rounded-lg p-3 mb-2'
-            style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5' }}
-          >
-            <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              No subjects found.
-            </Text>
-          </View>
-        );
-      
-      case 'subject':
-        if (!item.data) return null;
-        const subject = item.data;
-        const subjectColor = getSubjectColor(subject._id);
-        const subjectInitials = getSubjectInitials(subject.subjectName);
-        const isSelected = selectedSubject?._id === subject._id;
-        
-        return (
-          <TouchableOpacity
-            onPress={() => handleSubjectSelect(subject)}
-            className='w-full rounded-md p-3 mb-2'
-            style={{ 
-              backgroundColor: isSelected 
-                ? (isDarkMode ? '#2563EB' : '#3B82F6') 
-                : (isDarkMode ? '#1E1E1E' : '#F5F5F5'),
-              borderWidth: 2,
-              borderColor: subjectColor
-            }}
-            activeOpacity={0.7}
-          >
-            {/* Subject Badge */}
-            <View className='flex-row'>
-              <View
-                className='w-[36px] h-[36px] rounded-md items-center justify-center mr-2'
-                style={{ backgroundColor: subjectColor }}
-              >
-                <Text className='font-inter_bold text-xs text-white'>
-                  {subjectInitials}
-                </Text>
-              </View>
-              <View className='flex-1'>
-                {/* Subject Name */}
-                <Text 
-                  className={`font-inter_bold text-base ${
-                    isSelected 
-                      ? 'text-white' 
-                      : (isDarkMode ? 'text-[#E0E0E0]' : 'text-black')
-                  }`}
-                  numberOfLines={2}
-                  ellipsizeMode='tail'
-                >
-                  {subject.subjectName}
-                </Text>
-                {/* Grade Level */}
-                <Text 
-                  className={`font-inter_regular text-xs ${
-                    isSelected 
-                      ? 'text-white' 
-                      : (isDarkMode ? 'text-gray-300' : 'text-gray-700')
-                  }`}
-                  numberOfLines={1}
-                  ellipsizeMode='tail'
-                >
-                  {subject.gradeLevel || 'N/A'} - {subject.section}
-                </Text>
-                {/* School Year */}
-                <Text 
-                  className={`font-inter_regular text-xs ${
-                    isSelected 
-                      ? 'text-blue-100' 
-                      : (isDarkMode ? 'text-gray-400' : 'text-gray-500')
-                  }`}
-                >
-                  S.Y. {subject.schoolYear}
-                </Text>
-              </View>
-            </View>
-          </TouchableOpacity>
-        );
-      
-      default:
-        return null;
-    }
-  }, [isDarkMode, selectedSubject, getSubjectColor, getSubjectInitials, handleSubjectSelect]);
-
-  // Main item renderer
-  const renderMainItem = useCallback(({ item }: { item: MainListItem }) => {
-    switch (item.type) {
-      case 'empty':
-        if (error) {
-          return (
-            <View className='w-full items-center bg-red-100 rounded-lg p-4 mt-2 mb-2'>
-              <Text className='font-inter_regular text-red-800'>
-                {error}
-              </Text>
-            </View>
-          );
-        }
-        
-        return (
-          <View className={`w-full items-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} rounded-lg p-8 mt-2`}>
-            <Image
-              className="w-[120] h-[120] opacity-50"
-              contentFit="contain"
-              source={require('@/assets/images/score.png')}
-            />
-            <Text className={`font-inter_regular text-center mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Select a subject from the sidebar to view student grades
-            </Text>
-          </View>
-        );
-      
-      case 'grades-table':
-        if (!item.data || !item.students || !item.gradeItems) return null;
-        
-        return (
-          <View className={`w-full ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} p-4 rounded-lg`}>
-            {/* Subject Header */}
-            <View className='mb-4'>
-              <Text className={`font-inter_bold text-xl mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                {item.data.subjectName}
-              </Text>
-              <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                {item.data.gradeLevel || 'N/A'} - {item.data.section} • S.Y. {item.data.schoolYear}
-              </Text>
-            </View>
-
-            {/* Quarter Tabs */}
-            <View className='flex-row mb-4' style={{ backgroundColor: isDarkMode ? '#374151' : '#E5E7EB', borderRadius: 8, padding: 2 }}>
-              {['First Quarter', 'Second Quarter', '3rd Quarter', '4th Quarter'].map(quarter => (
-                <TouchableOpacity
-                  key={quarter}
-                  onPress={() => setSelectedQuarter(quarter)}
-                  style={{
-                    flex: 1,
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderRadius: 6,
-                    backgroundColor: selectedQuarter === quarter ? '#3B82F6' : 'transparent',
-                    alignItems: 'center',
-                  }}
-                >
-                  <Text style={{
-                    color: selectedQuarter === quarter ? 'white' : (isDarkMode ? '#E0E0E0' : '#374151'),
-                    fontSize: 12,
-                    fontFamily: 'Inter-18pt-Medium',
-                  }}>
-                    {quarter}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {/* Summary Info */}
-            <View className='mb-4 p-3 rounded-lg' style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F3F4F6' }}>
-              <Text className={`font-inter_semibold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                {selectedQuarter} Summary: {item.gradeItems?.length || 0} items 
-                ({item.gradeItems?.filter(i => i.type === 'activity').length || 0} activities, {item.gradeItems?.filter(i => i.type === 'quiz').length || 0} quizzes)
-              </Text>
-            </View>
-
-            {/* Grades Table */}
-            {item.gradeItems.length === 0 ? (
-              <View className='items-center py-8'>
-                <Image
-                  className="w-[100] h-[100] opacity-50"
-                  contentFit="contain"
-                  source={require('@/assets/images/no_results.png')}
-                />
-                <Text className={`font-inter_regular text-center mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                  No activities or quizzes found for {selectedQuarter}
-                </Text>
-              </View>
-            ) : item.students.length === 0 ? (
-              <View className='items-center py-8'>
-                <Image
-                  className="w-[100] h-[100] opacity-50"
-                  contentFit="contain"
-                  source={require('@/assets/images/no_results.png')}
-                />
-                <Text className={`font-inter_regular text-center mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                  No students enrolled in this subject
-                </Text>
-              </View>
+    return (
+      <TouchableOpacity
+        onPress={() => handleViewGrades(item)}
+        className={`rounded-xl p-4 mb-3 ${isDarkMode ? 'bg-[#1E1E1E]' : 'bg-white'}`}
+        style={{
+          borderWidth: 1,
+          borderColor: isDarkMode ? '#333333' : '#E5E7EB',
+          shadowColor: '#000',
+          shadowOpacity: 0.1,
+          shadowRadius: 8,
+          shadowOffset: { width: 0, height: 2 },
+          elevation: 3,
+        }}
+        activeOpacity={0.8}
+      >
+        <View className="flex-row items-start justify-between">
+          <View className="flex-row items-start flex-1">
+            {item.subjectImage ? (
+              <Image
+                source={{ uri: item.subjectImage }}
+                className="w-12 h-12 rounded-lg"
+                contentFit="cover"
+              />
             ) : (
-              <ScrollView 
-                horizontal 
-                showsHorizontalScrollIndicator={true}
-                contentContainerStyle={{ flexGrow: 1 }}
+              <View
+                className="w-12 h-12 rounded-lg justify-center items-center"
+                style={{ backgroundColor: bgColor }}
               >
-                <View
-                  className='min-w-full'
-                  style={{ 
-                    backgroundColor: isDarkMode ? '#121212' : '#FFFFFF',
-                    borderRadius: 8,
-                    overflow: 'hidden',
-                  }}
-                >
-                  {/* Table Header */}
-                  <View 
-                    style={{
-                      flexDirection: 'row',
-                      backgroundColor: isDarkMode ? '#374151' : '#F3F4F6',
-                      borderBottomWidth: 2,
-                      borderBottomColor: isDarkMode ? '#4B5563' : '#D1D5DB',
-                      paddingVertical: 12,
-                      paddingHorizontal: 16,
-                      alignItems: 'center',
-                      justifyContent:'space-between'
-                    }}
-                  >
-                    {/* Student Name Header */}
-                    <View style={{ minWidth: 250, marginRight: 16 }}>
-                      <Text 
-                        className={`font-inter_bold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#111827]'}`}
-                      >
-                        Student Name
-                      </Text>
-                    </View>
-
-                    {/* Activity/Quiz Headers */}
-                    {item.gradeItems?.map(gradeItem => (
-                      <View 
-                        key={gradeItem._id}
-                        style={{ 
-                          minWidth: 120,
-                          marginRight: 16,
-                          alignItems: 'center',
-                        }}
-                      >
-                        <View className='flex-row items-center mb-1'>
-                          <Text 
-                            className={`font-inter_bold text-center text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#111827]'}`}
-                            numberOfLines={2}
-                            ellipsizeMode='tail'
-                          >
-                            {gradeItem.title}
-                          </Text>
-                        </View>
-                        <Text 
-                          className={`font-inter_regular text-center text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}
-                        >
-                          {gradeItem.type === 'activity' ? 'Activity' : 'Quiz'} ({gradeItem.points || 0} pts)
-                        </Text>
-                      </View>
-                    ))}
-
-                    {/* Total Score Header */}
-                    <View style={{ minWidth: 120, alignItems: 'center', marginRight: 16,  }}>
-                      <Text 
-                        className={`font-inter_bold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#111827]'}`}
-                      >
-                        Total
-                      </Text>
-                    </View>
-
-                    {/* Total Percentage Header */}
-                    <View style={{ minWidth: 120, alignItems: 'center' }}>
-                      <Text 
-                        className={`font-inter_bold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#111827]'}`}
-                      >
-                        Total %
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* Table Rows */}
-                  {gradeTableData.map((row, index) => (
-                    <View 
-                      key={row.student._id}
-                      style={{
-                        flexDirection: 'row',
-                        backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
-                        borderBottomWidth: 1,
-                        borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
-                        paddingVertical: 12,
-                        paddingHorizontal: 16,
-                        alignItems: 'center',
-                        justifyContent:'space-between'
-                      }}
-                    >
-                      {/* Student Name */}
-                      <View style={{ minWidth: 250, marginRight: 16 }}>
-                        <Text style={{
-                          fontSize: 14,
-                          fontFamily: 'Inter-18pt-Regular',
-                          color: isDarkMode ? '#E0E0E0' : '#111827',
-                        }}
-                        numberOfLines={1}
-                        ellipsizeMode='tail'
-                        >
-                          {getUserFullName(row.student)}
-                        </Text>
-                      </View>
-
-                      {/* Activity/Quiz Scores */}
-                      {item.gradeItems?.map(gradeItem => {
-                        const itemData = row.items[gradeItem._id];
-                        let score = '-';
-                        let textColor = isDarkMode ? '#9CA3AF' : '#6B7280';
-
-                        if (itemData) {
-                          if (gradeItem.type === 'activity' && 'score' in itemData) {
-                            score = itemData.score.toString();
-                            textColor = isDarkMode ? '#E0E0E0' : '#111827';
-                          } else if (gradeItem.type === 'quiz' && 'quizScore' in itemData) {
-                            score = itemData.quizScore?.toString() || '-';
-                            textColor = isDarkMode ? '#E0E0E0' : '#111827';
-                          }
-                        }
-
-                        return (
-                          <View 
-                            key={gradeItem._id}
-                            style={{ 
-                              minWidth: 120,
-                              marginRight: 16,
-                              alignItems: 'center',
-                            }}
-                          >
-                            <Text style={{
-                              fontSize: 14,
-                              fontFamily: 'Inter-18pt-Regular',
-                              color: textColor,
-                              textAlign: 'center',
-                            }}>
-                              {score}
-                            </Text>
-                          </View>
-                        );
-                      })}
-
-                      {/* Total Score */}
-                      <View style={{ minWidth: 120, alignItems: 'center', marginRight: 16 }}>
-                        <Text style={{
-                          fontSize: 14,
-                          fontFamily: 'Inter-24pt-Bold',
-                          color: row.percentage >= 75 ? '#10B981' : 
-                                row.percentage >= 50 ? '#F59E0B' : '#EF4444',
-                        }}>
-                          {row.total}
-                        </Text>
-                      </View>
-
-                      {/* Total Percentage */}
-                      <View style={{ minWidth: 120, alignItems: 'center' }}>
-                        <Text style={{
-                          fontSize: 14,
-                          fontFamily: 'Inter-24pt-Bold',
-                          color: row.percentage >= 75 ? '#10B981' : 
-                                row.percentage >= 50 ? '#F59E0B' : '#EF4444',
-                        }}>
-                          {row.percentage.toFixed(1)}%
-                        </Text>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              </ScrollView>
+                <Text className="text-white font-inter_bold text-lg">{initials}</Text>
+              </View>
             )}
+
+            <View className="flex-1 ml-3">
+              <Text
+                className={`font-inter_bold text-lg mb-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}
+                numberOfLines={2}
+              >
+                {item.subjectName}
+              </Text>
+              <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#9CA3AF]' : 'text-gray-600'}`}>
+                {item.gradeLevel} - {item.section} • S.Y. {item.schoolYear}
+              </Text>
+              <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'} mt-1`}>
+                {totalItems} items ({activitiesCount} activities, {quizzesCount} quizzes)
+              </Text>
+            </View>
           </View>
-        );
-      
-      default:
-        return null;
-    }
-  }, [isDarkMode, error, selectedQuarter, setSelectedQuarter, gradeTableData, getUserFullName]);
 
-  // Remove these functions:
-  // const getSidebarItem = useCallback((data: SidebarListItem[], index: number) => data[index], []);
-  // const getMainItem = useCallback((data: MainListItem[], index: number) => data[index], []);
-  // const getSidebarItemCount = useCallback((data: SidebarListItem[]) => data.length, []);
-  // const getMainItemCount = useCallback((data: MainListItem[]) => data.length, []);
-
-  // Keep these:
-  const sidebarKeyExtractor = useCallback((item: SidebarListItem) => item.id, []);
-  const mainKeyExtractor = useCallback((item: MainListItem) => item.id, []);
-
-  if (loading) {
-    return (
-      <SafeAreaView className={`flex-1 items-center justify-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-        <ActivityIndicator size="large" color={isDarkMode ? '#E0E0E0}' : '#000000'} />
-        <Text className={`font-inter_regular mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-          Loading grades...
-        </Text>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'black' : 'white'}/>
-      </SafeAreaView>
+          <Pressable
+            onPress={() => openActionsMenu(item)}
+            style={{ padding: 8 }}
+          >
+            <MoreVertIcon width={20} height={20} fill={isDarkMode ? '#E0E0E0' : 'black'} />
+          </Pressable>
+        </View>
+      </TouchableOpacity>
     );
-  }
+  }, [isDarkMode, activities, quizzes, selectedQuarter]);
 
-  if (error) {
-    return (
-      <SafeAreaView className={`flex-1 items-center justify-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-        <Text className={`font-inter_regular text-center ${isDarkMode ? 'text-red-400' : 'text-red-600'}`}>
-          {error}
-        </Text>
-        <TouchableOpacity
-          className='bg-blue-500 rounded-xl h-[40px] justify-center items-center mt-4 px-4'
-          onPress={fetchTeacherData}
-          activeOpacity={0.7}
-        >
-          <Text className='text-white font-psemibold text-base'>
-            Retry
-          </Text>
-        </TouchableOpacity>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'black' : 'white'}/>
-      </SafeAreaView>
-    );
-  }
-
-  if (subjects.length === 0) {
-    return (
-      <SafeAreaView className={`flex-1 items-center justify-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-        <Image
-          className="w-[150] h-[150]"
-          contentFit="contain"
-          source={require('@/assets/images/score.png')}
-          transition={200}
-        />
-        <Text className={`font-inter_regular text-center ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-          No subjects assigned to you yet.
-        </Text>
-        <TouchableOpacity
-          className='bg-blue-500 rounded-xl h-[40px] justify-center items-center mt-4 px-4'
-          onPress={fetchTeacherData}
-          activeOpacity={0.7}
-        >
-          <Text className='text-white font-psemibold text-base'>
-            Refresh
-          </Text>
-        </TouchableOpacity>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'black' : 'white'}/>
-      </SafeAreaView>
-    );
-  }
+  const keyExtractor = useCallback((item: Subject) => item._id, []);
 
   return (
-    <View className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-      {/* Header */}
-      <View 
-        className='flex-row items-center p-4' 
-        style={{
-          borderBottomWidth: 1,
-          borderBottomColor: isDarkMode ? '#333333' : '#E0E0E0'
-        }}
-      >
-        <View className='flex-col mr-auto'>
-          <Text className={`font-inter_semibold text-2xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-            Student Grades
-          </Text>
-          <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-            {filteredSubjects.length} of {subjects.length} subjects
-          </Text>
-          {/* Role indicator */}
-          <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-green-400' : 'text-green-600'} mt-1`}>
-            👨‍🏫 Teacher View
-          </Text>
-        </View>
-        <View className='flex-row items-center'>
-          <TouchableOpacity
-            className={`rounded-md justify-center items-center p-2 mr-1 ${isDarkMode ? 'bg-red-600' : 'bg-red-500'}`}
-            onPress={fetchTeacherData}
-            activeOpacity={0.7}
-          >
-            <Image
-              className="w-[24] h-[24]"
-              contentFit="contain"
-              source={require('@/assets/icons/refresh.png')}
-              tintColor="white"
-            />
-          </TouchableOpacity>
-          <TouchableOpacity
-            className='bg-gray-500 rounded-md justify-center items-center p-2'
-            onPress={clearFilters}
-            activeOpacity={0.7}
-          >
-            <Text className='text-white font-psemibold text-base'>
-              Clear
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Main Content - Remove ScrollView wrapper */}
-      <View style={{ flex: 1, flexDirection: width < 768 ? 'column' : 'row' }}>
-        {/* Side Bar - Subjects */}
-        <View 
-          className={`p-4 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}
+    <SafeAreaView className={`flex-1 ${isDarkMode ? 'bg-[#0F0F0F]' : 'bg-[#F1F3F4]'}`} edges={['left', 'right']}>
+      <View className="flex-1">
+        {/* Header */}
+        <View
+          className={`px-5 pt-5 pb-4 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}
           style={{
-            borderRightWidth: width >= 768 ? 1 : 0,
-            borderBottomWidth: width < 768 ? 1 : 0,
-            borderRightColor: isDarkMode ? '#333333' : '#E0E0E0',
-            borderBottomColor: isDarkMode ? '#333333' : '#E0E0E0',
-            width: width < 768 ? '100%' : '33%',
-            height: width < 768 ? '40%' : '100%',
+            borderBottomWidth: 1,
+            borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
           }}
         >
-          <Text className={`font-inter_semibold text-lg mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-            My Subjects:
-          </Text>
-          {/* Search Bar */}
-          <TextInput
-            className={`border rounded-md px-3 py-2 font-inter_regular text-sm ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E] text-white' : 'border-gray-300 text-black'}`}
-            placeholder='Search subjects...'
-            placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-          
-          {/* FlashList with proper container */}
-          <View style={{ flex: 1, marginTop: 8 }}>
-            <FlashList
-              data={sidebarListData}
-              renderItem={renderSidebarItem}
-              keyExtractor={sidebarKeyExtractor}
-              estimatedItemSize={100}
-              showsVerticalScrollIndicator={false}
-              getItemType={() => 'subject'}
+          <View className="flex-row justify-between items-center">
+            <Text
+              className={`font-inter_bold text-2xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}
+            >
+              Student Grades
+            </Text>
+            <TouchableOpacity
+              onPress={fetchTeacherData}
+              className="bg-[#EF4444] px-2 py-2 rounded-lg"
+            >
+              <Image
+                source={require('@/assets/icons/refresh.png')}
+                className="w-[24] h-[24]"
+                tintColor="white"
+              />
+            </TouchableOpacity>
+          </View>
+
+          {/* Filters */}
+          <View className="mt-4">
+            <TextInput
+              placeholder="Search subjects..."
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              className={`rounded-lg px-3 py-3 mb-3 font-inter_regular ${
+                isDarkMode ? 'bg-[#2A2A2A] text-[#E0E0E0]' : 'bg-[#F3F4F6] text-black'
+              }`}
+              placeholderTextColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
+            />
+
+            <DropdownMobile
+              label="School Year"
+              selectedValue={selectedSchoolYear}
+              onValueChange={setSelectedSchoolYear}
+              items={schoolYearFilterOptions}
+              placeholder="All School Years"
             />
           </View>
         </View>
 
-        {/* Main List - Grades Table */}
-        <View
-          className='p-4'
-          style={{ 
-            backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5', 
-            width: width < 768 ? '100%' : '67%',
-            height: width < 768 ? '60%' : '100%',
-          }}
-        >
-          <FlashList
-            data={mainListData}
-            renderItem={renderMainItem}
-            keyExtractor={mainKeyExtractor}
-            estimatedItemSize={400}
-            showsVerticalScrollIndicator={false}
-            getItemType={() => 'grades'}
-          />
+        {/* Content */}
+        <View className="flex-1 p-5">
+          {loading ? (
+            <View className="flex-1 justify-center items-center">
+              <ActivityIndicator size="large" color="#3B82F6" />
+              <Text className={`font-inter_regular mt-4 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                Loading grades...
+              </Text>
+            </View>
+          ) : filteredSubjectOptions.length > 0 ? (
+            <FlashList
+              data={filteredSubjectOptions}
+              renderItem={renderSubjectItem}
+              keyExtractor={keyExtractor}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 20 }}
+            />
+          ) : (
+            <View className="flex-1 justify-center items-center">
+              <Image
+                source={require('@/assets/images/score.png')}
+                className="w-16 h-16 mb-4"
+              />
+              <Text className={`font-inter_semibold text-lg ${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mb-2`}>
+                No subjects found
+              </Text>
+              <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-500' : 'text-gray-500'} text-center`}>
+                You don't have any assigned subjects yet
+              </Text>
+            </View>
+          )}
         </View>
       </View>
 
-      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
-    </View>
+      {/* Actions Modal */}
+      <Modal
+        visible={actionsModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setActionsModalVisible(false)}
+      >
+        <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+          <Pressable
+            className="flex-1 justify-center items-center bg-black/50"
+            onPress={() => setActionsModalVisible(false)}
+          >
+            <Pressable
+              className={`w-4/5 max-w-md rounded-xl p-4 ${isDarkMode ? 'bg-[#242526]' : 'bg-white'}`}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <Text
+                className={`font-inter_bold text-lg mb-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}
+              >
+                Subject Actions
+              </Text>
+
+              <TouchableOpacity
+                onPress={() => {
+                  if (actionsModalSubject) {
+                    handleViewGrades(actionsModalSubject);
+                    setActionsModalVisible(false);
+                  }
+                }}
+                className={`flex-row items-center p-3 rounded-lg mb-2 ${isDarkMode ? 'bg-[#3A3B3C]' : 'bg-[#F0F2F5]'}`}
+              >
+                <Image
+                  source={require('@/assets/icons/show_password.png')}
+                  className="w-6 h-6 mr-3"
+                  tintColor={isDarkMode ? '#E0E0E0' : '#333'}
+                />
+                <Text className={`font-inter_regular text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                  View Grades
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setActionsModalVisible(false)}
+                className={`p-3 rounded-lg items-center ${isDarkMode ? 'bg-[#3A3B3C]' : 'bg-[#F0F2F5]'}`}
+              >
+                <Text className={`font-inter_semibold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+            </Pressable>
+          </Pressable>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Preview Modal */}
+      <Modal
+        visible={previewModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setPreviewModalVisible(false)}
+      >
+        <View className={`flex-1 ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-[#F9FAFB]'}`}>
+          <View
+            className={`px-5 py-4 ${isDarkMode ? 'bg-[#1E1E1E]' : 'bg-white'}`}
+            style={{
+              borderBottomWidth: 1,
+              borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
+            }}
+          >
+            <View className="flex-row justify-between items-center mb-3">
+              <Text className={`font-inter_bold text-xl flex-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`} numberOfLines={1}>
+                Grades - {currentSubject?.subjectName}
+              </Text>
+            </View>
+            <View className="flex-row gap-2">
+              <TouchableOpacity
+                onPress={handleExportCSV}
+                className="bg-[#10B981] px-3 py-2 rounded-lg flex-row items-center flex-1"
+              >
+                <Image
+                  source={require('@/assets/icons/export_csv.png')}
+                  className="w-5 h-5 mr-2"
+                  tintColor="white"
+                />
+                <Text className="text-white font-inter_medium text-sm">Export CSV</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setPreviewModalVisible(false)}
+                className="bg-[#EF4444] px-4 py-2 rounded-lg"
+              >
+                <Text className="text-white font-inter_medium text-sm">Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+          
+          {currentSubject && (
+            <View className="flex-1">
+              <View
+                className={`p-5 ${isDarkMode ? 'bg-[#1E1E1E]' : 'bg-white'}`}
+                style={{
+                  borderBottomWidth: 1,
+                  borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
+                }}
+              >
+                <Text className={`font-inter_bold text-2xl mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                  {currentSubject.subjectName}
+                </Text>
+                <Text className={`font-inter_regular text-sm mb-4 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                  {currentSubject.gradeLevel} - {currentSubject.section} • S.Y. {currentSubject.schoolYear}
+                </Text>
+
+                <ScrollView 
+                  horizontal 
+                  showsHorizontalScrollIndicator={false}
+                  className="mb-4"
+                >
+                  <View className="flex-row gap-2">
+                    {quarters.map((quarter) => {
+                      const isActive = quarter === selectedQuarter;
+                      return (
+                        <TouchableOpacity
+                          key={quarter}
+                          onPress={() => setSelectedQuarter(quarter)}
+                          className={`px-4 py-2 rounded-full ${
+                            isActive 
+                              ? 'bg-[#3B82F6]' 
+                              : isDarkMode ? 'bg-[#374151]' : 'bg-[#F3F4F6]'
+                          }`}
+                        >
+                          <Text
+                            className={`font-inter_medium text-sm ${
+                              isActive 
+                                ? 'text-white' 
+                                : isDarkMode ? 'text-gray-400' : 'text-gray-600'
+                            }`}
+                          >
+                            {quarter}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+
+                <View className="flex-row gap-4">
+                  <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                    Items: {getGradeItems.length}
+                  </Text>
+                  <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                    Students: {subjectStudents.length}
+                  </Text>
+                </View>
+              </View>
+
+              {getGradeItems.length === 0 ? (
+                <View className="flex-1 justify-center items-center">
+                  <Image
+                    source={require('@/assets/images/no_results.png')}
+                    className="w-25 h-25 opacity-50"
+                  />
+                  <Text className={`font-inter_regular mt-4 text-center ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                    No activities or quizzes found for {selectedQuarter}
+                  </Text>
+                </View>
+              ) : (
+                <ScrollView 
+                  horizontal 
+                  showsHorizontalScrollIndicator={true}
+                >
+                  <ScrollView 
+                    showsVerticalScrollIndicator={true}
+                  >
+                    <View className="p-5">
+                      <View
+                        className={`rounded-lg overflow-hidden ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}
+                        style={{
+                          borderWidth: 1,
+                          borderColor: isDarkMode ? '#374151' : '#E5E7EB',
+                        }}
+                      >
+                        <View 
+                          className={`flex-row ${isDarkMode ? 'bg-[#374151]' : 'bg-[#F3F4F6]'}`}
+                          style={{
+                            borderBottomWidth: 2,
+                            borderBottomColor: isDarkMode ? '#4B5563' : '#D1D5DB',
+                          }}
+                        >
+                          <View 
+                            className="py-3 px-4"
+                            style={{ 
+                              width: 250,
+                              borderRightWidth: 1,
+                              borderRightColor: isDarkMode ? '#4B5563' : '#D1D5DB'
+                            }}
+                          >
+                            <Text className={`font-inter_bold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                              Student Name
+                            </Text>
+                          </View>
+                          {getGradeItems.map((item) => (
+                            <View 
+                              key={item._id}
+                              className="py-3 px-3 items-center"
+                              style={{ 
+                                width: 150,
+                                borderRightWidth: 1,
+                                borderRightColor: isDarkMode ? '#4B5563' : '#D1D5DB'
+                              }}
+                            >
+                              <Text 
+                                className={`font-inter_bold text-sm text-center ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}
+                                numberOfLines={2}
+                              >
+                                {item.title}
+                              </Text>
+                              <Text className={`font-inter_regular text-xs mt-1 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                                {item.type === 'activity' ? 'Activity' : 'Quiz'} ({item.points} pts)
+                              </Text>
+                            </View>
+                          ))}
+                          <View 
+                            className="py-3 px-3 items-center"
+                            style={{ 
+                              width: 100,
+                              borderRightWidth: 1,
+                              borderRightColor: isDarkMode ? '#4B5563' : '#D1D5DB'
+                            }}
+                          >
+                            <Text className={`font-inter_bold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                              Total
+                            </Text>
+                          </View>
+                          <View className="py-3 px-3 items-center" style={{ width: 100 }}>
+                            <Text className={`font-inter_bold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                              Total %
+                            </Text>
+                          </View>
+                        </View>
+
+                        {gradeTableData.map((row, rowIndex) => (
+                          <View 
+                            key={row.student._id}
+                            className={`flex-row ${
+                              rowIndex % 2 === 0 
+                                ? isDarkMode ? 'bg-[#1E1E1E]' : 'bg-white'
+                                : isDarkMode ? 'bg-[#252525]' : 'bg-[#F9FAFB]'
+                            }`}
+                            style={{
+                              borderBottomWidth: rowIndex < gradeTableData.length - 1 ? 1 : 0,
+                              borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
+                            }}
+                          >
+                            <View 
+                              className="py-3 px-4"
+                              style={{ 
+                                width: 250,
+                                borderRightWidth: 1,
+                                borderRightColor: isDarkMode ? '#333333' : '#E5E7EB'
+                              }}
+                            >
+                              <Text 
+                                className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}
+                                numberOfLines={1}
+                              >
+                                {getUserFullName(row.student)}
+                              </Text>
+                            </View>
+                            {getGradeItems.map((item) => {
+                              const itemData = row.items[item._id];
+                              let score = '-';
+                              let textColor = isDarkMode ? '#9CA3AF' : '#6B7280';
+
+                              if (itemData) {
+                                if (item.type === 'activity' && 'score' in itemData) {
+                                  score = itemData.score.toString();
+                                  textColor = isDarkMode ? '#E0E0E0' : '#111827';
+                                } else if (item.type === 'quiz' && 'quizScore' in itemData) {
+                                  score = itemData.quizScore?.toString() || '-';
+                                  textColor = isDarkMode ? '#E0E0E0' : '#111827';
+                                }
+                              }
+
+                              return (
+                                <View 
+                                  key={item._id}
+                                  className="py-3 px-3 items-center"
+                                  style={{ 
+                                    width: 150,
+                                    borderRightWidth: 1,
+                                    borderRightColor: isDarkMode ? '#333333' : '#E5E7EB'
+                                  }}
+                                >
+                                  <Text 
+                                    className="font-inter_regular text-sm"
+                                    style={{ color: textColor }}
+                                  >
+                                    {score}
+                                  </Text>
+                                </View>
+                              );
+                            })}
+                            <View 
+                              className="py-3 px-3 items-center"
+                              style={{ 
+                                width: 100,
+                                borderRightWidth: 1,
+                                borderRightColor: isDarkMode ? '#333333' : '#E5E7EB'
+                              }}
+                            >
+                              <Text 
+                                className="font-inter_bold text-sm"
+                                style={{ 
+                                  color: row.percentage >= 75 ? '#10B981' : 
+                                        row.percentage >= 50 ? '#F59E0B' : '#EF4444'
+                                }}
+                              >
+                                {row.total}
+                              </Text>
+                            </View>
+                            <View className="py-3 px-3 items-center" style={{ width: 100 }}>
+                              <Text 
+                                className="font-inter_bold text-sm"
+                                style={{ 
+                                  color: row.percentage >= 75 ? '#10B981' : 
+                                        row.percentage >= 50 ? '#F59E0B' : '#EF4444'
+                                }}
+                              >
+                                {row.percentage.toFixed(1)}%
+                              </Text>
+                            </View>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+                  </ScrollView>
+                </ScrollView>
+              )}
+            </View>
+          )}
+        </View>
+      </Modal>
+
+      <StatusBar style={isDarkMode ? 'light' : 'dark'} />
+    </SafeAreaView>
   );
 };
 

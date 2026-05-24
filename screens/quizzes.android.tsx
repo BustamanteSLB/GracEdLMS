@@ -12,14 +12,17 @@ import {
   Modal,
   useColorScheme,
 } from 'react-native';
-import { Picker } from '@react-native-picker/picker';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import apiClient from '@/app/services/apiClient';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDarkMode } from '@/contexts/DarkModeContext';
 import { StatusBar } from 'expo-status-bar';
 import { FlashList } from "@shopify/flash-list";
 import { cssInterop } from 'nativewind'
+import { RadioButton, RadioButtonGroup } from '@/components/RadioButton';
+import Checkbox from 'expo-checkbox';
+import DropdownMobile, { DropdownMobileItem } from '@/components/DropdownMobile';
+import DownIcon from '@/assets/icons/down.svg';
+import { useFocusEffect } from 'expo-router';
 
 cssInterop(Image, { className: "style" });
 
@@ -30,6 +33,7 @@ interface Subject {
   gradeLevel?: string;
   section?: string;
   schoolYear?: string;
+  subjectImage?: string;
 }
 
 interface User {
@@ -42,11 +46,13 @@ interface User {
 interface Question {
   _id: string;
   text: string;
-  type: 'multiple_choice' | 'multiple_answers' | 'true_false';
+  type: 'multiple_choice' | 'multiple_answers' | 'true_false' | 'short_answer' | 'essay';
   options: Array<{
     text: string;
     isCorrect: boolean;
   }>;
+  correctAnswers?: string[];
+  caseSensitive?: boolean;
   images?: string[];
   itemPoints: number;
   isRequired: boolean;
@@ -114,6 +120,11 @@ const QuizzesAndroid = () => {
   
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // New state for image handling
+  const [imagePreviewModal, setImagePreviewModal] = useState(false);
+  const [selectedPreviewImage, setSelectedPreviewImage] = useState<string | null>(null);
+  const [imageLoadError, setImageLoadError] = useState<{[key: string]: boolean}>({});
+
   // Filter options
   const quarterOptions = useMemo(() => [
     { label: 'All Quarters', value: '' },
@@ -122,6 +133,15 @@ const QuizzesAndroid = () => {
     { label: '3rd Quarter', value: '3rd Quarter' },
     { label: '4th Quarter', value: '4th Quarter' },
   ], []);
+
+  // Memoized subject options
+  const subjectOptions = useMemo(() => [
+    { label: 'All Subjects', value: '' },
+    ...subjects.map((subject) => ({
+      label: `${subject.subjectName}${subject.gradeLevel ? ` - ${subject.gradeLevel}` : ''}${subject.section ? ` (${subject.section})` : ''}`,
+      value: subject._id,
+    })),
+  ], [subjects]);
 
   const fetchQuizzes = useCallback(async () => {
     setLoading(true);
@@ -144,16 +164,25 @@ const QuizzesAndroid = () => {
   const fetchSubjects = useCallback(async () => {
     try {
       const response = await apiClient.get('/subjects');
+      // Response already filtered by backend for enrolled subjects only
       setSubjects(response.data.data || []);
     } catch (error) {
       console.error('Error fetching subjects:', error);
     }
   }, []);
 
+  // Replace initial useEffect with useFocusEffect to refresh data when screen gains focus
+  useFocusEffect(
+    useCallback(() => {
+      fetchQuizzes();
+      fetchSubjects();
+    }, [fetchQuizzes, fetchSubjects])
+  );
+
+  // Keep the specific filter effect for immediate UI updates when dropdowns change
   useEffect(() => {
     fetchQuizzes();
-    fetchSubjects();
-  }, [fetchQuizzes, fetchSubjects]);
+  }, [selectedSubject, selectedQuarter]);
 
   useEffect(() => {
     if (timeLeft !== null && timeLeft > 0 && quizStarted && !quizCompleted) {
@@ -197,6 +226,34 @@ const QuizzesAndroid = () => {
     }
   }, []);
 
+  // Helper function to validate and get image URL
+  const getImageUrl = (imageUrl: string) => {
+    if (imageUrl.startsWith('https://storage.googleapis.com/') || 
+        imageUrl.startsWith('https://firebasestorage.googleapis.com/')) {
+      return imageUrl;
+    }
+    
+    if (imageUrl.startsWith('/uploads/') || imageUrl.startsWith('uploads/')) {
+      console.warn('Legacy image path detected:', imageUrl);
+      return null;
+    }
+    
+    return imageUrl;
+  };
+
+  const handleImageError = (imageUrl: string) => {
+    console.warn('Failed to load image:', imageUrl);
+    setImageLoadError(prev => ({ ...prev, [imageUrl]: true }));
+  };
+
+  const handleImagePress = (imageUri: string) => {
+    const validUrl = getImageUrl(imageUri);
+    if (validUrl && !imageLoadError[validUrl]) {
+      setSelectedPreviewImage(validUrl);
+      setImagePreviewModal(true);
+    }
+  };
+
   const handleStartQuiz = useCallback((quiz: Quiz) => {
     setTakingQuiz(quiz);
     setCurrentQuestionIndex(0);
@@ -205,6 +262,7 @@ const QuizzesAndroid = () => {
     setQuizCompleted(false);
     setQuizResults(null);
     setShowInstructions(true);
+    setImageLoadError({});
     if (quiz.timeLimit) {
       setTimeLeft(quiz.timeLimit * 60);
     }
@@ -237,23 +295,23 @@ const QuizzesAndroid = () => {
     }
   }, [currentQuestionIndex]);
 
-  const handleSubmitQuiz = useCallback(async () => {
+  const handleSubmitQuiz = useCallback(async (isAutoSubmit = false) => {
     if (!takingQuiz) return;
 
-    const confirmSubmit = Platform.OS === 'web'
-      ? window.confirm('Are you sure you want to submit your quiz? This action cannot be undone.')
-      : await new Promise(resolve => {
-          Alert.alert(
-            'Submit Quiz',
-            'Are you sure you want to submit your quiz? This action cannot be undone.',
-            [
-              { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-              { text: 'Submit', style: 'default', onPress: () => resolve(true) }
-            ]
-          );
-        });
+    if (!isAutoSubmit) {
+      const confirmSubmit = await new Promise(resolve => {
+        Alert.alert(
+          'Submit Quiz',
+          'Are you sure you want to submit your quiz? This action cannot be undone.',
+          [
+            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+            { text: 'Submit', style: 'default', onPress: () => resolve(true) }
+          ]
+        );
+      });
 
-    if (!confirmSubmit) return;
+      if (!confirmSubmit) return;
+    }
 
     try {
       const response = await apiClient.post(`/quizzes/${takingQuiz._id}/submit`, {
@@ -268,7 +326,11 @@ const QuizzesAndroid = () => {
         clearTimeout(timerRef.current);
       }
 
-      fetchQuizzes();
+      await fetchQuizzes();
+
+      if (isAutoSubmit) {
+        Alert.alert('Time Up', 'Your quiz has been submitted.');
+      }
     } catch (error: any) {
       console.error('Error submitting quiz:', error);
       const message = error.response?.data?.message || 'Failed to submit quiz';
@@ -278,7 +340,7 @@ const QuizzesAndroid = () => {
 
   const handleAutoSubmit = useCallback(() => {
     if (!takingQuiz) return;
-    handleSubmitQuiz();
+    handleSubmitQuiz(true);
   }, [takingQuiz, handleSubmitQuiz]);
 
   const closeQuizModal = useCallback(() => {
@@ -290,10 +352,14 @@ const QuizzesAndroid = () => {
     setQuizCompleted(false);
     setQuizResults(null);
     setShowInstructions(false);
+    setImagePreviewModal(false);
+    setSelectedPreviewImage(null);
+    setImageLoadError({});
     if (timerRef.current) {
       clearTimeout(timerRef.current);
     }
-  }, []);
+    fetchQuizzes();
+  }, [fetchQuizzes]);
 
   const formatTime = useCallback((seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -305,19 +371,113 @@ const QuizzesAndroid = () => {
     return studentAnswers.find(a => a.questionId === questionId)?.answer;
   }, [studentAnswers]);
 
+  const renderQuestionImages = (images: string[]) => {
+    if (!images || images.length === 0) return null;
+
+    return (
+      <View style={{ marginBottom: 16 }}>
+        {images.map((image, imgIndex) => {
+          const imageUrl = getImageUrl(image);
+          if (!imageUrl || imageLoadError[imageUrl]) {
+            return (
+              <View
+                key={imgIndex}
+                style={{
+                  width: '100%',
+                  height: 200,
+                  borderRadius: 8,
+                  marginBottom: 8,
+                  backgroundColor: isDarkMode ? '#333333' : '#F3F4F6',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  borderWidth: 1,
+                  borderColor: isDarkMode ? '#4B5563' : '#E5E7EB',
+                  borderStyle: 'dashed',
+                }}
+              >
+                <Image
+                  source={require('@/assets/icons/image.png')}
+                  style={{ width: 48, height: 48, marginBottom: 8 }}
+                  tintColor={isDarkMode ? '#6B7280' : '#9CA3AF'}
+                />
+                <Text
+                  style={{
+                    fontSize: 12,
+                    fontFamily: 'Inter-Regular',
+                    color: isDarkMode ? '#6B7280' : '#9CA3AF',
+                    textAlign: 'center',
+                  }}
+                >
+                  Image unavailable
+                </Text>
+              </View>
+            );
+          }
+
+          return (
+            <TouchableOpacity
+              key={imgIndex}
+              onPress={() => handleImagePress(image)}
+              activeOpacity={0.8}
+            >
+              <Image
+                source={{ uri: imageUrl }}
+                style={{
+                  width: '100%',
+                  height: 200,
+                  borderRadius: 8,
+                  marginBottom: 8,
+                  backgroundColor: isDarkMode ? '#333333' : '#F3F4F6',
+                }}
+                resizeMode="contain"
+                onError={() => handleImageError(imageUrl)}
+                onLoad={() => {
+                  setImageLoadError(prev => {
+                    const newState = { ...prev };
+                    delete newState[imageUrl];
+                    return newState;
+                  });
+                }}
+              />
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    );
+  };
+
+  const getSubjectInitials = useCallback((subjectName: string) => {
+    const words = subjectName.split(' ');
+    if (words.length >= 2) {
+      return `${words[0][0]}${words[1][0]}`.toUpperCase();
+    }
+    return subjectName.substring(0, 2).toUpperCase();
+  }, []);
+
+  const getConsistentColor = useCallback((str: string) => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#F97316', '#14B8A6', '#EC4899'];
+    return colors[Math.abs(hash) % colors.length];
+  }, []);
+
   const renderQuizItem = useCallback(({ item }: { item: Quiz }) => {
     const status = getQuizStatus(item);
     const submission = item.quizSubmissions?.find(sub => sub.student === user?._id);
+    const subjectInitials = getSubjectInitials(item.subject?.subjectName || 'N/A');
+    const subjectColor = getConsistentColor(item.subject?.subjectName || 'N/A');
 
     return (
       <TouchableOpacity
         style={{
-          backgroundColor: isDarkMode ? '#1F2937' : '#FFFFFF',
+          backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
           borderRadius: 12,
           padding: 16,
           marginBottom: 12,
           borderWidth: 1,
-          borderColor: isDarkMode ? '#374151' : '#E5E7EB',
+          borderColor: isDarkMode ? '#333333' : '#E5E7EB',
           shadowColor: '#000',
           shadowOffset: { width: 0, height: 2 },
           shadowOpacity: 0.1,
@@ -328,84 +488,116 @@ const QuizzesAndroid = () => {
         disabled={status !== 'available'}
       >
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <View style={{ flex: 1 }}>
-            <View className='flex-row items-center mb-1'>
-              <Text
-                style={{
-                  fontSize: 18,
-                  fontFamily: 'Inter-24pt-Bold',
-                  color: isDarkMode ? '#F9FAFB' : '#111827',
-                  marginRight: 'auto'
-                }}
-                numberOfLines={1}
-                ellipsizeMode='tail'
-              >
-                {item.title}
-              </Text>
-              {submission && submission.status === 'graded' && (
-                <Text
-                  className='font-inter_medium text-xs'
-                  style={{
-                    color: isDarkMode ? '#16a34a' : '#22c55e',
-                  }}
-                >
-                  Score: {submission.quizScore} / {item.quizPoints}
-                </Text>
-              )}
-            </View>
-            <Text
-              style={{
-                fontSize: 14,
-                fontFamily: 'Inter-18pt-Regular',
-                color: isDarkMode ? '#9CA3AF' : '#6B7280',
-                marginBottom: 8,
-              }}
-            >
-              {item.subject?.subjectName || 'No Subject'} - {item.subject.gradeLevel ? `${item.subject.gradeLevel}` : ''} {item.subject.section ? `${item.subject.section}` : ''}
-            </Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+          <View style={{ flexDirection: 'row', flex: 1 }}>
+            {item.subject?.subjectImage ? (
+              <Image
+                source={{ uri: item.subject.subjectImage }}
+                style={{ width: 50, height: 50, borderRadius: 8, marginRight: 12 }}
+                resizeMode="cover"
+              />
+            ) : (
               <View
                 style={{
-                  backgroundColor: getStatusColor(status),
-                  paddingHorizontal: 8,
-                  paddingVertical: 4,
-                  borderRadius: 12,
+                  width: 50,
+                  height: 50,
+                  borderRadius: 8,
+                  backgroundColor: subjectColor,
+                  justifyContent: 'center',
+                  alignItems: 'center',
                   marginRight: 12,
                 }}
               >
-                <Text style={{
-                  color: 'white',
-                  fontSize: 12,
-                  fontFamily: 'Inter-18pt-Medium'
+                <Text style={{ 
+                  color: 'white', 
+                  fontSize: 18, 
+                  fontFamily: 'Inter-Bold' 
                 }}>
-                  {getStatusText(status)}
+                  {subjectInitials}
                 </Text>
+              </View>
+            )}
+
+            <View style={{ flex: 1 }}>
+              <View className='flex-row items-center mb-1'>
+                <Text
+                  style={{
+                    fontSize: 18,
+                    fontFamily: 'Inter-Bold',
+                    color: isDarkMode ? '#F9FAFB' : '#111827',
+                    marginRight: 'auto',
+                    flex: 1,
+                  }}
+                  numberOfLines={1}
+                  ellipsizeMode='tail'
+                >
+                  {item.title}
+                </Text>
+                {submission && submission.status === 'graded' && (
+                  <Text
+                    className='font-inter_medium text-xs'
+                    style={{
+                      color: isDarkMode ? '#16a34a' : '#22c55e',
+                      marginLeft: 8,
+                    }}
+                  >
+                    Score: {submission.quizScore} / {item.quizPoints}
+                  </Text>
+                )}
+              </View>
+              <Text
+                style={{
+                  fontSize: 14,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#9CA3AF' : '#6B7280',
+                  marginBottom: 8,
+                }}
+              >
+                {item.subject?.subjectName || 'No Subject'} {item.subject?.gradeLevel ? `- ${item.subject.gradeLevel}` : ''} {item.subject?.section ? `${item.subject.section}` : ''}
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <View
+                  style={{
+                    backgroundColor: getStatusColor(status),
+                    paddingHorizontal: 8,
+                    paddingVertical: 4,
+                    borderRadius: 12,
+                    marginRight: 12,
+                  }}
+                >
+                  <Text style={{
+                    color: 'white',
+                    fontSize: 12,
+                    fontFamily: 'Inter-Medium'
+                  }}>
+                    {getStatusText(status)}
+                  </Text>
+                </View>
+                <Text style={{
+                  fontSize: 12,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#9CA3AF' : '#6B7280'
+                }}>
+                  {item.questions.length} questions • {item.quizPoints} points
+                </Text>
+                {item.timeLimit && (
+                  <Text style={{
+                    fontSize: 12,
+                    fontFamily: 'Inter-Regular',
+                    color: isDarkMode ? '#9CA3AF' : '#6B7280',
+                    marginLeft: 8
+                  }}>
+                    • {item.timeLimit} min
+                  </Text>
+                )}
               </View>
               <Text style={{
                 fontSize: 12,
-                fontFamily: 'Inter-18pt-Regular',
+                fontFamily: 'Inter-Regular',
                 color: isDarkMode ? '#9CA3AF' : '#6B7280'
               }}>
-                {item.questions.length} questions • {item.quizPoints} points
+                Created: {new Date(item.createdAt).toLocaleDateString()}
               </Text>
-              {item.timeLimit && (
-                <Text style={{
-                  fontSize: 12,
-                  fontFamily: 'Inter-18pt-Regular',
-                  color: isDarkMode ? '#9CA3AF' : '#6B7280',
-                  marginLeft: 8
-                }}>
-                  • {item.timeLimit} min
-                </Text>
-              )}
             </View>
-            <Text style={{
-              fontSize: 12,
-              fontFamily: 'Inter-18pt-Regular',
-              color: isDarkMode ? '#9CA3AF' : '#6B7280'
-            }}>
-              Created: {new Date(item.createdAt).toLocaleDateString()}
-            </Text>
           </View>
           {status === 'available' && (
             <TouchableOpacity
@@ -415,12 +607,13 @@ const QuizzesAndroid = () => {
                 paddingHorizontal: 12,
                 paddingVertical: 6,
                 borderRadius: 6,
+                marginLeft: 8,
               }}
             >
               <Text style={{
                 color: 'white',
                 fontSize: 12,
-                fontFamily: 'Inter-18pt-Medium'
+                fontFamily: 'Inter-Medium'
               }}>
                 Start
               </Text>
@@ -429,7 +622,7 @@ const QuizzesAndroid = () => {
         </View>
       </TouchableOpacity>
     );
-  }, [isDarkMode, getQuizStatus, getStatusColor, getStatusText, handleStartQuiz, user]);
+  }, [isDarkMode, getQuizStatus, getStatusColor, getStatusText, handleStartQuiz, user, getSubjectInitials, getConsistentColor]);
 
   const renderQuestion = useCallback((question: Question, index: number) => {
     const currentAnswer = getCurrentAnswer(question._id);
@@ -437,18 +630,18 @@ const QuizzesAndroid = () => {
     return (
       <View
         style={{
-          backgroundColor: isDarkMode ? '#1F2937' : '#FFFFFF',
+          backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
           borderRadius: 12,
           padding: 20,
           marginBottom: 20,
           borderWidth: 1,
-          borderColor: isDarkMode ? '#374151' : '#E5E7EB',
+          borderColor: isDarkMode ? '#333333' : '#E5E7EB',
         }}
       >
         <Text
           style={{
             fontSize: 18,
-            fontFamily: 'Inter-24pt-SemiBold',
+            fontFamily: 'Inter-SemiBold',
             color: isDarkMode ? '#F9FAFB' : '#111827',
             marginBottom: 12,
           }}
@@ -456,125 +649,193 @@ const QuizzesAndroid = () => {
           {index + 1}. {question.text}
         </Text>
 
-        {question.images && question.images.length > 0 && (
-          <View style={{ marginBottom: 16 }}>
-            {question.images.map((image, imgIndex) => (
-              <Image
-                key={imgIndex}
-                source={{ uri: `http://192.168.100.5:5000${image}` }}
-                style={{
-                  width: '100%',
-                  height: 200,
-                  borderRadius: 8,
-                  marginBottom: 8,
-                }}
-                resizeMode="contain"
-              />
-            ))}
-          </View>
-        )}
+        {renderQuestionImages(question.images || [])}
 
         <View style={{ marginLeft: 8 }}>
-          {question.options.map((option, optionIndex) => (
-            <TouchableOpacity
-              key={optionIndex}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                marginBottom: 12,
-                padding: 12,
-                borderRadius: 8,
-                backgroundColor: isDarkMode ? '#374151' : '#F3F4F6',
-                borderWidth: 2,
-                borderColor:
-                  (question.type === 'multiple_choice' || question.type === 'true_false')
-                    ? (currentAnswer === option.text ? '#3B82F6' : 'transparent')
-                    : (Array.isArray(currentAnswer) && currentAnswer.includes(option.text) ? '#3B82F6' : 'transparent')
-              }}
-              onPress={() => {
-                if (question.type === 'multiple_choice' || question.type === 'true_false') {
-                  handleAnswerChange(question._id, option.text);
-                } else if (question.type === 'multiple_answers') {
-                  const currentAnswers = Array.isArray(currentAnswer) ? currentAnswer : [];
-                  const newAnswers = currentAnswers.includes(option.text)
-                    ? currentAnswers.filter(a => a !== option.text)
-                    : [...currentAnswers, option.text];
-                  handleAnswerChange(question._id, newAnswers);
-                }
-              }}
-            >
-              <View
+          {question.type === 'essay' ? (
+            <View>
+              <TextInput
+                value={currentAnswer || ''}
+                onChangeText={(text) => handleAnswerChange(question._id, text)}
+                placeholder="Type your essay answer here..."
+                multiline
+                numberOfLines={8}
                 style={{
-                  width: 20,
-                  height: 20,
-                  borderRadius: question.type === 'multiple_choice' || question.type === 'true_false' ? 10 : 4,
-                  borderWidth: 2,
-                  borderColor: '#9CA3AF',
-                  backgroundColor:
-                    (question.type === 'multiple_choice' || question.type === 'true_false')
-                      ? (currentAnswer === option.text ? '#3B82F6' : 'transparent')
-                      : (Array.isArray(currentAnswer) && currentAnswer.includes(option.text) ? '#3B82F6' : 'transparent'),
-                  marginRight: 12,
-                  justifyContent: 'center',
-                  alignItems: 'center',
+                  backgroundColor: isDarkMode ? '#2A2A2A' : '#F9FAFB',
+                  borderRadius: 8,
+                  padding: 12,
+                  color: isDarkMode ? '#E0E0E0' : '#111827',
+                  minHeight: 200,
+                  textAlignVertical: 'top',
+                  fontFamily: 'Inter-Regular',
+                  borderWidth: 1,
+                  borderColor: currentAnswer ? '#3B82F6' : (isDarkMode ? '#333333' : '#E5E7EB'),
                 }}
-              >
-                {((question.type === 'multiple_choice' || question.type === 'true_false') && currentAnswer === option.text) ||
-                 (question.type === 'multiple_answers' && Array.isArray(currentAnswer) && currentAnswer.includes(option.text)) ? (
-                  <View
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: question.type === 'multiple_choice' || question.type === 'true_false' ? 4 : 2,
-                      backgroundColor: 'white',
-                    }}
-                  />
-                ) : null}
-              </View>
-              <Text
-                style={{
-                  fontSize: 14,
-                  fontFamily: 'Inter-18pt-Regular',
-                  color: isDarkMode ? '#E5E7EB' : '#374151',
-                }}
-              >
-                {option.text}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6B7280'}
+              />
+              <Text style={{
+                fontSize: 12,
+                fontFamily: 'Inter-Regular',
+                color: isDarkMode ? '#9CA3AF' : '#6B7280',
+                marginTop: 8,
+                fontStyle: 'italic',
+              }}>
+                Note: This question will be graded manually by your teacher
               </Text>
-            </TouchableOpacity>
-          ))}
+            </View>
+          ) : question.type === 'short_answer' ? (
+            <View>
+              <TextInput
+                value={currentAnswer || ''}
+                onChangeText={(text) => handleAnswerChange(question._id, text)}
+                placeholder="Type your answer here..."
+                multiline
+                style={{
+                  backgroundColor: isDarkMode ? '#2A2A2A' : '#F9FAFB',
+                  borderRadius: 8,
+                  padding: 12,
+                  color: isDarkMode ? '#E0E0E0' : '#111827',
+                  minHeight: 80,
+                  textAlignVertical: 'top',
+                  fontFamily: 'Inter-Regular',
+                  borderWidth: 1,
+                  borderColor: currentAnswer ? '#3B82F6' : (isDarkMode ? '#333333' : '#E5E7EB'),
+                }}
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6B7280'}
+              />
+              {question.caseSensitive && (
+                <Text style={{
+                  fontSize: 12,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#9CA3AF' : '#6B7280',
+                  marginTop: 8,
+                  fontStyle: 'italic',
+                }}>
+                  Note: Answer is case sensitive
+                </Text>
+              )}
+            </View>
+          ) : question.type === 'multiple_answers' ? (
+            <View>
+              {question.options.map((option, optionIndex) => (
+                <TouchableOpacity
+                  key={optionIndex}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    marginBottom: 12,
+                    padding: 12,
+                    borderRadius: 8,
+                    backgroundColor: isDarkMode ? '#333333' : '#F3F4F6',
+                    borderWidth: 2,
+                    borderColor: Array.isArray(currentAnswer) && currentAnswer.includes(option.text) 
+                      ? '#3B82F6' 
+                      : 'transparent'
+                  }}
+                  onPress={() => {
+                    const currentAnswers = Array.isArray(currentAnswer) ? currentAnswer : [];
+                    const newAnswers = currentAnswers.includes(option.text)
+                      ? currentAnswers.filter(a => a !== option.text)
+                      : [...currentAnswers, option.text];
+                    handleAnswerChange(question._id, newAnswers);
+                  }}
+                >
+                  <Checkbox
+                    value={Array.isArray(currentAnswer) && currentAnswer.includes(option.text)}
+                    onValueChange={(checked) => {
+                      const currentAnswers = Array.isArray(currentAnswer) ? currentAnswer : [];
+                      const newAnswers = checked
+                        ? [...currentAnswers, option.text]
+                        : currentAnswers.filter(a => a !== option.text);
+                      handleAnswerChange(question._id, newAnswers);
+                    }}
+                    style={{
+                      marginRight: 12,
+                      borderRadius: 4,
+                      width: 20,
+                      height: 20,
+                    }}
+                    color={Array.isArray(currentAnswer) && currentAnswer.includes(option.text) ? '#3B82F6' : undefined}
+                  />
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontFamily: 'Inter-Regular',
+                      color: isDarkMode ? '#E5E7EB' : '#374151',
+                      flex: 1,
+                    }}
+                  >
+                    {option.text}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : (
+            <RadioButtonGroup
+              value={currentAnswer}
+              onChange={(value) => handleAnswerChange(question._id, value)}
+              activeColor="#3B82F6"
+              inactiveColor={isDarkMode ? '#6B7280' : '#D1D5DB'}
+              width={20}
+              height={20}
+              style={{ marginLeft: 0 }}
+            >
+              {question.options.map((option, optionIndex) => (
+                <RadioButton
+                  key={optionIndex}
+                  value={option.text}
+                  label={option.text}
+                  style={{
+                    marginBottom: 12,
+                    padding: 12,
+                    borderRadius: 8,
+                    backgroundColor: isDarkMode ? '#333333' : '#F3F4F6',
+                    borderWidth: 2,
+                    borderColor: currentAnswer === option.text ? '#3B82F6' : 'transparent'
+                  }}
+                  labelStyle={{
+                    fontSize: 14,
+                    fontFamily: 'Inter-Regular',
+                    color: isDarkMode ? '#E5E7EB' : '#374151',
+                    flex: 1,
+                  }}
+                  labelClassName={isDarkMode ? 'text-gray-200' : 'text-gray-700'}
+                />
+              ))}
+            </RadioButtonGroup>
+          )}
         </View>
 
         <View style={{ marginTop: 16, alignItems: 'center' }}>
           <Text style={{
             fontSize: 12,
-            fontFamily: 'Inter-18pt-Regular',
+            fontFamily: 'Inter-Regular',
             color: isDarkMode ? '#9CA3AF' : '#6B7280'
           }}>
             Points: {question.itemPoints}
           </Text>
+          </View>
         </View>
-      </View>
-    );
-  }, [isDarkMode, getCurrentAnswer, handleAnswerChange]);
-
+      );
+    }, [isDarkMode, getCurrentAnswer, handleAnswerChange]);
 
   const keyExtractor = useCallback((item: Quiz) => item._id, []);
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: isDarkMode ? '#111827' : '#F9FAFB' }}>
+    <ScrollView style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB' }}>
       {/* Header */}
       <View
         style={{
-          backgroundColor: isDarkMode ? '#1F2937' : '#FFFFFF',
+          backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
           padding: 20,
           borderBottomWidth: 1,
-          borderBottomColor: isDarkMode ? '#374151' : '#E5E7EB',
+          borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
         }}
       >
         <Text
           style={{
             fontSize: 24,
-            fontFamily: 'Inter-24pt-Bold',
+            fontFamily: 'Inter-Bold',
             color: isDarkMode ? '#F9FAFB' : '#111827',
             marginBottom: 16,
           }}
@@ -591,12 +852,12 @@ const QuizzesAndroid = () => {
                 value={searchQuery}
                 onChangeText={setSearchQuery}
                 style={{
-                  backgroundColor: isDarkMode ? '#374151' : '#F3F4F6',
+                  backgroundColor: isDarkMode ? '#2A2A2A' : '#F3F4F6',
                   borderRadius: 8,
                   paddingHorizontal: 12,
                   paddingVertical: 10,
-                  color: isDarkMode ? '#F9FAFB' : '#111827',
-                  fontFamily: 'Inter-18pt-Regular',
+                  color: isDarkMode ? '#E0E0E0' : '#111827',
+                  fontFamily: 'Inter-Regular',
                 }}
                 placeholderTextColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
               />
@@ -619,77 +880,42 @@ const QuizzesAndroid = () => {
           </View>
 
           <View style={{ flexDirection: 'row', gap: 8 }}>
-            {/* Subject Picker */}
             <View style={{ flex: 1 }}>
               <Text style={{
                 fontSize: 12,
-                fontFamily: 'Inter-18pt-Medium',
-                color: isDarkMode ? '#9CA3AF' : '#6B7280',
+                fontFamily: 'Inter-Medium',
+                color: isDarkMode ? '#E0E0E0' : '#6B7280',
+                marginBottom: 4,
               }}>
                 Subject
               </Text>
-              <View style={{
-                backgroundColor: isDarkMode ? '#374151' : '#F3F4F6',
-                borderRadius: 8,
-                borderWidth: 1,
-                borderColor: isDarkMode ? '#4B5563' : '#D1D5DB',
-              }}>
-                <Picker
-                  selectedValue={selectedSubject}
-                  onValueChange={setSelectedSubject}
-                  style={{
-                    color: isDarkMode ? '#F9FAFB' : '#111827',
-                    backgroundColor: 'transparent',
-                    fontFamily: 'Inter-18pt-Regular',
-                  }}
-                  dropdownIconColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
-                >
-                  <Picker.Item label="All Subjects" value="" />
-                  {subjects.map((subject) => (
-                    <Picker.Item
-                      key={subject._id}
-                      label={`${subject.subjectName}${subject.gradeLevel ? ` - ${subject.gradeLevel}` : ''}${subject.section ? ` (${subject.section})` : ''}`}
-                      value={subject._id}
-                    />
-                  ))}
-                </Picker>
-              </View>
+              <DropdownMobile
+                label="Subject"
+                selectedValue={selectedSubject}
+                onValueChange={setSelectedSubject}
+                items={subjectOptions}
+                placeholder="All Subjects"
+                buttonRightIcon={DownIcon}
+              />
             </View>
 
-            {/* Quarter Picker */}
             <View style={{ flex: 1 }}>
               <Text style={{
                 fontSize: 12,
-                fontFamily: 'Inter-18pt-Medium',
-                color: isDarkMode ? '#9CA3AF' : '#6B7280',
+                fontFamily: 'Inter-Medium',
+                color: isDarkMode ? '#E0E0E0' : '#6B7280',
+                marginBottom: 4,
               }}>
                 Quarter
               </Text>
-              <View style={{
-                backgroundColor: isDarkMode ? '#374151' : '#F3F4F6',
-                borderRadius: 8,
-                borderWidth: 1,
-                borderColor: isDarkMode ? '#4B5563' : '#D1D5DB',
-              }}>
-                <Picker
-                  selectedValue={selectedQuarter}
-                  onValueChange={setSelectedQuarter}
-                  style={{
-                    color: isDarkMode ? '#F9FAFB' : '#111827',
-                    backgroundColor: 'transparent',
-                    fontFamily: 'Inter-18pt-Regular',
-                  }}
-                  dropdownIconColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
-                >
-                  {quarterOptions.map((quarter) => (
-                    <Picker.Item
-                      key={quarter.value}
-                      label={quarter.label}
-                      value={quarter.value}
-                    />
-                  ))}
-                </Picker>
-              </View>
+              <DropdownMobile
+                label="Quarter"
+                selectedValue={selectedQuarter}
+                onValueChange={setSelectedQuarter}
+                items={quarterOptions}
+                placeholder="All Quarters"
+                buttonRightIcon={DownIcon}
+              />
             </View>
           </View>
         </View>
@@ -702,7 +928,7 @@ const QuizzesAndroid = () => {
             <ActivityIndicator size="large" color="#3B82F6" />
             <Text style={{
               marginTop: 16,
-              fontFamily: 'Inter-18pt-Regular',
+              fontFamily: 'Inter-Regular',
               color: isDarkMode ? '#9CA3AF' : '#6B7280'
             }}>
               Loading quizzes...
@@ -713,9 +939,10 @@ const QuizzesAndroid = () => {
             data={quizzes}
             renderItem={renderQuizItem}
             keyExtractor={keyExtractor}
+            estimatedItemSize={150}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 20 }}
-            estimatedItemSize={150}
+            extraData={isDarkMode}
           />
         ) : (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -725,7 +952,7 @@ const QuizzesAndroid = () => {
             />
             <Text style={{
               fontSize: 18,
-              fontFamily: 'Inter-24pt-SemiBold',
+              fontFamily: 'Inter-SemiBold',
               color: isDarkMode ? '#9CA3AF' : '#6B7280',
               marginBottom: 8
             }}>
@@ -733,7 +960,7 @@ const QuizzesAndroid = () => {
             </Text>
             <Text style={{
               fontSize: 14,
-              fontFamily: 'Inter-18pt-Regular',
+              fontFamily: 'Inter-Regular',
               color: isDarkMode ? '#6B7280' : '#9CA3AF',
               textAlign: 'center'
             }}>
@@ -743,34 +970,35 @@ const QuizzesAndroid = () => {
         )}
       </View>
 
-      {/* Quiz Taking Modal */}
+      {/* Quiz Taking Modal - Instructions Screen */}
       <Modal
         visible={!!takingQuiz}
         animationType="slide"
         transparent={false}
         onRequestClose={closeQuizModal}
       >
-        <View style={{ flex: 1, backgroundColor: isDarkMode ? '#111827' : '#F9FAFB' }}>
-          {/* Instructions Screen */}
+        <View style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB' }}>
           {showInstructions && takingQuiz && (
             <View style={{ flex: 1, padding: 20, justifyContent: 'center' }}>
               <View
                 style={{
-                  backgroundColor: isDarkMode ? '#1F2937' : '#FFFFFF',
+                  backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
                   borderRadius: 12,
                   padding: 24,
                   borderWidth: 1,
-                  borderColor: isDarkMode ? '#374151' : '#E5E7EB',
+                  borderColor: isDarkMode ? '#333333' : '#E5E7EB',
                 }}
               >
                 <Text
                   style={{
                     fontSize: 24,
-                    fontFamily: 'Inter-24pt-Bold',
+                    fontFamily: 'Inter-Bold',
                     color: isDarkMode ? '#F9FAFB' : '#111827',
                     marginBottom: 16,
                     textAlign: 'center',
                   }}
+                  ellipsizeMode='tail'
+                  numberOfLines={2}
                 >
                   {takingQuiz.title}
                 </Text>
@@ -779,7 +1007,7 @@ const QuizzesAndroid = () => {
                   <Text
                     style={{
                       fontSize: 16,
-                      fontFamily: 'Inter-18pt-Regular',
+                      fontFamily: 'Inter-Regular',
                       color: isDarkMode ? '#9CA3AF' : '#6B7280',
                       marginBottom: 20,
                       textAlign: 'center',
@@ -792,7 +1020,7 @@ const QuizzesAndroid = () => {
                 <View style={{ marginBottom: 20 }}>
                   <Text style={{
                     fontSize: 16,
-                    fontFamily: 'Inter-18pt-Medium',
+                    fontFamily: 'Inter-Medium',
                     color: isDarkMode ? '#F9FAFB' : '#111827',
                     marginBottom: 8
                   }}>
@@ -800,7 +1028,7 @@ const QuizzesAndroid = () => {
                   </Text>
                   <Text style={{
                     fontSize: 14,
-                    fontFamily: 'Inter-18pt-Regular',
+                    fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280',
                     marginBottom: 4
                   }}>
@@ -808,7 +1036,7 @@ const QuizzesAndroid = () => {
                   </Text>
                   <Text style={{
                     fontSize: 14,
-                    fontFamily: 'Inter-18pt-Regular',
+                    fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280',
                     marginBottom: 4
                   }}>
@@ -817,7 +1045,7 @@ const QuizzesAndroid = () => {
                   {takingQuiz.timeLimit && (
                     <Text style={{
                       fontSize: 14,
-                      fontFamily: 'Inter-18pt-Regular',
+                      fontFamily: 'Inter-Regular',
                       color: isDarkMode ? '#9CA3AF' : '#6B7280',
                       marginBottom: 4
                     }}>
@@ -829,7 +1057,7 @@ const QuizzesAndroid = () => {
                 <View style={{ marginBottom: 20 }}>
                   <Text style={{
                     fontSize: 16,
-                    fontFamily: 'Inter-18pt-Medium',
+                    fontFamily: 'Inter-Medium',
                     color: isDarkMode ? '#F9FAFB' : '#111827',
                     marginBottom: 8
                   }}>
@@ -837,7 +1065,7 @@ const QuizzesAndroid = () => {
                   </Text>
                   <Text style={{
                     fontSize: 14,
-                    fontFamily: 'Inter-18pt-Regular',
+                    fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280',
                     marginBottom: 4
                   }}>
@@ -845,7 +1073,7 @@ const QuizzesAndroid = () => {
                   </Text>
                   <Text style={{
                     fontSize: 14,
-                    fontFamily: 'Inter-18pt-Regular',
+                    fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280',
                     marginBottom: 4
                   }}>
@@ -853,7 +1081,7 @@ const QuizzesAndroid = () => {
                   </Text>
                   <Text style={{
                     fontSize: 14,
-                    fontFamily: 'Inter-18pt-Regular',
+                    fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280',
                     marginBottom: 4
                   }}>
@@ -861,7 +1089,7 @@ const QuizzesAndroid = () => {
                   </Text>
                   <Text style={{
                     fontSize: 14,
-                    fontFamily: 'Inter-18pt-Regular',
+                    fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280',
                     marginBottom: 4
                   }}>
@@ -882,7 +1110,7 @@ const QuizzesAndroid = () => {
                   >
                     <Text style={{
                       color: 'white',
-                      fontFamily: 'Inter-18pt-Medium',
+                      fontFamily: 'Inter-Medium',
                       fontSize: 16
                     }}>
                       Cancel
@@ -900,7 +1128,7 @@ const QuizzesAndroid = () => {
                   >
                     <Text style={{
                       color: 'white',
-                      fontFamily: 'Inter-18pt-Medium',
+                      fontFamily: 'Inter-Medium',
                       fontSize: 16
                     }}>
                       Begin Quiz
@@ -914,32 +1142,33 @@ const QuizzesAndroid = () => {
           {/* Quiz Taking Screen */}
           {quizStarted && takingQuiz && !quizCompleted && (
             <View style={{ flex: 1 }}>
-              {/* Header with timer */}
               <View
                 style={{
-                  backgroundColor: isDarkMode ? '#1F2937' : '#FFFFFF',
+                  backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
                   padding: 20,
                   borderBottomWidth: 1,
-                  borderBottomColor: isDarkMode ? '#374151' : '#E5E7EB',
+                  borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
                   flexDirection: 'row',
                   justifyContent: 'space-between',
                   alignItems: 'center',
                 }}
               >
-                <View>
+                <View className='flex-wrap items-start' style={{ flex: 1, marginRight: 20 }}>
                   <Text
                     style={{
                       fontSize: 20,
-                      fontFamily: 'Inter-24pt-Bold',
+                      fontFamily: 'Inter-Bold',
                       color: isDarkMode ? '#F9FAFB' : '#111827',
                     }}
+                    numberOfLines={2}
+                    ellipsizeMode='tail'
                   >
                     {takingQuiz.title}
                   </Text>
                   <Text
                     style={{
                       fontSize: 14,
-                      fontFamily: 'Inter-18pt-Regular',
+                      fontFamily: 'Inter-Regular',
                       color: isDarkMode ? '#9CA3AF' : '#6B7280',
                     }}
                   >
@@ -951,7 +1180,7 @@ const QuizzesAndroid = () => {
                     <Text
                       style={{
                         fontSize: 18,
-                        fontFamily: 'Inter-24pt-Bold',
+                        fontFamily: 'Inter-Bold',
                         color: timeLeft <= 300 ? '#EF4444' : '#10B981',
                       }}
                     >
@@ -970,7 +1199,7 @@ const QuizzesAndroid = () => {
                   >
                     <Text style={{
                       color: 'white',
-                      fontFamily: 'Inter-18pt-Medium',
+                      fontFamily: 'Inter-Medium',
                       fontSize: 12
                     }}>
                       Exit
@@ -979,18 +1208,16 @@ const QuizzesAndroid = () => {
                 </View>
               </View>
 
-              {/* Question */}
               <ScrollView style={{ flex: 1, padding: 20 }}>
                 {renderQuestion(takingQuiz.questions[currentQuestionIndex], currentQuestionIndex)}
               </ScrollView>
 
-              {/* Navigation */}
               <View
                 style={{
-                  backgroundColor: isDarkMode ? '#1F2937' : '#FFFFFF',
+                  backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
                   padding: 20,
                   borderTopWidth: 1,
-                  borderTopColor: isDarkMode ? '#374151' : '#E5E7EB',
+                  borderTopColor: isDarkMode ? '#333333' : '#E5E7EB',
                   flexDirection: 'row',
                   justifyContent: 'space-between',
                   alignItems: 'center',
@@ -1008,7 +1235,7 @@ const QuizzesAndroid = () => {
                 >
                   <Text style={{
                     color: 'white',
-                    fontFamily: 'Inter-18pt-Medium'
+                    fontFamily: 'Inter-Medium'
                   }}>
                     Previous
                   </Text>
@@ -1017,7 +1244,7 @@ const QuizzesAndroid = () => {
                 <View style={{ flex: 1, alignItems: 'center' }}>
                   <Text style={{
                     fontSize: 12,
-                    fontFamily: 'Inter-18pt-Regular',
+                    fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280'
                   }}>
                     Answered: {studentAnswers.length} / {takingQuiz.questions.length}
@@ -1036,14 +1263,14 @@ const QuizzesAndroid = () => {
                   >
                     <Text style={{
                       color: 'white',
-                      fontFamily: 'Inter-18pt-Medium'
+                      fontFamily: 'Inter-Medium'
                     }}>
                       Next
                     </Text>
                   </TouchableOpacity>
                 ) : (
                   <TouchableOpacity
-                    onPress={handleSubmitQuiz}
+                    onPress={() => handleSubmitQuiz()}
                     style={{
                       backgroundColor: '#10B981',
                       paddingHorizontal: 16,
@@ -1053,7 +1280,7 @@ const QuizzesAndroid = () => {
                   >
                     <Text style={{
                       color: 'white',
-                      fontFamily: 'Inter-18pt-Medium'
+                      fontFamily: 'Inter-Medium'
                     }}>
                       Submit Quiz
                     </Text>
@@ -1068,18 +1295,18 @@ const QuizzesAndroid = () => {
             <View style={{ flex: 1, padding: 20, justifyContent: 'center' }}>
               <View
                 style={{
-                  backgroundColor: isDarkMode ? '#1F2937' : '#FFFFFF',
+                  backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
                   borderRadius: 12,
                   padding: 24,
                   borderWidth: 1,
-                  borderColor: isDarkMode ? '#374151' : '#E5E7EB',
+                  borderColor: isDarkMode ? '#333333' : '#E5E7EB',
                   alignItems: 'center',
                 }}
               >
                 <Text
                   style={{
                     fontSize: 24,
-                    fontFamily: 'Inter-24pt-Bold',
+                    fontFamily: 'Inter-Bold',
                     color: isDarkMode ? '#F9FAFB' : '#111827',
                     marginBottom: 16,
                     textAlign: 'center',
@@ -1100,7 +1327,7 @@ const QuizzesAndroid = () => {
                   <Text
                     style={{
                       fontSize: 36,
-                      fontFamily: 'Inter-24pt-Bold',
+                      fontFamily: 'Inter-Bold',
                       color: '#10B981',
                       marginBottom: 8,
                     }}
@@ -1110,7 +1337,7 @@ const QuizzesAndroid = () => {
                   <Text
                     style={{
                       fontSize: 16,
-                      fontFamily: 'Inter-18pt-Regular',
+                      fontFamily: 'Inter-Regular',
                       color: isDarkMode ? '#9CA3AF' : '#6B7280',
                     }}
                   >
@@ -1129,7 +1356,7 @@ const QuizzesAndroid = () => {
                 >
                   <Text style={{
                     color: 'white',
-                    fontFamily: 'Inter-18pt-Medium',
+                    fontFamily: 'Inter-Medium',
                     fontSize: 16
                   }}>
                     Close
@@ -1141,7 +1368,82 @@ const QuizzesAndroid = () => {
         </View>
       </Modal>
 
-      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+      {/* Image Preview Modal */}
+      <Modal
+        visible={imagePreviewModal}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setImagePreviewModal(false)}
+      >
+        <View style={{
+          flex: 1,
+          backgroundColor: 'rgba(0, 0, 0, 0.9)',
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: 20,
+        }}>
+          <TouchableOpacity
+            style={{
+              position: 'absolute',
+              top: 40,
+              right: 20,
+              zIndex: 1,
+              backgroundColor: 'rgba(0, 0, 0, 0.5)',
+              borderRadius: 20,
+              padding: 8,
+            }}
+            onPress={() => setImagePreviewModal(false)}
+          >
+            <Image
+              source={require('@/assets/icons/close.png')}
+              style={{ width: 24, height: 24 }}
+              tintColor="white"
+            />
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={{ flex: 1, justifyContent: 'center', alignItems: 'center', width: '100%' }}
+            onPress={() => setImagePreviewModal(false)}
+            activeOpacity={1}
+          >
+            {selectedPreviewImage && (
+              <Image
+                source={{ uri: selectedPreviewImage }}
+                style={{
+                  width: '90%',
+                  height: '80%',
+                  borderRadius: 12,
+                }}
+                resizeMode="contain"
+                onError={() => {
+                  console.warn('Failed to load image in preview:', selectedPreviewImage);
+                  setImagePreviewModal(false);
+                }}
+              />
+            )}
+          </TouchableOpacity>
+          
+          <View style={{
+            position: 'absolute',
+            bottom: 40,
+            alignSelf: 'center',
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            paddingHorizontal: 16,
+            paddingVertical: 8,
+            borderRadius: 20,
+          }}>
+            <Text style={{
+              color: 'white',
+              fontSize: 12,
+              fontFamily: 'Inter-Regular',
+            }}>
+              Tap anywhere to close
+            </Text>
+          </View>
+        </View>
+      </Modal>
+
+      <StatusBar style={isDarkMode ? 'light' : 'dark'} />
     </ScrollView>
   );
 };

@@ -8,11 +8,91 @@ const Subject = require("../models/Subject");
 const Grade = require("../models/Grade");
 const asyncHandler = require("../utils/asyncHandler");
 const { ErrorResponse } = require("../utils/errorResponse");
+const { bucket } = require("../config/firebaseService");
+
+// Helper function to upload file to Firebase Storage
+const uploadFileToFirebase = async (
+  fileBuffer,
+  originalName,
+  mimetype,
+  metadata = {},
+) => {
+  try {
+    // Create Firebase Storage path
+    const timestamp = Date.now();
+    const firebasePath = `activity-files/${timestamp}-${originalName}`;
+    const firebaseFile = bucket.file(firebasePath);
+
+    // Upload to Firebase Storage
+    const stream = firebaseFile.createWriteStream({
+      metadata: {
+        contentType: mimetype,
+        metadata: {
+          originalName,
+          uploadedAt: new Date().toISOString(),
+          ...metadata,
+        },
+      },
+    });
+
+    await new Promise((resolve, reject) => {
+      stream.on("error", reject);
+      stream.on("finish", resolve);
+      stream.end(fileBuffer);
+    });
+
+    // Make file publicly accessible
+    await firebaseFile.makePublic();
+
+    // Get the public URL
+    const publicUrl = `https://storage.googleapis.com/${bucket.name}/${firebasePath}`;
+
+    console.log(
+      `📎 File uploaded to Firebase: ${originalName} -> ${publicUrl}`,
+    );
+    return publicUrl;
+  } catch (error) {
+    console.error(`Failed to upload file ${originalName} to Firebase:`, error);
+    throw new Error(`Firebase upload failed: ${error.message}`);
+  }
+};
+
+// Helper function to delete file from Firebase Storage
+const deleteFileFromFirebase = async (fileUrl) => {
+  try {
+    if (!fileUrl || !fileUrl.includes("storage.googleapis.com")) {
+      return; // Not a Firebase URL, skip deletion
+    }
+
+    // Extract Firebase path from URL
+    const urlParts = fileUrl.split("/");
+    const pathIndex = urlParts.findIndex((part) => part === bucket.name);
+    if (pathIndex !== -1 && urlParts[pathIndex + 1]) {
+      const firebasePath = decodeURIComponent(
+        urlParts.slice(pathIndex + 1).join("/"),
+      );
+      const file = bucket.file(firebasePath);
+      await file.delete();
+      console.log(`🗑️ Deleted file from Firebase: ${firebasePath}`);
+    }
+  } catch (error) {
+    console.error(`Failed to delete file from Firebase:`, error);
+    // Don't throw error, just log it as file might already be deleted
+  }
+};
 
 // Create a new activity for a subject
 exports.createActivity = asyncHandler(async (req, res, next) => {
   const { subjectId } = req.params;
-  const { title, description, visibleDate, deadline, quarter, points } = req.body;
+  const {
+    title,
+    description,
+    visibleDate,
+    deadline,
+    quarter,
+    points,
+    allowLateSubmissions,
+  } = req.body;
 
   console.log("➡️ Create Activity Request:", {
     subjectId,
@@ -22,14 +102,13 @@ exports.createActivity = asyncHandler(async (req, res, next) => {
     deadline,
     quarter,
     points,
+    allowLateSubmissions,
     hasFile: !!req.file,
     file: req.file
       ? {
-          filename: req.file.filename,
           originalname: req.file.originalname,
           mimetype: req.file.mimetype,
           size: req.file.size,
-          path: req.file.path,
         }
       : null,
   });
@@ -39,7 +118,10 @@ exports.createActivity = asyncHandler(async (req, res, next) => {
   }
   if (!title || !visibleDate || !deadline || !quarter) {
     return next(
-      new ErrorResponse("Title, visibleDate, deadline, and quarter are required", 400)
+      new ErrorResponse(
+        "Title, visibleDate, deadline, and quarter are required",
+        400,
+      ),
     );
   }
 
@@ -52,8 +134,8 @@ exports.createActivity = asyncHandler(async (req, res, next) => {
     return next(
       new ErrorResponse(
         "Not authorized to create activities for this subject",
-        403
-      )
+        403,
+      ),
     );
   }
 
@@ -64,25 +146,38 @@ exports.createActivity = asyncHandler(async (req, res, next) => {
     deadline: new Date(deadline),
     quarter: quarter,
     points: points !== undefined && points !== "" ? Number(points) : null,
+    allowLateSubmissions:
+      allowLateSubmissions === "true" || allowLateSubmissions === true,
     subject: subjectId,
     createdBy: req.user.id,
   };
 
+  // Handle file upload to Firebase Storage
   if (req.file) {
-    // Store the attachment path with the original filename
-    activityData.attachmentPath = `uploads/${req.file.filename}`;
-    console.log("📎 File attached:", {
-      storedPath: activityData.attachmentPath,
-      originalName: req.file.originalname,
-      finalName: req.file.filename
-    });
+    try {
+      const firebaseUrl = await uploadFileToFirebase(
+        req.file.buffer,
+        req.file.originalname,
+        req.file.mimetype,
+        {
+          activityTitle: title,
+          subjectId,
+          uploadedBy: req.user.id,
+        },
+      );
+      activityData.attachmentPath = firebaseUrl;
+      console.log("📎 Activity attachment uploaded to Firebase:", firebaseUrl);
+    } catch (uploadError) {
+      console.error("Error uploading activity attachment:", uploadError);
+      return next(new ErrorResponse("Failed to upload attachment", 500));
+    }
   }
 
   const activity = await Activity.create(activityData);
 
   await activity.populate(
     "createdBy",
-    "firstName middleName lastName email profilePicture"
+    "firstName middleName lastName email profilePicture",
   );
 
   await Subject.findByIdAndUpdate(subjectId, {
@@ -93,6 +188,7 @@ exports.createActivity = asyncHandler(async (req, res, next) => {
     id: activity._id,
     title: activity.title,
     quarter: activity.quarter,
+    allowLateSubmissions: activity.allowLateSubmissions,
     attachmentPath: activity.attachmentPath,
   });
 
@@ -109,26 +205,37 @@ exports.getActivitiesForSubject = asyncHandler(async (req, res, next) => {
     return next(new ErrorResponse(`Invalid subject ID: ${subjectId}`, 400));
   }
 
-  const subject = await Subject.findById(subjectId);
+  const subject =
+    await Subject.findById(subjectId).populate("teachers.teacher");
   if (!subject) {
     return next(new ErrorResponse(`Subject not found: ${subjectId}`, 404));
   }
 
+  // Check if user is enrolled student, assigned teacher, or admin
   const isEnrolledStudent =
     req.user.role === "Student" &&
     subject.students.some((s) => s.equals(req.user.id));
+
+  // Updated: Check if teacher is in the teachers array
   const isAssignedTeacher =
     req.user.role === "Teacher" &&
-    subject.teacher &&
-    subject.teacher.equals(req.user.id);
+    subject.teachers &&
+    subject.teachers.some(
+      (ta) =>
+        ta.teacher &&
+        (ta.teacher._id.equals(req.user.id) ||
+          ta.teacher.email === req.user.email ||
+          ta.teacher.username === req.user.username),
+    );
+
   const isAdmin = req.user.role === "Admin";
 
   if (!isEnrolledStudent && !isAssignedTeacher && !isAdmin) {
     return next(
       new ErrorResponse(
         "Not authorized to view activities for this subject",
-        403
-      )
+        403,
+      ),
     );
   }
 
@@ -160,7 +267,11 @@ exports.getActivity = asyncHandler(async (req, res, next) => {
   const activity = await Activity.findById(activityId)
     .populate({
       path: "subject",
-      select: "students teacher",
+      select: "students teachers",
+      populate: {
+        path: "teachers.teacher",
+        select: "firstName lastName email username _id",
+      },
     })
     .populate("createdBy", "firstName middleName lastName email profilePicture")
     .populate({
@@ -176,18 +287,23 @@ exports.getActivity = asyncHandler(async (req, res, next) => {
   const isEnrolledStudent =
     req.user.role === "Student" &&
     subject.students.some((s) => s.equals(req.user.id));
+
+  // Updated: Check if teacher is in the teachers array
   const isAssignedTeacher =
     req.user.role === "Teacher" &&
-    subject.teacher &&
-    subject.teacher.equals(req.user.id);
+    subject.teachers &&
+    subject.teachers.some(
+      (ta) =>
+        ta.teacher &&
+        (ta.teacher._id.equals(req.user.id) ||
+          ta.teacher.email === req.user.email ||
+          ta.teacher.username === req.user.username),
+    );
+
   const isAdmin = req.user.role === "Admin";
 
   if (!isEnrolledStudent && !isAssignedTeacher && !isAdmin) {
     return next(new ErrorResponse("Not authorized to view this activity", 403));
-  }
-
-  if (activity.attachmentPath) {
-    activity.attachmentPath = activity.attachmentPath.replace(/\\/g, "/");
   }
 
   res.status(200).json({
@@ -206,6 +322,7 @@ exports.updateActivity = asyncHandler(async (req, res, next) => {
     deadline,
     quarter,
     points,
+    allowLateSubmissions,
     removeAttachment,
   } = req.body;
 
@@ -213,22 +330,39 @@ exports.updateActivity = asyncHandler(async (req, res, next) => {
     return next(new ErrorResponse(`Invalid activity ID: ${activityId}`, 400));
   }
 
-  let activity = await Activity.findById(activityId).populate(
-    "subject",
-    "teacher"
-  );
+  let activity = await Activity.findById(activityId).populate({
+    path: "subject",
+    select: "teachers",
+    populate: {
+      path: "teachers.teacher",
+      select: "_id email username",
+    },
+  });
+
   if (!activity) {
     return next(new ErrorResponse(`Activity not found: ${activityId}`, 404));
   }
 
-  if (
-    !(
-      req.user.role === "Admin" ||
-      (req.user.role === "Teacher" && activity.createdBy.equals(req.user.id))
-    )
-  ) {
+  // Updated: Check if user is admin or the teacher who created this activity
+  const isAdmin = req.user.role === "Admin";
+  const isCreator = activity.createdBy.equals(req.user.id);
+
+  // Also check if teacher is assigned to the subject
+  const subject = activity.subject;
+  const isAssignedTeacher =
+    req.user.role === "Teacher" &&
+    subject.teachers &&
+    subject.teachers.some(
+      (ta) =>
+        ta.teacher &&
+        (ta.teacher._id.equals(req.user.id) ||
+          ta.teacher.email === req.user.email ||
+          ta.teacher.username === req.user.username),
+    );
+
+  if (!isAdmin && !(isCreator && isAssignedTeacher)) {
     return next(
-      new ErrorResponse(`Not authorized to update this activity`, 403)
+      new ErrorResponse(`Not authorized to update this activity`, 403),
     );
   }
 
@@ -239,28 +373,46 @@ exports.updateActivity = asyncHandler(async (req, res, next) => {
     deadline,
     quarter,
     points: points !== undefined && points !== "" ? Number(points) : null,
+    allowLateSubmissions:
+      allowLateSubmissions === "true" || allowLateSubmissions === true,
   };
 
+  // Handle new file upload
   if (req.file) {
-    if (activity.attachmentPath) {
-      const filePath = path.join(process.cwd(), activity.attachmentPath);
-      fs.unlink(filePath, (err) => {
-        if (err) console.error("Error deleting old attachment:", err);
-      });
+    try {
+      // Delete old attachment from Firebase if it exists
+      if (activity.attachmentPath) {
+        await deleteFileFromFirebase(activity.attachmentPath);
+      }
+
+      // Upload new file to Firebase
+      const firebaseUrl = await uploadFileToFirebase(
+        req.file.buffer,
+        req.file.originalname,
+        req.file.mimetype,
+        {
+          activityId: activity._id.toString(),
+          activityTitle: title || activity.title,
+          updatedBy: req.user.id,
+        },
+      );
+      updateFields.attachmentPath = firebaseUrl;
+      console.log("📎 Updated activity attachment in Firebase:", firebaseUrl);
+    } catch (uploadError) {
+      console.error("Error updating activity attachment:", uploadError);
+      return next(new ErrorResponse("Failed to update attachment", 500));
     }
-    updateFields.attachmentPath = `uploads/${req.file.filename}`;
   } else if (removeAttachment === "true" && activity.attachmentPath) {
-    const filePath = path.join(process.cwd(), activity.attachmentPath);
-    fs.unlink(filePath, (err) => {
-      if (err) console.error("Error deleting attachment on remove:", err);
-    });
+    // Remove attachment
+    await deleteFileFromFirebase(activity.attachmentPath);
     updateFields.attachmentPath = null;
+    console.log("🗑️ Removed activity attachment from Firebase");
   }
 
   const updatedActivity = await Activity.findByIdAndUpdate(
     activityId,
     updateFields,
-    { new: true, runValidators: true }
+    { new: true, runValidators: true },
   ).populate("createdBy", "firstName middleName lastName email profilePicture");
 
   res.status(200).json({
@@ -276,45 +428,55 @@ exports.deleteActivity = asyncHandler(async (req, res, next) => {
     return next(new ErrorResponse(`Invalid activity ID: ${activityId}`, 400));
   }
 
-  const activity = await Activity.findById(activityId).populate(
-    "subject",
-    "teacher"
-  );
+  const activity = await Activity.findById(activityId).populate({
+    path: "subject",
+    select: "teachers",
+    populate: {
+      path: "teachers.teacher",
+      select: "_id email username",
+    },
+  });
+
   if (!activity) {
     return next(new ErrorResponse(`Activity not found: ${activityId}`, 404));
   }
 
-  if (
+  // Updated: Check authorization with new teachers array structure
+  const isAdmin = req.user.role === "Admin";
+  const isCreator = activity.createdBy.equals(req.user.id);
+
+  const subject = activity.subject;
+  const isAssignedTeacher =
     req.user.role === "Teacher" &&
-    (!activity.subject.teacher || !activity.subject.teacher.equals(req.user.id))
-  ) {
+    subject.teachers &&
+    subject.teachers.some(
+      (ta) =>
+        ta.teacher &&
+        (ta.teacher._id.equals(req.user.id) ||
+          ta.teacher.email === req.user.email ||
+          ta.teacher.username === req.user.username),
+    );
+
+  if (!isAdmin && !(isCreator && isAssignedTeacher)) {
     return next(
-      new ErrorResponse("Not authorized to delete this activity", 403)
+      new ErrorResponse("Not authorized to delete this activity", 403),
     );
   }
 
+  // Delete activity attachment from Firebase
   if (activity.attachmentPath) {
-    const filePath = path.join(process.cwd(), activity.attachmentPath);
-    fs.unlink(filePath, (err) => {
-      /* ignore missing-file errors */
-    });
+    await deleteFileFromFirebase(activity.attachmentPath);
   }
 
+  // Delete submission attachments from Firebase
   if (activity.submissions && activity.submissions.length > 0) {
-    activity.submissions.forEach((submission) => {
+    for (const submission of activity.submissions) {
       if (submission.attachmentPaths && submission.attachmentPaths.length > 0) {
-        submission.attachmentPaths.forEach((attachPath) => {
-          const filePath = path.join(process.cwd(), attachPath);
-          fs.unlink(filePath, (err) => {
-            if (err)
-              console.error(
-                `Error deleting submission attachment ${attachPath}:`,
-                err
-              );
-          });
-        });
+        for (const attachPath of submission.attachmentPaths) {
+          await deleteFileFromFirebase(attachPath);
+        }
       }
-    });
+    }
   }
 
   await Subject.findByIdAndUpdate(activity.subject, {
@@ -352,36 +514,58 @@ exports.turnInActivity = asyncHandler(async (req, res, next) => {
     return next(new ErrorResponse("Student not enrolled in this subject", 403));
   }
 
-  if (new Date() > activity.deadline) {
+  // Check if deadline has passed and late submissions are not allowed
+  if (new Date() > activity.deadline && !activity.allowLateSubmissions) {
     return next(
-      new ErrorResponse("Cannot turn in activity past the deadline", 400)
+      new ErrorResponse(
+        "Late submissions are not allowed for this activity",
+        400,
+      ),
     );
   }
 
-  // Use original filenames for submissions
-  const attachmentPaths = req.files
-    ? req.files.map((file) => `uploads/${file.filename}`)
-    : [];
+  // Upload submission files to Firebase Storage
+  const attachmentPaths = [];
+  if (req.files && req.files.length > 0) {
+    try {
+      for (const file of req.files) {
+        const firebaseUrl = await uploadFileToFirebase(
+          file.buffer,
+          file.originalname,
+          file.mimetype,
+          {
+            activityId: activity._id.toString(),
+            activityTitle: activity.title,
+            studentId,
+            submissionType: "student-submission",
+          },
+        );
+        attachmentPaths.push(firebaseUrl);
+      }
+      console.log(
+        `📎 Uploaded ${attachmentPaths.length} submission files to Firebase`,
+      );
+    } catch (uploadError) {
+      console.error("Error uploading submission files:", uploadError);
+      return next(new ErrorResponse("Failed to upload submission files", 500));
+    }
+  }
 
   let submission = activity.submissions.find((sub) =>
-    sub.student.equals(studentId)
+    sub.student.equals(studentId),
   );
 
   if (submission) {
-    if (attachmentPaths.length > 0 && submission.attachmentPaths.length > 0) {
-      submission.attachmentPaths.forEach((attachPath) => {
-        const filePath = path.join(process.cwd(), attachPath);
-        fs.unlink(filePath, (err) => {
-          if (err)
-            console.error(
-              `Error deleting old submission attachment ${attachPath}:`,
-              err
-            );
-        });
-      });
+    // Delete old submission files from Firebase
+    if (submission.attachmentPaths && submission.attachmentPaths.length > 0) {
+      for (const oldPath of submission.attachmentPaths) {
+        await deleteFileFromFirebase(oldPath);
+      }
     }
+
     submission.submissionDate = new Date();
-    submission.attachmentPaths = attachmentPaths.length > 0 ? attachmentPaths : submission.attachmentPaths;
+    submission.attachmentPaths =
+      attachmentPaths.length > 0 ? attachmentPaths : submission.attachmentPaths;
     submission.status = "submitted";
   } else {
     activity.submissions.push({
@@ -398,7 +582,7 @@ exports.turnInActivity = asyncHandler(async (req, res, next) => {
     success: true,
     message: "Activity turned in successfully",
     submission: activity.submissions.find((sub) =>
-      sub.student.equals(studentId)
+      sub.student.equals(studentId),
     ),
   });
 });
@@ -420,18 +604,22 @@ exports.undoTurnInActivity = asyncHandler(async (req, res, next) => {
 
   if (req.user.role !== "Student") {
     return next(
-      new ErrorResponse("Only students can undo activity turn-in", 403)
+      new ErrorResponse("Only students can undo activity turn-in", 403),
     );
   }
 
-  if (new Date() > activity.deadline) {
+  // Check if deadline has passed and late submissions are not allowed
+  if (new Date() > activity.deadline && !activity.allowLateSubmissions) {
     return next(
-      new ErrorResponse("Cannot undo turn-in past the deadline", 400)
+      new ErrorResponse(
+        "Cannot undo turn-in when late submissions are not allowed",
+        400,
+      ),
     );
   }
 
   const submissionIndex = activity.submissions.findIndex((sub) =>
-    sub.student.equals(studentId)
+    sub.student.equals(studentId),
   );
 
   if (submissionIndex === -1) {
@@ -440,20 +628,14 @@ exports.undoTurnInActivity = asyncHandler(async (req, res, next) => {
 
   const submissionToRemove = activity.submissions[submissionIndex];
 
+  // Delete submission files from Firebase
   if (
     submissionToRemove.attachmentPaths &&
     submissionToRemove.attachmentPaths.length > 0
   ) {
-    submissionToRemove.attachmentPaths.forEach((attachPath) => {
-      const filePath = path.join(process.cwd(), attachPath);
-      fs.unlink(filePath, (err) => {
-        if (err)
-          console.error(
-            `Error deleting submission attachment ${attachPath}:`,
-            err
-          );
-      });
-    });
+    for (const attachPath of submissionToRemove.attachmentPaths) {
+      await deleteFileFromFirebase(attachPath);
+    }
   }
 
   activity.submissions.splice(submissionIndex, 1);
@@ -478,24 +660,40 @@ exports.getAllSubmissionsForActivity = asyncHandler(async (req, res, next) => {
       path: "submissions.student",
       select: "firstName middleName lastName email profilePicture",
     })
-    .populate("subject", "teacher");
+    .populate({
+      path: "subject",
+      select: "teachers",
+      populate: {
+        path: "teachers.teacher",
+        select: "_id email username",
+      },
+    });
 
   if (!activity) {
     return next(new ErrorResponse(`Activity not found: ${activityId}`, 404));
   }
 
+  // Updated: Check if teacher is in the teachers array
+  const subject = activity.subject;
   const isAssignedTeacher =
     req.user.role === "Teacher" &&
-    activity.subject.teacher &&
-    activity.subject.teacher.equals(req.user.id);
+    subject.teachers &&
+    subject.teachers.some(
+      (ta) =>
+        ta.teacher &&
+        (ta.teacher._id.equals(req.user.id) ||
+          ta.teacher.email === req.user.email ||
+          ta.teacher.username === req.user.username),
+    );
+
   const isAdmin = req.user.role === "Admin";
 
   if (!isAssignedTeacher && !isAdmin) {
     return next(
       new ErrorResponse(
         "Not authorized to view submissions for this activity",
-        403
-      )
+        403,
+      ),
     );
   }
 
@@ -512,11 +710,11 @@ exports.getStudentGradeForActivity = asyncHandler(async (req, res, next) => {
 
   const grade = await Grade.findOne({
     activity: activityId,
-    student: studentId
-  }).populate('gradedBy', 'firstName middleName lastName');
+    student: studentId,
+  }).populate("gradedBy", "firstName middleName lastName");
 
   res.status(200).json({
     success: true,
-    data: grade
+    data: grade,
   });
 });

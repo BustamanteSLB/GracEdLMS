@@ -1,6 +1,6 @@
 // components/CourseMaterialModal.tsx
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -13,13 +13,16 @@ import {
   View,
   Platform,
   useWindowDimensions,
-  VirtualizedList,
+  FlatList,
   Linking,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { FlashList } from '@shopify/flash-list';
 import * as DocumentPicker from 'expo-document-picker';
+import AddFile from '@/assets/icons/add_file.svg'
 import DeleteIcon from '@/assets/icons/delete.svg';
+import MoreVertIcon from '@/assets/icons/more_vert.svg';
 import apiClient from '@/app/services/apiClient';
 import { useAuth } from '@/contexts/AuthContext';
 import ContextMenu from './ContextMenu';
@@ -67,6 +70,7 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
   const { user } = useAuth();
   const { width } = useWindowDimensions();
   const { height } = useWindowDimensions();
+  const isWeb = Platform.OS === 'web';
 
   const [materials, setMaterials] = useState<CourseMaterial[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -78,9 +82,13 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
   const [viewMaterialModalVisible, setViewMaterialModalVisible] = useState(false);
   const [selectedMaterialForView, setSelectedMaterialForView] = useState<CourseMaterial | null>(null);
 
-  // context menu
+  // Context menu for web
   const [contextMenuVisible, setContextMenuVisible] = useState(false);
   const [contextMenuCoords, setContextMenuCoords] = useState({ x: 0, y: 0 });
+
+  // Actions modal for mobile (replacing bottom sheet)
+  const [actionsModalVisible, setActionsModalVisible] = useState(false);
+  const [actionsModalMaterial, setActionsModalMaterial] = useState<CourseMaterial | null>(null);
 
   const contextMenuItems = [
     {
@@ -121,22 +129,44 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
   ];
   
   const openContextMenu = (e: any, mat: CourseMaterial) => {
-    const { pageX, pageY } = e.nativeEvent;
-    setContextMenuCoords({ x: pageX - 115, y: pageY - 275 });
     setSelectedCourseMaterial(mat);
-    setContextMenuVisible(true);
+    
+    if (isWeb) {
+      const { pageX, pageY } = e.nativeEvent;
+      setContextMenuCoords({ x: pageX, y: pageY });
+      setContextMenuVisible(true);
+    } else {
+      // Open actions modal on mobile
+      setActionsModalMaterial(mat);
+      setActionsModalVisible(true);
+    }
   };
 
   const handleViewMaterial = (mat: CourseMaterial) => {
     setSelectedMaterialForView(mat);
     setViewMaterialModalVisible(true);
-    setContextMenuVisible(false);
+    
+    if (isWeb) {
+      setContextMenuVisible(false);
+    } else {
+      setActionsModalVisible(false);
+    }
   };
 
+  const handleCloseBottomSheet = useCallback(() => {
+    setActionsModalVisible(false);
+    setSelectedCourseMaterial(null);
+  }, []);
+
   const getFilePreviewUrl = (mat: CourseMaterial) => {
-    if (!mat.fileUrl) return null;
-    return `http://192.168.100.5:5000/${mat.fileUrl}`;
-    // Change this to your actual server IP address
+    // Firebase Storage URLs are already public and directly accessible
+    return mat.fileUrl;
+  };
+
+  // Get PDF viewer URL for mobile
+  const getPDFViewerUrl = (pdfUrl: string) => {
+    // Use Google Docs Viewer for PDFs on mobile
+    return `https://docs.google.com/viewer?url=${encodeURIComponent(pdfUrl)}&embedded=true`;
   };
 
   const fetchMaterials = async () => {
@@ -341,7 +371,7 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
           {
             text: 'Cancel',
             style: 'cancel',
-            onPress: () => setContextMenuVisible(false),
+            onPress: () => setActionsModalVisible(false),
           },
           {
             text: 'Delete',
@@ -350,14 +380,13 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
               try {
                 await apiClient.delete(`/courseMaterials/${materialId}`);
                 Alert.alert('Success', 'Course material deleted successfully.');
-                setContextMenuVisible(false);
-                setSelectedCourseMaterial(null);
+                setActionsModalVisible(false);
                 fetchMaterials();
               } catch (error: any) {
                 console.error('Delete error:', error);
                 const errorMessage = error.response?.data?.message || 'Failed to delete course material.';
                 Alert.alert('Error', errorMessage);
-                setContextMenuVisible(false);
+                setActionsModalVisible(false);
               }
             },
           },
@@ -423,10 +452,6 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
     setSelectedFiles([]);
   };
 
-  // VirtualizedList helpers for web
-  const getItemCount = (data: CourseMaterial[]) => data.length;
-  const getItem = (data: CourseMaterial[], index: number) => data[index];
-
   // Render item component for both lists
   const renderMaterialItem = ({ item }: { item: CourseMaterial }) => (
     <TouchableOpacity
@@ -475,19 +500,12 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
         onPress={(e) => openContextMenu(e, item)}
         style={{ padding: 8 }}
       >
-        <Image
-          source={require('@/assets/icons/more_vert.png')}
-          style={{
-            width: 20,
-            height: 20,
-            tintColor: isDarkMode ? '#E0E0E0' : '#666',
-          }}
-        />
+        <MoreVertIcon width={20} height={20} fill={isDarkMode ? '#E0E0E0' : '#666'} />
       </Pressable>
     </TouchableOpacity>
   );
 
-  return (
+  const MainContent = () => (
     <View style={{ flex: 1, padding: 8 }}>
       {/* Header */}
       <View className='flex-row justify-between items-center mb-4'>
@@ -500,11 +518,7 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
               style={{ backgroundColor: '#A78BFA', padding: 8, borderRadius: 8, marginRight: 4 }}
               onPress={pickDocuments}
             >
-              <Image
-                source={require('@/assets/icons/add_file.png')}
-                style={{ width: 24, height: 24 }}
-                tintColor="white"
-              />
+              <AddFile width={24} height={24} fill="white" />
             </TouchableOpacity>
           )}
           <TouchableOpacity
@@ -577,24 +591,24 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
       {/* Materials List */}
       {loading ? (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-          <ActivityIndicator size='large' color={isDarkMode ? '#E0E0E0' : 'black'} />
+          <ActivityIndicator size='large' color="#3B82F6" />
           <Text className={`font-inter_regular mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
             Loading materials...
           </Text>
-          </View>
+        </View>
       ) : materials.length > 0 ? (
         Platform.OS === 'web' ? (
-          // Use VirtualizedList for web
-          <VirtualizedList
+          // Use FlatList for web
+          <FlatList
             data={materials}
-            initialNumToRender={10}
             renderItem={renderMaterialItem}
             keyExtractor={(item) => item._id}
-            getItemCount={getItemCount}
-            getItem={getItem}
             showsVerticalScrollIndicator={false}
-            style={{ flex: 1 }}
             contentContainerStyle={{ paddingBottom: 20 }}
+            initialNumToRender={10}
+            maxToRenderPerBatch={10}
+            windowSize={5}
+            removeClippedSubviews={true}
           />
         ) : (
           // Use FlashList for mobile
@@ -602,9 +616,10 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
             data={materials}
             renderItem={renderMaterialItem}
             keyExtractor={(item) => item._id}
-            estimatedItemSize={80}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 20 }}
+            extraData={isDarkMode}
+            estimatedItemSize={100}
           />
         )
       ) : (
@@ -637,17 +652,149 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
         </View>
       )}
 
-      {/* Context Menu */}
-      <ContextMenu
-        visible={contextMenuVisible}
-        x={contextMenuCoords.x}
-        y={contextMenuCoords.y}
-        onClose={() => setContextMenuVisible(false)}
-        items={contextMenuItems}
-        menuStyle={{ backgroundColor: isDarkMode ? '#333' : 'white', borderRadius: 8 }}
-        itemStyle={{ paddingVertical: 10, paddingHorizontal: 15 }}
-        labelStyle={{ color: isDarkMode ? '#E0E0E0' : 'black', fontSize: 14, fontFamily: 'Inter-18pt-Regular' }}
-      />
+      {/* Context Menu for Web */}
+      {isWeb && (
+        <ContextMenu
+          visible={contextMenuVisible}
+          x={contextMenuCoords.x}
+          y={contextMenuCoords.y}
+          onClose={() => setContextMenuVisible(false)}
+          items={contextMenuItems}
+          menuStyle={{ backgroundColor: isDarkMode ? '#333' : 'white', borderRadius: 8 }}
+          itemStyle={{ paddingVertical: 10, paddingHorizontal: 15 }}
+          labelStyle={{ color: isDarkMode ? '#E0E0E0' : 'black', fontSize: 14, fontFamily: 'Inter-Regular' }}
+        />
+      )}
+
+      {/* Actions Modal for Mobile (replacing BottomSheet) */}
+      {!isWeb && (
+        <Modal
+          visible={actionsModalVisible}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setActionsModalVisible(false)}
+        >
+          <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+            <Pressable
+              style={{ flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.5)', justifyContent: 'center', alignItems: 'center' }}
+              onPress={() => setActionsModalVisible(false)}
+            >
+              <Pressable
+                style={{
+                  backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+                  borderRadius: 12,
+                  padding: 16,
+                  width: '80%',
+                  maxWidth: 400,
+                }}
+                onPress={(e) => e.stopPropagation()}
+              >
+                <Text
+                  style={{
+                    fontSize: 18,
+                    fontFamily: 'Inter-Bold',
+                    color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                    marginBottom: 16,
+                  }}
+                >
+                  {actionsModalMaterial?.fileName}
+                </Text>
+
+                {/* View Button */}
+                <TouchableOpacity
+                  onPress={() => {
+                    if (actionsModalMaterial) {
+                      handleViewMaterial(actionsModalMaterial);
+                    }
+                  }}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    paddingVertical: 12,
+                    paddingHorizontal: 16,
+                    borderRadius: 8,
+                    backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                    marginBottom: 8,
+                  }}
+                >
+                  <Image
+                    style={{ width: 24, height: 24, marginRight: 12 }}
+                    source={require('@/assets/icons/show_password.png')}
+                    tintColor="#3B82F6"
+                  />
+                  <Text
+                    style={{
+                      fontSize: 16,
+                      fontFamily: 'Inter-Regular',
+                      color: '#3B82F6',
+                    }}
+                  >
+                    View
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Delete Button (Only for Admin/Teacher) */}
+                {isAdminOrTeacher && actionsModalMaterial && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (actionsModalMaterial) {
+                        handleDeleteMaterial(actionsModalMaterial._id);
+                      }
+                    }}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      paddingVertical: 12,
+                      paddingHorizontal: 16,
+                      borderRadius: 8,
+                      backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                      marginBottom: 8,
+                    }}
+                  >
+                    <DeleteIcon
+                      width={24}
+                      height={24}
+                      fill="#EF4444"
+                      style={{ marginRight: 12 }}
+                    />
+                    <Text
+                      style={{
+                        fontSize: 16,
+                        fontFamily: 'Inter-Regular',
+                        color: '#EF4444',
+                      }}
+                    >
+                      Delete
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Cancel Button */}
+                <TouchableOpacity
+                  onPress={() => setActionsModalVisible(false)}
+                  style={{
+                    paddingVertical: 12,
+                    paddingHorizontal: 16,
+                    borderRadius: 8,
+                    backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 16,
+                      fontFamily: 'Inter-SemiBold',
+                      color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                    }}
+                  >
+                    Cancel
+                  </Text>
+                </TouchableOpacity>
+              </Pressable>
+            </Pressable>
+          </SafeAreaView>
+        </Modal>
+      )}
 
       {/* VIEW COURSE MATERIAL MODAL */}
       <Modal
@@ -656,175 +803,360 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
         transparent={true}
         onRequestClose={() => setViewMaterialModalVisible(false)}
       >
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.8)' }}>
-          {selectedMaterialForView && (
-            <>
-              <View
-                style={{
-                  flexDirection: 'row',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  padding: 16,
-                  backgroundColor: isDarkMode ? '#121212' : '#fff',
-                  borderBottomWidth: 1,
-                  borderBottomColor: isDarkMode ? '#333' : '#E5E5E5',
-                }}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text
-                    className={`font-pbold text-lg ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}
-                    numberOfLines={1}
-                  >
-                    {selectedMaterialForView.fileName}
-                  </Text>
-                  <Text
-                    className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}
-                  >
-                    {selectedMaterialForView.fileType?.toUpperCase()} • {selectedMaterialForView.fileSize ? formatFileSize(selectedMaterialForView.fileSize) : 'Unknown size'}
-                  </Text>
-                </View>
-                
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <TouchableOpacity
-                    onPress={() => {
-                      const downloadUrl = getFilePreviewUrl(selectedMaterialForView);
-                      if (downloadUrl) {
-                        if (Platform.OS === 'web') {
+        {Platform.OS === 'web' ? (
+          // Web version - complete implementation
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.8)' }}>
+            {selectedMaterialForView && (
+              <>
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: 16,
+                    backgroundColor: isDarkMode ? '#121212' : '#fff',
+                    borderBottomWidth: 1,
+                    borderBottomColor: isDarkMode ? '#333' : '#E5E5E5',
+                  }}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      className={`font-pbold text-lg ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}
+                      numberOfLines={1}
+                    >
+                      {selectedMaterialForView.fileName}
+                    </Text>
+                    <Text
+                      className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}
+                    >
+                      {selectedMaterialForView.fileType?.toUpperCase()} • {selectedMaterialForView.fileSize ? formatFileSize(selectedMaterialForView.fileSize) : 'Unknown size'}
+                    </Text>
+                  </View>
+                  
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const downloadUrl = selectedMaterialForView.fileUrl;
+                        if (downloadUrl) {
                           const link = document.createElement('a');
                           link.href = downloadUrl;
                           link.download = selectedMaterialForView.fileName;
+                          link.target = '_blank';
                           document.body.appendChild(link);
                           link.click();
                           document.body.removeChild(link);
-                        } else {
-                          // For mobile, open with external app or download
-                          Linking.openURL(downloadUrl).catch(err => {
-                            Alert.alert('Error', 'Cannot download file');
-                          });
                         }
-                      }
-                    }}
-                    style={{
-                      backgroundColor: '#3B82F6',
-                      paddingHorizontal: 12,
-                      paddingVertical: 8,
-                      borderRadius: 6,
-                      marginRight: 12,
-                    }}
-                  >
-                    <Text className="font-pbold text-white text-sm">Download</Text>
-                  </TouchableOpacity>
+                      }}
+                      style={{
+                        backgroundColor: '#3B82F6',
+                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                        borderRadius: 6,
+                        marginRight: 12,
+                      }}
+                    >
+                      <Text className="font-pbold text-white text-sm">Download</Text>
+                    </TouchableOpacity>
 
-                  <TouchableOpacity
-                    onPress={() => setViewMaterialModalVisible(false)}
-                    style={{ 
-                      backgroundColor: '#EF4444',
-                      paddingHorizontal: 12,
-                      paddingVertical: 8,
-                      borderRadius: 6,
-                    }}
-                  >
-                    <Text className='font-pbold text-white text-sm'>Close</Text>
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setViewMaterialModalVisible(false)}
+                      style={{ 
+                        backgroundColor: '#EF4444',
+                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                        borderRadius: 6,
+                      }}
+                    >
+                      <Text className='font-pbold text-white text-sm'>Close</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
-              </View>
 
-              <View style={{ flex: 1 }}>
-                {(() => {
-                  const fileUrl = getFilePreviewUrl(selectedMaterialForView);
-                  const fileType = selectedMaterialForView.fileType?.toLowerCase();
+                <View style={{ flex: 1, backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5' }}>
+                  {(() => {
+                    const fileUrl = selectedMaterialForView.fileUrl;
+                    const fileType = selectedMaterialForView.fileType?.toLowerCase();
 
-                  if (!fileUrl) {
-                    return (
-                      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5' }}>
-                        <Image
-                          style={{ width: 64, height: 64, marginBottom: 16 }}
-                          source={require('@/assets/icons/file.png')}
-                          tintColor={isDarkMode ? '#666' : '#999'}
-                        />
-                        <Text className={`font-inter_regular text-center ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                          File not available for preview
-                        </Text>
-                      </View>
-                    );
-                  }
+                    if (!fileUrl) {
+                      return (
+                        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                          <Image
+                            style={{ width: 64, height: 64, marginBottom: 16 }}
+                            source={require('@/assets/icons/file.png')}
+                            tintColor={isDarkMode ? '#666' : '#999'}
+                          />
+                          <Text className={`font-inter_regular text-center ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                            File not available for preview
+                          </Text>
+                        </View>
+                      );
+                    }
 
-                  if (Platform.OS === 'web') {
-                    // Web implementation
+                    // PDF Files - Direct embed
                     if (fileType === 'pdf') {
                       return (
                         <iframe
-                          src={fileUrl}
-                          style={{ width: '100%', height: '100%', border: 'none', backgroundColor: isDarkMode ? '#1E1E1E' : '#fff' }}
+                          src={`${fileUrl}#toolbar=1&navpanes=1&scrollbar=1`}
+                          style={{ 
+                            width: '100%', 
+                            height: '100%', 
+                            border: 'none',
+                            backgroundColor: isDarkMode ? '#1E1E1E' : '#fff'
+                          }}
                           title={selectedMaterialForView.fileName}
                         />
                       );
                     }
 
+                    // Image Files
                     if (['jpg', 'jpeg', 'png', 'gif'].includes(fileType || '')) {
                       return (
-                        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5' }}>
+                        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
                           <img
                             src={fileUrl}
                             alt={selectedMaterialForView.fileName}
-                            style={{ maxWidth: '90%', maxHeight: '90%', objectFit: 'contain', borderRadius: 8 }}
+                            style={{ 
+                              maxWidth: '100%', 
+                              maxHeight: '100%', 
+                              objectFit: 'contain',
+                              borderRadius: 8
+                            }}
                           />
                         </View>
+                      );
+                    }
+
+                    // Text-based files (TXT, CSV, JSON, HTML, CSS, JS, MD, XML)
+                    if (['txt', 'csv', 'json', 'html', 'css', 'js', 'md', 'xml'].includes(fileType || '')) {
+                      return (
+                        <iframe
+                          src={fileUrl}
+                          style={{ 
+                            width: '100%', 
+                            height: '100%', 
+                            border: 'none',
+                            backgroundColor: isDarkMode ? '#1E1E1E' : '#fff'
+                          }}
+                          title={selectedMaterialForView.fileName}
+                        />
+                      );
+                    }
+
+                    // Office Files (Word, PowerPoint, Excel) - Use Office Online Viewer
+                    if (['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx'].includes(fileType || '')) {
+                      const officeViewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileUrl)}`;
+                      return (
+                        <iframe
+                          src={officeViewerUrl}
+                          style={{ 
+                            width: '100%', 
+                            height: '100%', 
+                            border: 'none',
+                            backgroundColor: isDarkMode ? '#1E1E1E' : '#fff'
+                          }}
+                          title={selectedMaterialForView.fileName}
+                        />
+                      );
+                    }
+
+                    // Fallback for unsupported file types
+                    return (
+                      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+                        <Image
+                          style={{ width: 96, height: 96, marginBottom: 24 }}
+                          source={getFileIcon(fileType || '')}
+                          tintColor={isDarkMode ? '#666' : '#999'}
+                        />
+                        <Text className={`font-inter_semibold text-lg text-center mb-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                          {selectedMaterialForView.fileName}
+                        </Text>
+                        <Text className={`font-inter_regular text-center mb-6 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                          This file type cannot be previewed directly.{'\n'}
+                          Click "Download" to view it on your computer.
+                        </Text>
+                        <TouchableOpacity
+                          onPress={() => {
+                            const link = document.createElement('a');
+                            link.href = fileUrl;
+                            link.download = selectedMaterialForView.fileName;
+                            link.target = '_blank';
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                          }}
+                          style={{ backgroundColor: '#3B82F6', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 }}
+                        >
+                          <Text className="font-pbold text-white">Download File</Text>
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  })()}
+                </View>
+              </>
+            )}
+          </View>
+        ) : (
+          // Mobile version - wrap with SafeAreaView
+          <SafeAreaView style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)' }} edges={['top', 'bottom']}>
+            {selectedMaterialForView && (
+              <>
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: 16,
+                    backgroundColor: isDarkMode ? '#121212' : '#fff',
+                    borderBottomWidth: 1,
+                    borderBottomColor: isDarkMode ? '#333' : '#E5E5E5',
+                  }}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      className={`font-pbold text-lg ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}
+                      numberOfLines={1}
+                    >
+                      {selectedMaterialForView.fileName}
+                    </Text>
+                    <Text
+                      className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}
+                    >
+                      {selectedMaterialForView.fileType?.toUpperCase()} • {selectedMaterialForView.fileSize ? formatFileSize(selectedMaterialForView.fileSize) : 'Unknown size'}
+                    </Text>
+                  </View>
+                  
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const downloadUrl = selectedMaterialForView.fileUrl;
+                        if (downloadUrl) {
+                          Linking.openURL(downloadUrl).catch(err => {
+                            Alert.alert('Error', 'Cannot download file');
+                          });
+                        }
+                      }}
+                      style={{
+                        backgroundColor: '#3B82F6',
+                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                        borderRadius: 6,
+                        marginRight: 12,
+                      }}
+                    >
+                      <Text className="font-pbold text-white text-sm">Download</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => setViewMaterialModalVisible(false)}
+                      style={{ 
+                        backgroundColor: '#EF4444',
+                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                        borderRadius: 6,
+                      }}
+                    >
+                      <Text className='font-pbold text-white text-sm'>Close</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                <View style={{ flex: 1 }}>
+                  {(() => {
+                    const fileUrl = selectedMaterialForView.fileUrl;
+                    const fileType = selectedMaterialForView.fileType?.toLowerCase();
+
+                    if (!fileUrl) {
+                      return (
+                        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5' }}>
+                          <Image
+                            style={{ width: 64, height: 64, marginBottom: 16 }}
+                            source={require('@/assets/icons/file.png')}
+                            tintColor={isDarkMode ? '#666' : '#999'}
+                          />
+                          <Text className={`font-inter_regular text-center ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                            File not available for preview
+                          </Text>
+                        </View>
+                      );
+                    }
+
+                    // Mobile implementation - Enhanced PDF handling
+                    if (fileType === 'pdf') {
+                      const pdfViewerUrl = getPDFViewerUrl(fileUrl);
+                      
+                      return (
+                        <WebView
+                          source={{ uri: pdfViewerUrl }}
+                          style={{ flex: 1, backgroundColor: isDarkMode ? '#1E1E1E' : '#fff' }}
+                          startInLoadingState={true}
+                          renderLoading={() => (
+                            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5' }}>
+                              <ActivityIndicator size="large" color={isDarkMode ? '#E0E0E0' : '#666'} />
+                              <Text className={`font-inter_regular mt-4 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                                Loading PDF...
+                              </Text>
+                            </View>
+                          )}
+                          onError={(syntheticEvent) => {
+                            const { nativeEvent } = syntheticEvent;
+                            console.warn('PDF WebView error: ', nativeEvent);
+                          }}
+                          onHttpError={(syntheticEvent) => {
+                            const { nativeEvent } = syntheticEvent;
+                            console.warn('PDF HTTP error: ', nativeEvent);
+                          }}
+                          onLoadEnd={() => {
+                            console.log('PDF loaded successfully');
+                          }}
+                          javaScriptEnabled={true}
+                          domStorageEnabled={true}
+                          allowsInlineMediaPlayback={true}
+                          mediaPlaybackRequiresUserAction={false}
+                          scalesPageToFit={true}
+                          mixedContentMode="compatibility"
+                          originWhitelist={['*']}
+                          renderError={(errorName) => (
+                            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5', padding: 24 }}>
+                              <Image
+                                style={{ width: 96, height: 96, marginBottom: 24 }}
+                                source={getFileIcon('pdf')}
+                                tintColor={isDarkMode ? '#666' : '#999'}
+                              />
+                              <Text className={`font-inter_semibold text-lg text-center mb-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                                {selectedMaterialForView.fileName}
+                              </Text>
+                              <Text className={`font-inter_regular text-center mb-6 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                                Unable to preview this PDF in the app.{'\n'}
+                                Tap "Open External" to view with a PDF reader app.
+                              </Text>
+                              <TouchableOpacity
+                                onPress={() => {
+                                  Linking.openURL(fileUrl).catch(err => {
+                                    console.error('Cannot open PDF:', err);
+                                    Alert.alert('Error', 'Cannot open PDF with external app. Please try downloading instead.');
+                                  });
+                                }}
+                                style={{ backgroundColor: '#10B981', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8, marginBottom: 12 }}
+                              >
+                                <Text className="font-pbold text-white">Open External</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                onPress={() => {
+                                  Linking.openURL(fileUrl).catch(err => {
+                                    Alert.alert('Error', 'Cannot download file');
+                                  });
+                                }}
+                                style={{ backgroundColor: '#3B82F6', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 }}
+                              >
+                                <Text className="font-pbold text-white">Download</Text>
+                              </TouchableOpacity>
+                            </View>
+                          )}
+                        />
                       );
                     }
 
                     if (['txt', 'csv', 'json', 'html', 'css', 'js', 'md', 'xml'].includes(fileType || '')) {
-                      return (
-                        <View style={{ flex: 1, backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5' }}>
-                          <iframe
-                            src={fileUrl}
-                            style={{ width: '100%', height: '100%', border: 'none', backgroundColor: isDarkMode ? '#1E1E1E' : '#fff' }}
-                            title={selectedMaterialForView.fileName}
-                          />
-                        </View>
-                      );
-                    }
-
-                    if (['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx'].includes(fileType || '')) {
-                      return (
-                        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5', padding: 24 }}>
-                          <Image
-                            style={{ width: 96, height: 96, marginBottom: 24 }}
-                            source={getFileIcon(fileType || '')}
-                            tintColor={isDarkMode ? '#666' : '#999'}
-                          />
-                          <Text className={`font-inter_semibold text-lg text-center mb-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                            {selectedMaterialForView.fileName}
-                          </Text>
-                          <Text className={`font-inter_regular text-center mb-6 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                            This file type cannot be previewed directly in the browser.{'\n'}
-                            Click "Open in New Tab" to view with your browser's default viewer.
-                          </Text>
-                          <TouchableOpacity
-                            onPress={() => window.open(fileUrl, '_blank')}
-                            style={{ backgroundColor: '#10B981', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8, marginBottom: 12 }}
-                          >
-                            <Text className="font-pbold text-white">Open in New Tab</Text>
-                          </TouchableOpacity>
-                        </View>
-                      );
-                    }
-
-                    return (
-                      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5' }}>
-                        <Image
-                          style={{ width: 64, height: 64, marginBottom: 16 }}
-                          source={require('@/assets/icons/file.png')}
-                          tintColor={isDarkMode ? '#666' : '#999'}
-                        />
-                        <Text className={`font-inter_regular text-center ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                          Preview not available for this file type.{'\n'}Use the download button to view the file.
-                        </Text>
-                      </View>
-                    );
-                  } else {
-                    // Mobile implementation using WebView and Linking
-                    if (['pdf', 'txt', 'csv', 'json', 'html', 'css', 'js', 'md', 'xml'].includes(fileType || '')) {
                       return (
                         <WebView
                           source={{ uri: fileUrl }}
@@ -918,7 +1250,6 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
                         </TouchableOpacity>
                         <TouchableOpacity
                           onPress={() => {
-                            // For mobile, we can trigger a download by opening the URL
                             Linking.openURL(fileUrl).catch(err => {
                               Alert.alert('Error', 'Cannot download file');
                             });
@@ -929,15 +1260,18 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
                         </TouchableOpacity>
                       </View>
                     );
-                  }
-                })()}
-              </View>
-            </>
-          )}
-        </View>
+                  })()}
+                </View>
+              </>
+            )}
+          </SafeAreaView>
+        )}
       </Modal>
     </View>
   );
+
+  // No need for GestureHandlerRootView anymore
+  return <MainContent />;
 };
 
 export default CourseMaterialModal;

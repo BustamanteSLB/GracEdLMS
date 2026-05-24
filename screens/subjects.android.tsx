@@ -1,6 +1,5 @@
 import apiClient from '@/app/services/apiClient';
 import { Subject } from '@/app/types/index';
-import ContextMenu from '@/components/ContextMenu';
 import SubjectDetailsTabs from '@/components/SubjectDetailsTabs';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDarkMode } from '@/contexts/DarkModeContext';
@@ -9,19 +8,171 @@ import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { cssInterop } from 'nativewind';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useMemo, memo } from 'react';
 import {
   ActivityIndicator,
-  Dimensions,
   Modal,
   Pressable,
   Text,
+  TextInput,
   TouchableOpacity,
   useColorScheme,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import DropdownMobile from '@/components/DropdownMobile';
+import DownIcon from '@/assets/icons/down.svg';
 
 cssInterop(Image, { className: 'style' });
+
+// Memoized Subject Item Component
+const SubjectItem = memo<{
+  item: Subject;
+  isDarkMode: boolean;
+  onPress: (subject: Subject) => void;
+  getConsistentColor: (str: string) => string;
+}>(({ item, isDarkMode, onPress, getConsistentColor }) => {
+  const handlePress = useCallback(() => {
+    onPress(item);
+  }, [item, onPress]);
+
+  const initials = item.subjectName.slice(0, 2).toUpperCase();
+  const bgColor = getConsistentColor(item.subjectName);
+  
+  const studentCount = item.students?.length || 0;
+  const maleCount = item.students?.filter(s => s.sex === 'Male').length || 0;
+  const femaleCount = item.students?.filter(s => s.sex === 'Female').length || 0;
+  
+  const studentBreakdown = [
+    maleCount > 0 ? `${maleCount} boy${maleCount !== 1 ? 's' : ''}` : null,
+    femaleCount > 0 ? `${femaleCount} girl${femaleCount !== 1 ? 's' : ''}` : null,
+  ].filter(Boolean).join(', ');
+
+  // Get teacher names from teachers array
+  const getTeacherNames = (subject: Subject): string => {
+    if (!subject.teachers || subject.teachers.length === 0) {
+      return 'No teacher assigned';
+    }
+
+    return subject.teachers.map((ta) => {
+      const teacher = ta.teacher;
+      if (!teacher) return 'Unknown';
+      
+      return teacher.middleName 
+        ? `${teacher.firstName} ${teacher.middleName} ${teacher.lastName}`
+        : `${teacher.firstName} ${teacher.lastName}`;
+    }).join(', ');
+  };
+
+  return (
+    <TouchableOpacity
+      style={{
+        backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 12,
+        borderWidth: 1,
+        borderColor: isDarkMode ? '#333333' : '#E5E7EB',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 2,
+      }}
+      onPress={handlePress}
+      activeOpacity={0.8}
+    >
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <View style={{ flexDirection: 'row', flex: 1 }}>
+          {/* Subject Image or Icon */}
+          {item.subjectImage ? (
+            <Image
+              source={{ uri: item.subjectImage }}
+              style={{ width: 50, height: 50, borderRadius: 8 }}
+              contentFit="cover"
+            />
+          ) : (
+            <View
+              style={{
+                width: 50,
+                height: 50,
+                borderRadius: 8,
+                backgroundColor: bgColor,
+                justifyContent: 'center',
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ 
+                color: 'white', 
+                fontSize: 18, 
+                fontFamily: 'Inter-Bold' 
+              }}>
+                {initials}
+              </Text>
+            </View>
+          )}
+
+          {/* Content */}
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text
+              style={{
+                fontSize: 18,
+                fontFamily: 'Inter-Bold',
+                color: isDarkMode ? '#F9FAFB' : '#111827',
+                marginBottom: 4,
+              }}
+              numberOfLines={1}
+            >
+              {item.subjectName}
+            </Text>
+            <Text
+              style={{
+                fontSize: 14,
+                fontFamily: 'Inter-SemiBold',
+                color: isDarkMode ? '#9CA3AF' : '#6B7280',
+                marginBottom: 4,
+              }}
+            >
+              {item.gradeLevel} - {item.section}
+            </Text>
+            <Text
+              style={{
+                fontSize: 14,
+                fontFamily: 'Inter-SemiBold',
+                color: isDarkMode ? '#9CA3AF' : '#6B7280',
+                marginBottom: 4,
+              }}
+            >
+              S.Y {item.schoolYear}
+            </Text>
+            <Text
+              style={{
+                fontSize: 13,
+                fontFamily: 'Inter-Regular',
+                color: isDarkMode ? '#9CA3AF' : '#6B7280',
+                marginBottom: 2,
+              }}
+            >
+              Teacher: {getTeacherNames(item)}
+            </Text>
+            <Text
+              style={{
+                fontSize: 13,
+                fontFamily: 'Inter-Regular',
+                color: isDarkMode ? '#9CA3AF' : '#6B7280',
+              }}
+            >
+              {studentCount} student{studentCount !== 1 ? 's' : ''}
+              {studentBreakdown && ` / ${studentBreakdown}`}
+            </Text>
+          </View>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+});
+
+SubjectItem.displayName = 'SubjectItem';
 
 const SubjectsAndroid: React.FC = () => {
   const router = useRouter();
@@ -29,56 +180,83 @@ const SubjectsAndroid: React.FC = () => {
   const { isDarkMode } = useDarkMode();
   const { user, isLoading } = useAuth();
 
-  // ─── STATE ────────────────────────────────────────────────────────────────────
+  // State
   const [allSubjects, setAllSubjects] = useState<Subject[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedGradeLevel, setSelectedGradeLevel] = useState<string>('');
+  const [selectedSchoolYear, setSelectedSchoolYear] = useState<string>('');
 
-  // Context‐menu for each row:
-  const [menuVisible, setMenuVisible] = useState(false);
-  const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
-  const [selectedSubject, setSelectedSubject] = useState<Subject | null>(null);
-
-  // View Details modal:
+  // View Details modal
   const [viewingSubject, setViewingSubject] = useState<Subject | null>(null);
-
-  const [isPortrait, setIsPortrait] = useState(true);
-
-  // ─── ORIENTATION LISTENER ────────────────────────────────────────────────────
-  useEffect(() => {
-    const updateOrientation = () => {
-      const { width, height } = Dimensions.get('window');
-      setIsPortrait(height >= width);
-    };
-    const subscription = Dimensions.addEventListener('change', updateOrientation);
-    updateOrientation();
-    return () => subscription.remove();
-  }, []);
 
   const isStudent = user?.role === 'Student';
 
-  // ─── FILTER ENROLLED COURSES ─────────────────────────────────────────────────
-  const enrolledSubjects = allSubjects.filter(subject => {
-    if (!user || !subject.students) {
-      return false;
-    }
+  // Memoized dropdown options
+  const gradeLevelFilterOptions = useMemo(() => [
+    { label: 'All Grade Levels', value: '' },
+    { label: 'Grade 1', value: 'Grade 1' },
+    { label: 'Grade 2', value: 'Grade 2' },
+    { label: 'Grade 3', value: 'Grade 3' },
+    { label: 'Grade 4', value: 'Grade 4' },
+    { label: 'Grade 5', value: 'Grade 5' },
+    { label: 'Grade 6', value: 'Grade 6' },
+  ], []);
 
-    // Check if student is enrolled by multiple criteria
-    const isEnrolledById = subject.students.some(student => 
-      typeof student === 'string' ? student === user._id : student._id === user._id
-    );
+  const schoolYearFilterOptions = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    const options = [{ label: 'All School Years', value: '' }];
     
-    const isEnrolledByEmail = subject.students.some(student => 
-      typeof student === 'object' && student.email === user.email
-    );
+    const previousYear = currentYear - 1;
+    options.push({ label: `${previousYear} - ${currentYear}`, value: `${previousYear} - ${currentYear}` });
+    
+    for (let i = 0; i < 4; i++) {
+      const startYear = currentYear + i;
+      const endYear = startYear + 1;
+      options.push({ 
+        label: `${startYear} - ${endYear}`, 
+        value: `${startYear} - ${endYear}` 
+      });
+    }
+    
+    return options;
+  }, []);
 
-    // Also check the user's enrolledSubjects array if it exists
-    const isInUserEnrollment = user.enrolledSubjects?.includes(subject);
+  // Filter enrolled subjects
+  const enrolledSubjects = useMemo(() => {
+    return allSubjects.filter(subject => {
+      if (!user || !subject.students) {
+        return false;
+      }
 
-    return isEnrolledById || isEnrolledByEmail || isInUserEnrollment;
-  });
+      const isEnrolledById = subject.students.some(student => 
+        typeof student === 'string' ? student === user._id : student._id === user._id
+      );
+      
+      const isEnrolledByEmail = subject.students.some(student => 
+        typeof student === 'object' && student.email === user.email
+      );
 
-  // ─── FETCH STUDENT'S ENROLLED COURSES ────────────────────────────────────────
+      const isInUserEnrollment = user.enrolledSubjects?.includes(subject._id);
+
+      return isEnrolledById || isEnrolledByEmail || isInUserEnrollment;
+    });
+  }, [allSubjects, user]);
+
+  // Filter subjects based on search and filters
+  const filteredSubjects = useMemo(() => {
+    return enrolledSubjects.filter((subject) => {
+      const matchesSearch = subject.subjectName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                           subject.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                           subject.section?.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesGradeLevel = !selectedGradeLevel || subject.gradeLevel === selectedGradeLevel;
+      const matchesSchoolYear = !selectedSchoolYear || subject.schoolYear === selectedSchoolYear;
+      
+      return matchesSearch && matchesGradeLevel && matchesSchoolYear;
+    });
+  }, [enrolledSubjects, searchQuery, selectedGradeLevel, selectedSchoolYear]);
+
+  // Fetch student's enrolled subjects
   const fetchStudentSubjects = useCallback(async () => {
     if (!user || !isStudent) return;
     
@@ -86,7 +264,6 @@ const SubjectsAndroid: React.FC = () => {
     try {
       console.log('Fetching subjects for student:', user._id, user.email);
       
-      // First try to get subjects from the user's enrolledSubjects array
       if (user.enrolledSubjects && user.enrolledSubjects.length > 0) {
         console.log('Fetching subjects from user enrolledSubjects:', user.enrolledSubjects);
         const subjectPromises = user.enrolledSubjects.map(subjectId =>
@@ -101,7 +278,6 @@ const SubjectsAndroid: React.FC = () => {
         console.log('Student subjects from enrolledSubjects:', studentSubjects);
         setAllSubjects(studentSubjects);
       } else {
-        // Fallback: fetch all subjects and filter on frontend
         console.log('Fallback: fetching all subjects and filtering');
         const response = await apiClient.get<{ data: Subject[] }>('/subjects');
         
@@ -113,11 +289,9 @@ const SubjectsAndroid: React.FC = () => {
       }
     } catch (error) {
       console.error('Failed to fetch student subjects:', error);
-      window.alert('Error: Failed to load your subjects.');
       setAllSubjects([]);
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   }, [user, isStudent]);
 
@@ -135,361 +309,276 @@ const SubjectsAndroid: React.FC = () => {
     }, [fetchStudentSubjects, isStudent])
   );
 
-  // ─── HANDLE DROP COURSE ───────────────────────────────────────────────────────
-  const handleDropSubject = async (subjectId: string, subjectName: string) => {
-    const isConfirmed = window.confirm(
-      `Are you sure you want to drop "${subjectName}"? This action cannot be undone.`
-    );
+  // Handlers
+  const handleViewSubject = useCallback((subject: Subject) => {
+    router.push(`/(students)/subjects/${subject._id}` as any);
+  }, [router]);
 
-    if (isConfirmed) {
-      try {
-        await apiClient.put(`/subjects/${subjectId}/unenroll-student/${user?._id}`);
-        window.alert('Success: You have been unenrolled from the subject.');
-        
-        // Refresh the subjects list
-        fetchStudentSubjects();
-        handleCloseMenu();
-      } catch (error: any) {
-        const errorMessage = error.response?.data?.message || 'Failed to drop subject';
-        window.alert(`Error: ${errorMessage}`);
-        console.error('Error dropping subject:', error);
-      }
-    } else {
-      handleCloseMenu();
+  // Memoized color generator
+  const getConsistentColor = useCallback((str: string) => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = str.charCodeAt(i) + ((hash << 5) - hash);
     }
-  };
+    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#F97316', '#14B8A6', '#EC4899'];
+    return colors[Math.abs(hash) % colors.length];
+  }, []);
 
-  // ─── CONTEXT MENU HELPERS ────────────────────────────────────────────────────
-  const handleOpenMenu = (event: any, subject: Subject) => {
-    const { pageX, pageY } = event.nativeEvent;
-    setMenuPosition({ x: pageX - 150, y: pageY - 40 });
-    setSelectedSubject(subject);
-    setMenuVisible(true);
-  };
+  // Optimized render subject item
+  const renderSubjectItem = useCallback(({ item }: { item: Subject }) => (
+    <SubjectItem
+      item={item}
+      isDarkMode={isDarkMode}
+      onPress={handleViewSubject}
+      getConsistentColor={getConsistentColor}
+    />
+  ), [isDarkMode, handleViewSubject, getConsistentColor]);
 
-  const handleCloseMenu = () => {
-    setMenuVisible(false);
-    setSelectedSubject(null);
-  };
+  const keyExtractor = useCallback((item: Subject) => item._id, []);
 
-  // ─── MENU ITEMS (Student can view details and drop subjects) ──────────────────
-  const menuItems = [
-    {
-      label: 'Drop Subject',
-      onPress: () => {
-        if (selectedSubject) {
-          handleDropSubject(selectedSubject._id, selectedSubject.subjectName);
-        }
-      },
-      icon: (
-        <Image
-          className="w-[24] h-[24] mr-1"
-          contentFit="contain"
-          source={require('@/assets/icons/delete.png')}
-          cachePolicy="memory-disk"
-          tintColor="red"
-        />
-      ),
-    },
-  ];
-
-  // ─── REFRESH HANDLER ──────────────────────────────────────────────────────────
-  const handleRefresh = () => {
-    setRefreshing(true);
-    fetchStudentSubjects();
-  };
-
-  // ─── VIRTUALIZED LIST HELPERS ────────────────────────────────────────────────
-  const getItemCount = (_data: Subject[]) => _data.length;
-  const getItem = (_data: Subject[], index: number) => _data[index];
-
-  // ─── LOADING STATES ───────────────────────────────────────────────────────────
+  // Loading state
   if (isLoading || loading) {
     return (
-      <View
-        className={`flex-1 items-center justify-center ${
-          isDarkMode ? 'bg-[#121212]' : 'bg-white'
-        }`}
-      >
-        <ActivityIndicator size="large" color={isDarkMode ? '#E0E0E0' : '#121212'} />
-        <Text
-          className={`mt-4 text-lg font-inter_semibold ${
-            isDarkMode ? 'text-[#E0E0E0]' : 'text-black'
-          }`}
-        >
+      <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB', justifyContent: 'center', alignItems: 'center' }} edges={['top', 'bottom']}>
+        <ActivityIndicator size="large" color="#3B82F6" />
+        <Text style={{ 
+          marginTop: 16, 
+          fontFamily: 'Inter-Regular',
+          color: isDarkMode ? '#9CA3AF' : '#6B7280' 
+        }}>
           Loading your subjects...
         </Text>
         <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
-      </View>
+      </SafeAreaView>
     );
   }
 
-  // ─── UNAUTHORIZED ACCESS ──────────────────────────────────────────────────────
+  // Unauthorized access
   if (!isStudent) {
     return (
-      <View className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-        <View className="flex-1 justify-center items-center">
-          <Text
-            className={`font-inter_regular text-center ${
-              isDarkMode ? 'text-[#E0E0E0]' : 'text-black'
-            }`}
-          >
-            Access Denied. This page is only available for students.
+      <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB' }} edges={['top', 'bottom']}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <Text style={{ 
+            fontSize: 18, 
+            fontFamily: 'Inter-SemiBold',
+            color: isDarkMode ? '#9CA3AF' : '#6B7280', 
+            marginBottom: 16 
+          }}>
+            Access Denied
+          </Text>
+          <Text style={{ 
+            fontSize: 14, 
+            fontFamily: 'Inter-Regular',
+            color: isDarkMode ? '#6B7280' : '#9CA3AF',
+            textAlign: 'center' 
+          }}>
+            This page is only available for students.
           </Text>
           <TouchableOpacity
             onPress={() => router.back()}
-            className="bg-blue-400 rounded-xl h-[50px] justify-center items-center mt-4 px-6"
-            activeOpacity={0.7}
+            style={{
+              backgroundColor: '#3B82F6',
+              borderRadius: 8,
+              paddingHorizontal: 24,
+              paddingVertical: 12,
+              marginTop: 16,
+            }}
           >
-            <Text className="text-white font-psemibold text-lg">Go Back</Text>
-          </TouchableOpacity>
-        </View>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
-      </View>
-    );
-  }
-
-  // ─── NO COURSES ENROLLED ──────────────────────────────────────────────────────
-  if (enrolledSubjects.length === 0) {
-    return (
-      <View className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-        <View className="flex-row items-center mt-2 mx-2">
-          <Text className={`font-inter_bold text-lg ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-            My Subjects
-          </Text>
-          <TouchableOpacity
-            className='bg-blue-400 ml-auto p-2 h-[50px] w-[50px] rounded-xl items-center justify-center'
-            onPress={handleRefresh}
-          >
-            <Image
-              className="w-[24] h-[24]"
-              contentFit="contain"
-              source={require('@/assets/icons/refresh.png')}
-              cachePolicy="memory-disk"
-              tintColor='black'
-            />
-          </TouchableOpacity>
-        </View>
-        
-        <View className="flex-1 justify-center items-center">
-          <Image
-            className="w-[150] h-[150]"
-            contentFit="contain"
-            source={require('@/assets/images/online-course.png')}
-            cachePolicy="memory-disk"
-          />
-          <Text
-            className={`font-inter_regular mt-4 text-center ${
-              isDarkMode ? 'text-[#E0E0E0]' : 'text-black'
-            }`}
-          >
-            {loading ? 'Loading your subjects...' : 'No subjects enrolled yet.'}
-          </Text>
-          {!loading && (
-            <Text
-              className={`font-inter_regular mt-2 text-center text-gray-500 ${
-                isDarkMode ? 'text-gray-400' : 'text-gray-600'
-              }`}
-            >
-              Contact your teacher or administrator to be enrolled in subjects.
+            <Text style={{ 
+              color: 'white', 
+              fontFamily: 'Inter-SemiBold' 
+            }}>
+              Go Back
             </Text>
-          )}
-        </View>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
-      </View>
-    );
-  }
-
-  // ─── COURSE DETAILS VIEW ──────────────────────────────────────────────────────
-  if (viewingSubject) {
-    const teacherName = viewingSubject.teacher
-      ? `${viewingSubject.teacher.firstName} ${viewingSubject.teacher.middleName ? viewingSubject.teacher.middleName + ' ' : ''}${viewingSubject.teacher.lastName}`
-      : 'Not assigned';
-    
-    return (
-      <View className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-        <View className="flex-row items-center mt-2 mb-2">
-          <TouchableOpacity
-            onPress={() => setViewingSubject(null)}
-            style={{backgroundColor: isDarkMode ? '#22c55e' : '#4ade80'}} 
-            className='rounded-md px-4 py-2 ml-4 bg-green'
-          >
-            <View className="flex-row items-center">
-              <Image
-                style={{ width: 24, height: 24, marginRight: 8 }}
-                source={require('@/assets/icons/left_arrow.png')}
-                tintColor={isDarkMode ? '#E0E0E0' : 'white'}
-              />
-              <Text className={`font-psemibold ${isDarkMode ? 'text-[#E0E0E0]' : 'text-white'}`}>
-                Back
-              </Text>
-            </View>
           </TouchableOpacity>
         </View>
-        
-        {/* Subject Header */}
-        <View className="px-6 pt-2 pb-4">
-          <Text className="font-pbold text-2xl mb-1" style={{ color: isDarkMode ? '#E0E0E0' : '#121212' }}>
-            {viewingSubject.subjectName}
-          </Text>
-          <Text className="font-pregular text-base mb-1" style={{ color: isDarkMode ? '#E0E0E0' : '#333' }}>
-            Teacher: {teacherName}
-          </Text>
-          <Text className="font-pregular text-base" style={{ color: isDarkMode ? '#E0E0E0' : '#333' }}>
-            {viewingSubject.gradeLevel} - {viewingSubject.section} {viewingSubject.schoolYear && `(${viewingSubject.schoolYear})`}
-          </Text>
-          {viewingSubject.description && (
-            <Text className="font-pregular text-sm mt-2" style={{ color: isDarkMode ? '#BBB' : '#666' }}>
-              {viewingSubject.description}
-            </Text>
-          )}
-        </View>
-        
-        <View className="flex-1 px-4 pb-4">
-          <SubjectDetailsTabs 
-            subject={viewingSubject} 
-            isDarkMode={isDarkMode} 
-            isAdminOrTeacher={false} // Students are not admin/teacher
-          />
-        </View>
         <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-      <View className='flex-row items-center mt-2'>
-        <Text className={`font-inter_bold text-lg mx-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-          My Subjects
-        </Text>
-        <TouchableOpacity
-          className={`ml-auto p-2 mr-3 rounded-md items-center justify-center ${isDarkMode ? 'bg-red-600' : 'bg-red-500'}`}
-          onPress={handleRefresh}
-        >
-          <Image
-            className="w-[24] h-[24]"
-            contentFit="contain"
-            source={require('@/assets/icons/refresh.png')}
-            cachePolicy="memory-disk"
-            tintColor={isDarkMode ? '#E0E0E0' : 'white'}
-          />
-        </TouchableOpacity>
-      </View>
-      
-      <FlashList
-        data={enrolledSubjects} // Use filtered enrolled subjects
-        renderItem={({ item }: { item: Subject }) => {
-          // Compute initials for the colored square:
-          const initials = item.subjectName.slice(0, 2).toUpperCase();
-          
-          // Generate a consistent color based on subject code
-          const getConsistentColor = (str: string) => {
-            let hash = 0;
-            for (let i = 0; i < str.length; i++) {
-              hash = str.charCodeAt(i) + ((hash << 5) - hash);
-            }
-            const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#F97316', '#14B8A6', '#EC4899'];
-            return colors[Math.abs(hash) % colors.length];
-          };
-          const bgColor = getConsistentColor(item.subjectName);
-
-          // Student count
-          const studentCount = item.students?.length || 0;
-
-          return (
-            <TouchableOpacity
-              className='flex-row p-3 mt-2 mb-2 mx-3'
-              style={{
-                borderLeftWidth: 8,
-                borderRightWidth: 2,
-                borderTopWidth: 2,
-                borderBottomWidth: 2,
-                borderColor: bgColor,
-                backgroundColor: isDarkMode ? '#1E1E1E' : '#F9FAFB',
-              }}
-              onPress={() => setViewingSubject(item)}
-            >
-              {/* LEFT: Colored square with initials */}
-              <View
-                className="w-[48px] h-[48px] rounded-lg justify-center items-center"
-                style={{ backgroundColor: bgColor }}
-              >
-                <Text className="text-white font-inter_bold text-lg">{initials}</Text>
-              </View>
-
-              {/* MIDDLE: Subject information */}
-              <View className="flex-1 ml-4">
-                {/* Subject Name */}
-                <Text
-                  className={`font-inter_bold text-lg mb-1 ${
-                    isDarkMode ? 'text-[#E0E0E0]' : 'text-black'
-                  }`}
-                  ellipsizeMode='tail'
-                  numberOfLines={1}
-                >
-                  {item.subjectName}
-                </Text>
-
-                {/* Grade, Section, and Grade Level */}
-                <Text
-                  className={`font-inter_semibold text-base mb-1 ${
-                    isDarkMode ? 'text-[#E0E0E0]' : 'text-gray-700'
-                  }`}
-                >
-                  {item.gradeLevel} - {item.section} {item.schoolYear && `(${item.schoolYear})`}
-                </Text>
-
-                {/* Teacher Name */}
-                <View className="flex-row items-center justify-between">
-                  <Text
-                    className={`font-inter_regular text-sm ${
-                      isDarkMode ? 'text-gray-400' : 'text-gray-600'
-                    }`}
-                  >
-                    Adviser: {item.teacher ? `${item.teacher.firstName} ${item.teacher.middleName ? item.teacher.middleName + ' ' : ''}${item.teacher.lastName}` : 'Not assigned'}
-                  </Text>
-                </View>
-              </View>
-
-              
-              {/* <Pressable
-                onPress={(event) => handleOpenMenu(event, item)}
-                className="p-2 ml-2 self-start"
-              >
-                <Image
-                  className="w-[24] h-[24]"
-                  contentFit="contain"
-                  source={require('@/assets/icons/more_vert.png')}
-                  cachePolicy="memory-disk"
-                  tintColor={isDarkMode ? '#E0E0E0' : '#121212'}
-                />
-              </Pressable> */}
-            </TouchableOpacity>
-          );
-        }}
-        keyExtractor={(item) => item._id}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{
-          paddingBottom: 20
-        }}
-      />
-
-      {/* ─── CONTEXT MENU ─────────────────────────────────────────────────────────── */}
-      {/* <ContextMenu
-        visible={menuVisible}
-        x={menuPosition.x}
-        y={menuPosition.y}
-        onClose={handleCloseMenu}
-        items={menuItems}
-        menuStyle={{ backgroundColor: isDarkMode ? '#333' : 'white', borderRadius: 8 }}
-        itemStyle={{ paddingVertical: 10, paddingHorizontal: 15 }}
-        labelStyle={{ color: isDarkMode ? '#E0E0E0' : 'black', fontSize: 14, fontFamily: 'Inter-18pt-Regular' }}
-      /> */}
-
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB' }} edges={['left', 'right']}>
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
-    </View>
-  );
-}
+      
+      {/* Header */}
+      <View
+        style={{
+          backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
+          paddingHorizontal: 20,
+          paddingTop: 16,
+          paddingBottom: 16,
+          borderBottomWidth: 1,
+          borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
+        }}
+      >
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <View>
+            <Text
+              style={{
+                fontSize: 24,
+                fontFamily: 'Inter-Bold',
+                color: isDarkMode ? '#F9FAFB' : '#111827',
+              }}
+            >
+              My Subjects
+            </Text>
+            <Text style={{ 
+              fontSize: 14, 
+              fontFamily: 'Inter-Regular',
+              color: isDarkMode ? '#9CA3AF' : '#6B7280',
+              marginTop: 4 
+            }}>
+              Showing {filteredSubjects.length} of {enrolledSubjects.length} subjects
+            </Text>
+          </View>
+          
+          {/* Refresh Button */}
+          <TouchableOpacity
+            onPress={fetchStudentSubjects}
+            disabled={loading}
+            style={{
+              backgroundColor: '#EF4444',
+              padding: 8,
+              borderRadius: 8,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Image
+              source={require('@/assets/icons/refresh.png')}
+              style={{ width: 24, height: 24 }}
+              tintColor="white"
+            />
+          </TouchableOpacity>
+        </View>
 
-export default SubjectsAndroid;
+        {/* Filters */}
+        <View style={{ marginTop: 16 }}>
+          <View style={{ flexDirection: 'row', marginBottom: 12 }}>
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <TextInput
+                placeholder="Search subjects..."
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                style={{
+                  backgroundColor: isDarkMode ? '#2A2A2A' : '#F3F4F6',
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  color: isDarkMode ? '#E0E0E0' : '#111827',
+                  fontFamily: 'Inter-Regular',
+                }}
+                placeholderTextColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
+              />
+            </View>
+            <TouchableOpacity
+              onPress={fetchStudentSubjects}
+              style={{
+                backgroundColor: '#10B981',
+                paddingHorizontal: 16,
+                paddingVertical: 8,
+                borderRadius: 8,
+              }}
+            >
+              <Text style={{ 
+                color: 'white', 
+                fontFamily: 'Inter-SemiBold' 
+              }}>
+                Search
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {/* Grade Level Filter */}
+            <View style={{ flex: 1 }}>
+              <Text style={{ 
+                fontSize: 12, 
+                fontFamily: 'Inter-Medium',
+                color: isDarkMode ? '#E0E0E0' : '#6B7280', 
+                marginBottom: 4 
+              }}>
+                Grade Level
+              </Text>
+              <DropdownMobile
+                label="Grade Level"
+                selectedValue={selectedGradeLevel}
+                onValueChange={setSelectedGradeLevel}
+                items={gradeLevelFilterOptions}
+                placeholder="All Grade Levels"
+                buttonRightIcon={DownIcon}
+              />
+            </View>
+
+            {/* School Year Filter */}
+            <View style={{ flex: 1 }}>
+              <Text style={{ 
+                fontSize: 12, 
+                fontFamily: 'Inter-Medium',
+                color: isDarkMode ? '#E0E0E0' : '#6B7280', 
+                marginBottom: 4 
+              }}>
+                School Year
+              </Text>
+              <DropdownMobile
+                label="School Year"
+                selectedValue={selectedSchoolYear}
+                onValueChange={setSelectedSchoolYear}
+                items={schoolYearFilterOptions}
+                placeholder="All School Years"
+                buttonRightIcon={DownIcon}
+              />
+            </View>
+          </View>
+        </View>
+      </View>
+
+      {/* Content */}
+      <View style={{ flex: 1, padding: 20 }}>
+        {filteredSubjects.length > 0 ? (
+          <FlashList
+            data={filteredSubjects}
+            renderItem={renderSubjectItem}
+            keyExtractor={keyExtractor}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: 20 }}
+            extraData={isDarkMode}
+            estimatedItemSize={120}
+          />
+        ) : (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            <Image
+              source={require('@/assets/images/online-course.png')}
+              style={{ width: 64, height: 64, marginBottom: 16 }}
+            />
+            <Text style={{ 
+              fontSize: 18, 
+              fontFamily: 'Inter-SemiBold',
+              color: isDarkMode ? '#9CA3AF' : '#6B7280', 
+              marginBottom: 8 
+            }}>
+              No subjects found
+            </Text>
+            <Text style={{ 
+              fontSize: 14, 
+              fontFamily: 'Inter-Regular',
+              color: isDarkMode ? '#6B7280' : '#9CA3AF', 
+              textAlign: 'center',
+              paddingHorizontal: 20,
+            }}>
+              {searchQuery || selectedGradeLevel || selectedSchoolYear
+                ? 'Try adjusting your filters'
+                : enrolledSubjects.length === 0 
+                  ? 'You are not enrolled in any subjects yet. Contact your teacher to be enrolled.'
+                  : 'No subjects match your criteria'}
+            </Text>
+          </View>
+        )}
+      </View>
+    </SafeAreaView>
+  );
+};
+
+export default memo(SubjectsAndroid);

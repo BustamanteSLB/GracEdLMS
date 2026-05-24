@@ -1,5 +1,5 @@
-import { KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, TouchableOpacity, View, useColorScheme } from 'react-native'
-import React, { useState } from 'react'
+import { KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, TouchableOpacity, View, useColorScheme, ActivityIndicator } from 'react-native'
+import React, { useState, useMemo } from 'react'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { StatusBar } from 'expo-status-bar'
 import { Image } from "expo-image";
@@ -7,20 +7,21 @@ import { cssInterop } from "nativewind";
 import { useRouter } from 'expo-router'
 import CustomButton from '@/components/CustomButton'
 import { useDarkMode } from '@/contexts/DarkModeContext';
-import { Picker } from '@react-native-picker/picker';
 import apiClient from '@/app/services/apiClient'
 import * as ImagePicker from 'expo-image-picker';
+import Dropdown, { DropdownItem } from '@/components/Dropdown';
 
-cssInterop(Image, { className: "style" }); // Keep this if Image is still used
+cssInterop(Image, { className: "style" });
 
 const AddUserWeb = () => {
-
+  document.title = 'Add User - GracEdLMS';
   const router = useRouter();
   const colorScheme = useColorScheme();
   const { isDarkMode } = useDarkMode();
 
-  // User data states, initialized to empty strings or null
+  // User data states
   const [profilePicture, setProfilePicture] = useState('');
+  const [userId, setUserId] = useState('');
   const [username, setUsername] = useState('');
   const [firstName, setFirstName] = useState('');
   const [middleName, setMiddleName] = useState('');
@@ -30,16 +31,190 @@ const AddUserWeb = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [address, setAddress] = useState('');
-  const [sex, setSex] = useState<'Male' | 'Female' | 'Other' | null>(null);
-  const [role, setRole] = useState<'Admin' | 'Student' | 'Teacher' | null>(null);
-  // Removed status state since it will be set automatically
+  const [sex, setSex] = useState<'Male' | 'Female' | 'Other' | ''>('');
+  const [role, setRole] = useState<'Admin' | 'Student' | 'Teacher' | ''>('');
 
   const [isSecure, setSecure] = useState(true);
   const [isConfirmSecure, setConfirmSecure] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
 
   const toggleSecure = () => setSecure(prev => !prev);
   const toggleConfirmSecure = () => setConfirmSecure(prev => !prev);
+
+  // Memoized dropdown options
+  const sexOptions: DropdownItem[] = useMemo(() => [
+    { label: 'Select Sex', value: '' },
+    { label: 'Male', value: 'Male' },
+    { label: 'Female', value: 'Female' },
+    { label: 'Other', value: 'Other' },
+  ], []);
+
+  const roleOptions: DropdownItem[] = useMemo(() => [
+    { label: 'Select Role', value: '' },
+    { label: 'Admin', value: 'Admin' },
+    { label: 'Student', value: 'Student' },
+    { label: 'Teacher', value: 'Teacher' },
+  ], []);
+
+  // Function to clear all fields
+  const clearAllFields = () => {
+    setProfilePicture('');
+    setUserId('');
+    setUsername('');
+    setFirstName('');
+    setMiddleName('');
+    setLastName('');
+    setEmail('');
+    setPassword('');
+    setConfirmPassword('');
+    setPhoneNumber('');
+    setAddress('');
+    setSex('');
+    setRole('');
+  };
+
+  // Function to handle image upload to Firebase
+  const handleImageUpload = async () => {
+    try {
+      setIsUploadingImage(true);
+
+      if (Platform.OS === 'web') {
+        // Web file picker
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/jpeg,image/jpg,image/png,image/gif,image/webp';
+        input.onchange = async (event) => {
+          try {
+            const file = (event.target as HTMLInputElement).files?.[0];
+            if (!file) {
+              // User cancelled or no file selected
+              setIsUploadingImage(false);
+              return;
+            }
+
+            // Validate file size (10MB limit)
+            if (file.size > 10 * 1024 * 1024) {
+              window.alert('Error: File size must be less than 10MB');
+              setIsUploadingImage(false);
+              return;
+            }
+
+            const formData = new FormData();
+            formData.append('profileImage', file);
+
+            try {
+              const response = await apiClient.post('/users/upload-profile-picture', formData, {
+                headers: {
+                  'Content-Type': 'multipart/form-data',
+                },
+              });
+
+              if (response.data.success) {
+                setProfilePicture(response.data.data.url);
+                window.alert('Profile picture uploaded successfully!');
+              } else {
+                window.alert(`Upload failed: ${response.data.message}`);
+              }
+            } catch (error: any) {
+              console.error('Upload error:', error);
+              window.alert(`Upload failed: ${error.response?.data?.message || error.message}`);
+            }
+          } catch (error: any) {
+            console.error('Image processing error:', error);
+            window.alert(`Error: ${error.message}`);
+          } finally {
+            setIsUploadingImage(false);
+          }
+        };
+        
+        // Handle cancel case for web
+        input.oncancel = () => {
+          setIsUploadingImage(false);
+        };
+        
+        // Also handle focus events to detect if user cancelled
+        const handleFocus = () => {
+          // Small delay to check if a file was actually selected
+          setTimeout(() => {
+            if (!input.files || input.files.length === 0) {
+              setIsUploadingImage(false);
+            }
+          }, 100);
+          window.removeEventListener('focus', handleFocus);
+        };
+        window.addEventListener('focus', handleFocus);
+        
+        input.click();
+      } else {
+        // Mobile image picker
+        try {
+          const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          
+          if (permissionResult.granted === false) {
+            alert('Permission to access camera roll is required!');
+            setIsUploadingImage(false);
+            return;
+          }
+
+          const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.8,
+          });
+
+          if (result.canceled) {
+            // User cancelled image selection
+            setIsUploadingImage(false);
+            return;
+          }
+
+          if (result.assets && result.assets[0]) {
+            const asset = result.assets[0];
+            
+            const formData = new FormData();
+            formData.append('profileImage', {
+              uri: asset.uri,
+              type: asset.mimeType || 'image/jpeg',
+              name: asset.fileName || 'profile.jpg',
+            } as any);
+
+            try {
+              const response = await apiClient.post('/users/upload-profile-picture', formData, {
+                headers: {
+                  'Content-Type': 'multipart/form-data',
+                },
+              });
+
+              if (response.data.success) {
+                setProfilePicture(response.data.data.url);
+                alert('Profile picture uploaded successfully!');
+              } else {
+                alert(`Upload failed: ${response.data.message}`);
+              }
+            } catch (error: any) {
+              console.error('Upload error:', error);
+              alert(`Upload failed: ${error.response?.data?.message || error.message}`);
+            }
+          }
+        } catch (error: any) {
+          console.error('Image picker error:', error);
+          alert(`Error: ${error.message}`);
+        } finally {
+          setIsUploadingImage(false);
+        }
+      }
+    } catch (error: any) {
+      console.error('Image upload error:', error);
+      if (Platform.OS === 'web') {
+        window.alert(`Error: ${error.message}`);
+      } else {
+        alert(`Error: ${error.message}`);
+      }
+      setIsUploadingImage(false);
+    }
+  };
 
   // Function to handle registration
   const handleAddUser = async () => {
@@ -51,8 +226,7 @@ const AddUserWeb = () => {
       return;
     }
 
-    // Removed status from validation check since it's set automatically
-    if (!username || !firstName || !lastName || !email || !password || !phoneNumber || !address || !sex || !role) {
+    if (!userId || !username || !firstName || !lastName || !password || !sex || !role) {
       window.alert('Error: Please fill in all required fields.');
       setIsSubmitting(false);
       return;
@@ -60,22 +234,24 @@ const AddUserWeb = () => {
 
     try {
       const response = await apiClient.post('/auth/register', {
+        userId,
         username,
         firstName,
-        middleName,
+        middleName: middleName || undefined,
         lastName,
-        email,
+        email: email && email.trim() !== '' ? email.trim() : undefined,
         password,
-        phoneNumber,
-        address,
-        sex,
-        role,
-        status: 'active', // Automatically set status to 'active' when admin creates user
-        profilePicture: profilePicture // Use the provided URL or null if empty
+        phoneNumber: phoneNumber && phoneNumber.trim() !== '' ? `+63${phoneNumber}` : undefined,
+        address: address && address.trim() !== '' ? address.trim() : undefined,
+        sex: sex as 'Male' | 'Female' | 'Other',
+        role: role as 'Admin' | 'Student' | 'Teacher',
+        status: 'active',
+        profilePicture: profilePicture || undefined
       });
 
       if (response.data.success) {
         window.alert('Success: User account created successfully with active status!');
+        clearAllFields();
         router.replace('/(admins)/user-management');
       } else {
         window.alert(`Registration Failed: ${response.data.message || 'Something went wrong.'}`);
@@ -84,341 +260,555 @@ const AddUserWeb = () => {
       console.error('Registration error:', error.response?.data || error.message);
       window.alert(`Registration Failed: ${error.response?.data?.message || 'An unexpected error occurred during registration.'}`);
     } finally {
-      setProfilePicture('');
-      setUsername('');
-      setFirstName('');
-      setMiddleName('');
-      setLastName('');
-      setEmail('');
-      setPassword('');
-      setConfirmPassword('');
-      setPhoneNumber('');
-      setAddress('');
-      setSex(null);
-      setRole(null);
       setIsSubmitting(false);
     }
   };
 
   const handleBack = () => {
-    setProfilePicture('');
-    setUsername('');
-    setFirstName('');
-    setMiddleName('');
-    setLastName('');
-    setEmail('');
-    setPassword('');
-    setConfirmPassword('');
-    setPhoneNumber('');
-    setAddress('');
-    setSex(null);
-    setRole(null);
-    setIsSubmitting(false);
+    clearAllFields();
     router.push('/(admins)/user-management');
   }
 
   return (
-    <SafeAreaView className='flex-1 h-full bg-primary-web'>
-      <ScrollView contentContainerStyle={{
-        flexGrow: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 16
-      }}>
-        <View className={`w-full max-w-3xl rounded-xl p-4 ${isDarkMode ? 'bg-[#121212] shadow-none' : 'bg-white shadow-lg'}`}>
-          <Text className={`font-inter_bold text-center text-xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-            Add User Account
-          </Text>
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' }}>
+      <ScrollView 
+        contentContainerStyle={{
+          flexGrow: 1,
+          paddingVertical: 20,
+          paddingHorizontal: 16,
+        }}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Header */}
+        <View style={{
+          backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+          borderRadius: 12,
+          padding: 20,
+          marginBottom: 16,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.1,
+          shadowRadius: 8,
+          elevation: 4,
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+            <TouchableOpacity
+              onPress={handleBack}
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 20,
+                backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                justifyContent: 'center',
+                alignItems: 'center',
+                marginRight: 12,
+              }}
+            >
+              <Image
+                source={require('@/assets/icons/back.png')}
+                style={{ width: 20, height: 20 }}
+                tintColor={isDarkMode ? '#E4E6EA' : '#1C1E21'}
+                contentFit="contain"
+              />
+            </TouchableOpacity>
+            <View style={{ flex: 1 }}>
+              <Text style={{
+                fontSize: 24,
+                fontFamily: 'Inter-Bold',
+                color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+              }}>
+                Create New Account
+              </Text>
+              <Text style={{
+                fontSize: 15,
+                fontFamily: 'Inter-Regular',
+                color: isDarkMode ? '#B0B3B8' : '#65676B',
+                marginTop: 2,
+              }}>
+                Add a new user to the system
+              </Text>
+            </View>
+          </View>
+        </View>
 
-          <View className='flex-row items-center mt-2'>
-            <Text className={`ml-2 font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Profile Picture URL
-            </Text>
-            <Text className={`ml-1 font-inter_bold text-base italic ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              - Optional
-            </Text>
-          </View>
-          <TextInput
-            className={`border rounded-md my-2 px-4 py-2 font-inter_regular text-base ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E] text-white' : 'border-gray-300 text-black'}`}
-            placeholder="Image Url (e.g. https://example.com/image.jpg)"
-            placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-            selectionColor="#6D28D9"
-            value={profilePicture}
-            onChangeText={setProfilePicture}
-          />
-          <View className='flex-row items-center mt-2'>
-            <Text className={`font-inter_bold mr-1 ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>*</Text>
-            <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Username
-            </Text>
-          </View>
-          <TextInput
-            className={`border rounded-md my-2 px-4 py-2 font-inter_regular text-base ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E] text-white' : 'border-gray-300 text-black'}`}
-            placeholder="Enter username"
-            placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-            autoCapitalize="none"
-            selectionColor="#6D28D9"
-            value={username}
-            onChangeText={setUsername}
-            maxLength={30}  
-          />
-          <View className='flex-row items-center mt-2'>
-            <Text className={`font-inter_bold mr-1 ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>*</Text>
-            <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              First Name
-            </Text>
-          </View>
-          <TextInput
-            className={`border rounded-md my-2 px-4 py-2 font-inter_regular text-base ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E] text-white' : 'border-gray-300 text-black'}`}
-            placeholder="Enter first name"
-            placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-            autoCapitalize="words"
-            selectionColor="#6D28D9"
-            value={firstName}
-            onChangeText={setFirstName}
-            maxLength={50} 
-          />
-          <View className='flex-row items-center'>
-            <Text className={`ml-2 font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Middle Name
-            </Text>
-            <Text className={`ml-1 font-inter_bold text-base italic ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              - Optional
-            </Text>
-          </View>
-          <TextInput
-            className={`border rounded-md my-2 px-4 py-2 font-inter_regular text-base ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E] text-white' : 'border-gray-300 text-black'}`}
-            placeholder="Enter middle name"
-            placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-            autoCapitalize="words"
-            selectionColor="#6D28D9"
-            value={middleName}
-            onChangeText={setMiddleName}
-          />
-          <View className='flex-row items-center mt-2'>
-            <Text className={`font-inter_bold mr-1 ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>*</Text>
-            <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Last Name
-            </Text>
-          </View>
-          <TextInput
-            className={`border rounded-md my-2 px-4 py-2 font-inter_regular text-base ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E] text-white' : 'border-gray-300 text-black'}`}
-            placeholder="Enter last name"
-            placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-            autoCapitalize="words"
-            selectionColor="#6D28D9"
-            value={lastName}
-            onChangeText={setLastName}
-            maxLength={50}
-          />
-          <View className='flex-row items-center mt-2'>
-            <Text className={`font-inter_bold mr-1 ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>*</Text>
-            <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Sex
-            </Text>
-          </View>
-          <Picker
-            style={{ 
-              backgroundColor: isDarkMode ? '#1E1E1E' : 'white',
-              borderWidth: 1,
-              borderColor: isDarkMode ? '#1E1E1E' : '#d1d5db', 
-              borderRadius: 6,
-              color: isDarkMode ? '#E0E0E0' : 'black', 
+        {/* Main Form Container */}
+        <View style={{
+          backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+          borderRadius: 12,
+          padding: 20,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.1,
+          shadowRadius: 8,
+          elevation: 4,
+        }}>
+          {/* Profile Picture Section */}
+          <View style={{ alignItems: 'center', marginBottom: 24 }}>
+            <View style={{
+              width: 120,
+              height: 120,
+              borderRadius: 60,
+              backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+              justifyContent: 'center',
+              alignItems: 'center',
+              marginBottom: 12,
               overflow: 'hidden',
-              width: '100%', 
-              fontFamily: 'Inter-18pt-Regular', 
-              fontSize: 16, 
-              marginBottom: 8,
-              paddingHorizontal: 12,
-              paddingVertical: 12,  
-            }}
-            selectedValue={sex}
-            onValueChange={(itemValue) => setSex(itemValue)}
-            dropdownIconColor={isDarkMode ? '#E0E0E0' : 'black'}
-            mode='dropdown'
-          >
-            <Picker.Item label="Select Sex" value={null} />
-            <Picker.Item label="Male" value="Male" />
-            <Picker.Item label="Female" value="Female" />
-            <Picker.Item label="Other" value="Other" />
-          </Picker>
-          <View className='flex-row items-center mt-2'>
-            <Text className={`font-inter_bold mr-1 ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>*</Text>
-            <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Role
-            </Text>
-          </View>
-          <Picker
-            style={{ 
-              backgroundColor: isDarkMode ? '#1E1E1E' : 'white',
-              borderWidth: 1,
-              borderColor: isDarkMode ? '#1E1E1E' : '#d1d5db', 
-              borderRadius: 6,
-              color: isDarkMode ? '#E0E0E0' : 'black', 
-              overflow: 'hidden',
-              width: '100%', 
-              fontFamily: 'Inter-18pt-Regular', 
-              fontSize: 16, 
-              marginBottom: 8,
-              paddingHorizontal: 12,
-              paddingVertical: 12,  
-            }}
-            selectedValue={role}
-            onValueChange={(itemValue) => setRole(itemValue)}
-            dropdownIconColor={isDarkMode ? '#E0E0E0' : 'black'}
-            mode='dropdown'
-          >
-            <Picker.Item label="Select Role" value={null} />
-            <Picker.Item label="Admin" value="Admin" />
-            <Picker.Item label="Student" value="Student" />
-            <Picker.Item label="Teacher" value="Teacher" />
-          </Picker>
-          
-          {/* Status picker removed - status is automatically set to 'active' */}
-          
-          <View className='flex-row items-center mt-2'>
-            <Text className={`font-inter_bold mr-1 ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>*</Text>
-            <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Email
-            </Text>
-          </View>
-          <TextInput
-            className={`border rounded-md my-2 px-4 py-2 font-inter_regular text-base ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E] text-white' : 'border-gray-300 text-black'}`}
-            placeholder="Enter email"
-            keyboardType="email-address"
-            placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-            autoCapitalize="none"
-            selectionColor="#6D28D9"
-            value={email}
-            onChangeText={setEmail}
-            maxLength={50}
-          />
-          <View className='flex-row items-center mt-2'>
-            <Text className={`font-inter_bold mr-1 ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>*</Text>
-            <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Password
-            </Text>
-          </View>
-          <View className={`flex-row items-center border rounded-md mb-2 px-4 py-2 
-            ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>
-            <TextInput
-              className={`flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
-              placeholder="Enter password"
-              placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-              autoCapitalize="none"
-              selectionColor="#6D28D9"
-              secureTextEntry={isSecure}
-              value={password}
-              onChangeText={setPassword}
-              maxLength={25}
-            />
-            <TouchableOpacity onPress={toggleSecure}>
-              <Image
-                tintColor={isDarkMode ? '#E0E0E0' : 'black'}
-                style={{ width: 24, height: 24 }}
-                source={
-                  isSecure
-                    ? require('@/assets/icons/show_password.png')
-                    : require('@/assets/icons/hide_password.png')
-                }
-                contentFit="contain"
-                cachePolicy="memory-disk"
-              />
+            }}>
+              {profilePicture ? (
+                <Image
+                  source={{ uri: profilePicture }}
+                  style={{ width: 120, height: 120, borderRadius: 60 }}
+                  contentFit="cover"
+                />
+              ) : (
+                <Image
+                  source={require('@/assets/icons/account.png')}
+                  style={{ width: 60, height: 60 }}
+                  tintColor={isDarkMode ? '#B0B3B8' : '#65676B'}
+                  contentFit="contain"
+                />
+              )}
+            </View>
+            
+            <TouchableOpacity
+              onPress={handleImageUpload}
+              disabled={isUploadingImage}
+              style={{
+                backgroundColor: isDarkMode ? '#1877F2' : '#1877F2',
+                paddingHorizontal: 16,
+                paddingVertical: 8,
+                borderRadius: 20,
+                flexDirection: 'row',
+                alignItems: 'center',
+                opacity: isUploadingImage ? 0.7 : 1,
+              }}
+            >
+              {isUploadingImage ? (
+                <>
+                  <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                  <Text className={`font-psemibold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-white'}`}>
+                    Uploading...
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Image
+                    source={require('@/assets/icons/camera.png')}
+                    style={{ width: 24, height: 24, marginRight: 8 }}
+                    tintColor={isDarkMode ? '#FFFFFF' : '#FFFFFF'}
+                    contentFit="contain"
+                  />
+                  <Text className={`font-psemibold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-white'}`}>
+                    Add Photo
+                  </Text>
+                </>
+              )}
             </TouchableOpacity>
           </View>
-          <View className='flex-row items-center mt-2'>
-            <Text className={`font-inter_bold mr-1 ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>*</Text>
-            <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Confirm Password
-            </Text>
-          </View>
-          <View className={`flex-row items-center border rounded-xl mb-2 px-4 py-2 
-            ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>
-            <TextInput
-              className={`flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
-              placeholder="Confirm new password"
-              placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-              autoCapitalize="none"
-              selectionColor="#6D28D9"
-              secureTextEntry={isConfirmSecure}
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              maxLength={25}
-            />
-            <TouchableOpacity onPress={toggleConfirmSecure}>
-              <Image
-                tintColor={isDarkMode ? '#E0E0E0' : 'black'}
-                style={{ width: 24, height: 24 }}
-                source={
-                  isConfirmSecure
-                    ? require('@/assets/icons/show_password.png')
-                    : require('@/assets/icons/hide_password.png')
-                }
-                contentFit="contain"
-                cachePolicy="memory-disk"
+
+          {/* Form Fields */}
+          <View style={{ gap: 16 }}>
+            {/* User ID */}
+            <View>
+              <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                User ID <Text className='font-inter_regular' style={{ color: '#E41E3F' }}>*</Text>
+              </Text>
+              <TextInput
+                style={{
+                  backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                  borderRadius: 8,
+                  paddingHorizontal: 16,
+                  paddingVertical: 12,
+                  fontSize: 16,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  borderWidth: 1,
+                  borderColor: 'transparent',
+                }}
+                placeholder="Enter user ID (e.g., 2024-00001)"
+                placeholderTextColor={isDarkMode ? '#8A8D91' : '#8A8D91'}
+                value={userId}
+                onChangeText={setUserId}
+                maxLength={30}
               />
+            </View>
+
+            {/* Username */}
+            <View>
+              <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Username <Text className='font-inter_regular' style={{ color: '#E41E3F' }}>*</Text>
+              </Text>
+              <TextInput
+                style={{
+                  backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                  borderRadius: 8,
+                  paddingHorizontal: 16,
+                  paddingVertical: 12,
+                  fontSize: 16,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  borderWidth: 1,
+                  borderColor: 'transparent',
+                }}
+                placeholder="Enter username"
+                placeholderTextColor={isDarkMode ? '#8A8D91' : '#8A8D91'}
+                value={username}
+                onChangeText={setUsername}
+                maxLength={30}
+                autoCapitalize="none"
+              />
+            </View>
+
+            {/* Name Fields Row */}
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <View style={{ flex: 1 }}>
+                <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                  First Name <Text className='font-inter_regular' style={{ color: '#E41E3F' }}>*</Text>
+                </Text>
+                <TextInput
+                  style={{
+                    backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                    borderRadius: 8,
+                    paddingHorizontal: 16,
+                    paddingVertical: 12,
+                    fontSize: 16,
+                    fontFamily: 'Inter-Regular',
+                    color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                    borderWidth: 1,
+                    borderColor: 'transparent',
+                  }}
+                  placeholder="First name"
+                  placeholderTextColor={isDarkMode ? '#8A8D91' : '#8A8D91'}
+                  value={firstName}
+                  onChangeText={setFirstName}
+                  maxLength={50}
+                  autoCapitalize="words"
+                />
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                  Last Name <Text className='font-inter_regular' style={{ color: '#E41E3F' }}>*</Text>
+                </Text>
+                <TextInput
+                  style={{
+                    backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                    borderRadius: 8,
+                    paddingHorizontal: 16,
+                    paddingVertical: 12,
+                    fontSize: 16,
+                    fontFamily: 'Inter-Regular',
+                    color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                    borderWidth: 1,
+                    borderColor: 'transparent',
+                  }}
+                  placeholder="Last name"
+                  placeholderTextColor={isDarkMode ? '#8A8D91' : '#8A8D91'}
+                  value={lastName}
+                  onChangeText={setLastName}
+                  maxLength={50}
+                  autoCapitalize="words"
+                />
+              </View>
+            </View>
+
+            {/* Middle Name */}
+            <View>
+              <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Middle Name <Text className='font-inter_semibold' style={{ color: '#8A8D91', fontSize: 12 }}>(optional)</Text>
+              </Text>
+              <TextInput
+                style={{
+                  backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                  borderRadius: 8,
+                  paddingHorizontal: 16,
+                  paddingVertical: 12,
+                  fontSize: 16,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  borderWidth: 1,
+                  borderColor: 'transparent',
+                }}
+                placeholder="Middle name"
+                placeholderTextColor={isDarkMode ? '#8A8D91' : '#8A8D91'}
+                value={middleName}
+                onChangeText={setMiddleName}
+                autoCapitalize="words"
+              />
+            </View>
+
+            {/* Sex and Role Row */}
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <View style={{ flex: 1 }}>
+                <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                  Sex <Text className='font-inter_regular' style={{ color: '#E41E3F' }}>*</Text>
+                </Text>
+                <Dropdown
+                  data={sexOptions}
+                  selectedValue={sex}
+                  onValueChange={(value) => setSex(value as 'Male' | 'Female' | 'Other' | '')}
+                  placeholder="Select Sex"
+                />
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                  Role <Text className='font-inter_regular' style={{ color: '#E41E3F' }}>*</Text>
+                </Text>
+                <Dropdown
+                  data={roleOptions}
+                  selectedValue={role}
+                  onValueChange={(value) => setRole(value as 'Admin' | 'Student' | 'Teacher' | '')}
+                  placeholder="Select Role"
+                />
+              </View>
+            </View>
+
+            {/* Email */}
+            <View>
+              <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Email <Text className='font-inter_semibold' style={{ color: '#8A8D91', fontSize: 12 }}>(optional)</Text>
+              </Text>
+              <TextInput
+                style={{
+                  backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                  borderRadius: 8,
+                  paddingHorizontal: 16,
+                  paddingVertical: 12,
+                  fontSize: 16,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  borderWidth: 1,
+                  borderColor: 'transparent',
+                }}
+                placeholder="Enter email address"
+                placeholderTextColor={isDarkMode ? '#8A8D91' : '#8A8D91'}
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+            </View>
+
+            {/* Password Fields */}
+            <View>
+              <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Password <Text className='font-inter_regular' style={{ color: '#E41E3F' }}>*</Text>
+              </Text>
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                borderRadius: 8,
+              }}>
+                <TextInput
+                  style={{
+                    flex: 1,
+                    fontSize: 16,
+                    fontFamily: 'Inter-Regular',
+                    color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                    borderRadius: 8,
+                    paddingHorizontal: 16,
+                    paddingVertical: 12,
+                  }}
+                  placeholder="Enter password"
+                  placeholderTextColor={isDarkMode ? '#8A8D91' : '#8A8D91'}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={isSecure}
+                  maxLength={30}
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity onPress={toggleSecure} style={{ marginHorizontal: 12 }}>
+                  <Image
+                    source={isSecure ? require('@/assets/icons/show_password.png') : require('@/assets/icons/hide_password.png')}
+                    style={{ width: 20, height: 20 }}
+                    tintColor={isDarkMode ? '#B0B3B8' : '#65676B'}
+                    contentFit="contain"
+                  />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View>
+              <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Confirm Password <Text className='font-inter_regular' style={{ color: '#E41E3F' }}>*</Text>
+              </Text>
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                borderRadius: 8,
+              }}>
+                <TextInput
+                  style={{
+                    flex: 1,
+                    fontSize: 16,
+                    fontFamily: 'Inter-Regular',
+                    color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                    borderRadius: 8,
+                    paddingHorizontal: 16,
+                    paddingVertical: 12,
+                  }}
+                  placeholder="Confirm password"
+                  placeholderTextColor={isDarkMode ? '#8A8D91' : '#8A8D91'}
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  secureTextEntry={isConfirmSecure}
+                  maxLength={30}
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity onPress={toggleConfirmSecure} style={{ marginHorizontal: 12 }}>
+                  <Image
+                    source={isConfirmSecure ? require('@/assets/icons/show_password.png') : require('@/assets/icons/hide_password.png')}
+                    style={{ width: 20, height: 20 }}
+                    tintColor={isDarkMode ? '#B0B3B8' : '#65676B'}
+                    contentFit="contain"
+                  />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Phone Number */}
+            <View>
+              <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Phone Number <Text className='font-inter_semibold' style={{ color: '#8A8D91', fontSize: 12 }}>(optional)</Text>
+              </Text>
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                borderRadius: 8,
+              }}>
+                <Text style={{
+                  fontSize: 16,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  marginLeft: 8,
+                  marginRight: 8,
+                }}>
+                  +63
+                </Text>
+                <TextInput
+                  style={{
+                    flex: 1,
+                    fontSize: 16,
+                    fontFamily: 'Inter-Regular',
+                    color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                    paddingHorizontal: 16,
+                    paddingVertical: 12,
+                  }}
+                  placeholder="Enter phone number"
+                  placeholderTextColor={isDarkMode ? '#8A8D91' : '#8A8D91'}
+                  value={phoneNumber}
+                  onChangeText={(text) => {
+                    const numericText = text.replace(/[^0-9]/g, '');
+                    setPhoneNumber(numericText);
+                  }}
+                  maxLength={10}
+                  keyboardType="numeric"
+                />
+              </View>
+            </View>
+
+            {/* Address */}
+            <View>
+              <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Address <Text className='font-inter_semibold' style={{ color: '#8A8D91', fontSize: 12 }}>(optional)</Text>
+              </Text>
+              <TextInput
+                style={{
+                  backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                  borderRadius: 8,
+                  paddingHorizontal: 16,
+                  paddingVertical: 12,
+                  fontSize: 16,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  borderWidth: 1,
+                  borderColor: 'transparent',
+                  minHeight: 80,
+                }}
+                placeholder="Enter complete address"
+                placeholderTextColor={isDarkMode ? '#8A8D91' : '#8A8D91'}
+                value={address}
+                onChangeText={setAddress}
+                multiline
+                textAlignVertical="top"
+              />
+            </View>
+          </View>
+
+          {/* Info Banner */}
+          <View style={{
+            backgroundColor: isDarkMode ? '#263A52' : '#E3F2FD',
+            borderRadius: 8,
+            padding: 16,
+            marginTop: 24,
+            marginBottom: 24,
+            borderLeftWidth: 4,
+            borderLeftColor: '#1877F2',
+          }}>
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+              <Image
+                source={require('@/assets/icons/info.png')}
+                style={{ width: 20, height: 20, marginRight: 12, marginTop: 2 }}
+                tintColor="#1877F2"
+                contentFit="contain"
+              />
+              <Text style={{
+                fontSize: 14,
+                fontFamily: 'Inter-Regular',
+                color: isDarkMode ? '#9BD1FF' : '#1565C0',
+                flex: 1,
+                lineHeight: 20,
+              }}>
+                User accounts created by admins are automatically activated. Email, phone number, and address are optional fields.
+              </Text>
+            </View>
+          </View>
+
+          {/* Action Buttons */}
+          <View style={{ flexDirection: 'row', gap: 12, justifyContent: 'flex-end' }}>
+            <TouchableOpacity
+              onPress={handleAddUser}
+              disabled={isSubmitting}
+              style={{
+                backgroundColor: isSubmitting ? (isDarkMode ? '#1565C0' : '#1565C0') : '#1877F2',
+                borderRadius: 8,
+                padding: 16,
+                alignItems: 'center',
+                opacity: isSubmitting ? 0.7 : 1,
+              }}
+            >
+              {isSubmitting ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                  <Text className={`font-psemibold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-white'}`}>
+                    Creating Account...
+                  </Text>
+                </View>
+              ) : (
+                <Text className={`font-psemibold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-white'}`}>
+                  Create Account
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleBack}
+              style={{
+                backgroundColor: isDarkMode ? '#3A3B3C' : '#E4E6EA',
+                borderRadius: 8,
+                padding: 16,
+                alignItems: 'center',
+              }}
+            >
+              <Text className={`font-psemibold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Cancel
+              </Text>
             </TouchableOpacity>
           </View>
-          <View className='flex-row items-center mt-2'>
-            <Text className={`font-inter_bold mr-1 ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>*</Text>
-            <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Phone Number
-            </Text>
-          </View>
-          <TextInput
-            className={`border rounded-md my-2 px-4 py-2 font-inter_regular text-base ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E] text-white' : 'border-gray-300 text-black'}`}
-            placeholder="Enter phone number"
-            keyboardType="phone-pad"
-            placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-            autoCapitalize="none"
-            selectionColor="#6D28D9"
-            value={phoneNumber}
-            onChangeText={setPhoneNumber}
-            maxLength={13}
-          />
-          <Text className={`ml-2 mb-2 font-inter_regular text-xs ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>
-            Format: +639XXXXXXXXX or 09XXXXXXXXX
-          </Text>
-          <View className='flex-row items-center'>
-            <Text className={`font-inter_bold mr-1 ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>*</Text>
-            <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Address
-            </Text>
-          </View>
-          <TextInput
-            className={`border rounded-md my-2 px-4 py-2 font-inter_regular text-base ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E] text-white' : 'border-gray-300 text-black'}`}
-            placeholder="Enter address"
-            placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-            autoCapitalize="words"
-            multiline={true}
-            selectionColor="#6D28D9"
-            value={address}
-            onChangeText={setAddress}
-            maxLength={150}
-          />
-          
-          {/* Add info message about automatic active status */}
-          <View className={`p-3 rounded-lg mb-4 ${isDarkMode ? 'bg-green-900' : 'bg-green-100'}`}>
-            <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-green-300' : 'text-green-800'}`}>
-              ℹ️ User accounts created by admins are automatically set to "Active" status.
-            </Text>
-          </View>
-          
-          <CustomButton
-            containerStyles='bg-secondary-web mt-2'
-            handlePress={handleAddUser}
-            title={isSubmitting ? 'Adding User...' : 'Add User'}
-            isLoading={isSubmitting}
-          />
-          <TouchableOpacity
-            className='bg-gray-400 rounded-xl h-[50px] w-full justify-center items-center p-2 mt-4'
-            onPress={handleBack}
-            activeOpacity={0.7}
-          >
-            <Text className='text-black font-psemibold text-lg'>
-              Back
-            </Text>
-          </TouchableOpacity>
         </View>
       </ScrollView>
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />

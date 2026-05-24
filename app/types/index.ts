@@ -9,10 +9,10 @@ export interface User {
   email: string;
   phoneNumber: string;
   address: string;
-  role: 'Admin' | 'Teacher' | 'Student';
+  role: "Admin" | "Teacher" | "Student";
   profilePicture?: string; // Optional
-  status: 'active' | 'inactive' | 'suspended' | 'pending' | 'archived';
-  sex: 'Male' | 'Female' | 'Other';
+  status: "active" | "inactive" | "suspended" | "pending" | "archived";
+  sex: "Male" | "Female" | "Other";
   lastLogin?: Date; // Optional
   temporaryPassword?: string; // Optional, for password reset flows
   createdAt: Date;
@@ -24,61 +24,65 @@ export interface User {
 }
 
 export interface Subject {
-    _id: string;
-    subjectCode: string;
-    subjectName: string;
-    description?: string;
-    teacher?: User; // Changed to User from Partial<User>
-    students?: User[]; // Changed to User[] from Partial<User>[]
-    activities?: Activity[]; // Changed to Activity[] from Partial<Activity>[]
-    announcements?: Announcement[]; // Added announcements to align with modals
-    discussions?: Discussion[]; // Added discussions to align with modals
-    isArchived: boolean;
-    archivedAt?: string;
-    archivedBy?: User;
-    gradeLevel?: string;
-    section?: string;
-    schoolYear?: string; // Added schoolYear to align with modals
-    createdAt?: string; // Added createdAt to align with subjects.web.tsx and Subject.js
-    updatedAt?: string; // Added updatedAt to align with subjects.web.tsx and Subject.js
+  teachers: never[];
+  _id: string;
+  subjectName: string;
+  description?: string;
+  gradeLevel?: string;
+  schoolYear?: string;
+  section?: string;
+  subjectImage?: string | null; // Added subject image
+  teacher?: User;
+  students?: User[];
+  activities?: Activity[];
+  discussions?: any[];
+  announcements?: any[];
+  courseMaterials?: any[];
+  isArchived?: boolean;
+  archivedAt?: string;
+  archivedBy?: User;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Activity {
-    _id: string;
-    title: string;
-    description?: string;
-    subject: string; // Subject ID
-    dueDate?: string;
-    maxPoints?: number;
-    createdAt?: string;
-    updatedAt?: string;
+  _id: string;
+  title: string;
+  description?: string;
+  subject: string; // Subject ID
+  dueDate?: string;
+  maxPoints?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface Announcement { // Added interface for announcements
+export interface Announcement {
+  // Added interface for announcements
   _id: string;
   title: string;
   content: string;
   date: string;
 }
 
-export interface Discussion { // Added interface for discussions
+export interface Discussion {
+  // Added interface for discussions
   _id: string;
   title: string;
   author: string;
   date: string;
-  comments: { _id: string; author: string; content: string; date: string; }[];
+  comments: { _id: string; author: string; content: string; date: string }[];
 }
 
 export interface Grade {
-    _id: string;
-    student: string; // Student ID
-    activity: Partial<Activity>; // Activity ID or populated object
-    subject: string; // Subject ID
-    score: number;
-    gradedBy: Partial<User>; // User ID or populated object
-    comments?: string;
-    createdAt: string;
-    updatedAt: string;
+  _id: string;
+  student: string; // Student ID
+  activity: Partial<Activity>; // Activity ID or populated object
+  subject: string; // Subject ID
+  score: number;
+  gradedBy: Partial<User>; // User ID or populated object
+  comments?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // Add more types as needed (e.g., for API payloads)
@@ -96,9 +100,9 @@ export interface UserCreationPayload {
   password?: string; // Password is required for creation
   phoneNumber: string;
   address: string;
-  role: 'Admin' | 'Student' | 'Teacher';
-  sex: 'Male' | 'Female' | 'Other'; // <--- ADDED (sex is required)
-  status?: 'active' | 'inactive' | 'suspended' | 'pending' | 'archived';
+  role: "Admin" | "Student" | "Teacher";
+  sex: "Male" | "Female" | "Other"; // <--- ADDED (sex is required)
+  status?: "active" | "inactive" | "suspended" | "pending" | "archived";
   profilePicture?: string;
 }
 
@@ -115,6 +119,6 @@ export interface UserUpdatePayload {
   // Role, status, sex, profilePicture can also be updated (if permitted by API)
   // For user's own profile, role and status usually not updated
   // sex and profilePicture should be explicitly set if changed
-  sex?: 'Male' | 'Female' | 'Other';
+  sex?: "Male" | "Female" | "Other";
   profilePicture?: string;
 }

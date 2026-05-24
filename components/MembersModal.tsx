@@ -22,30 +22,49 @@ interface User {
   userId: string;
   username: string;
   firstName: string;
-  middleName?: string; // Optional middle name
+  middleName?: string;
   lastName: string;
   email: string;
   sex: string;
   phoneNumber: string;
   address: string;
   role: 'Admin' | 'Teacher' | 'Student';
-  profilePicture?: string; // Optional profile picture
+  profilePicture?: string;
   status: 'active' | 'inactive' | 'suspended' | 'pending' | 'archived';
-  enrolledSubjects: string[]; // Array of subject IDs
-  createdAt: string; // ISO date string
-  updatedAt: string; // ISO date string
+  enrolledSubjects: string[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface MembersModalProps {
   subjectId: string;
-  teacher: User;
+  teacher?: User | string | null;
   isDarkMode?: boolean;
   isAdminOrTeacher?: boolean;
 }
 
+interface SubjectData {
+  _id: string;
+  subjectName: string;
+  teachers: Array<{
+    teacher: User | string;
+    quarters: {
+      firstQuarter: boolean;
+      secondQuarter: boolean;
+      thirdQuarter: boolean;
+      fourthQuarter: boolean;
+    };
+    isAssignedToAllQuarters: boolean;
+  }>;
+  students: User[] | string[];
+  gradeLevel: string;
+  section: string;
+  schoolYear: string;
+}
+
 const tabs = [
-  { key: 'add_single', label: 'Add Single Student' }, // Add Student by Email
-  { key: 'add_bulk', label: 'Add Students by Bulk' }, // Add Student through checkboxes
+  { key: 'add_single', label: 'Add Single Student' },
+  { key: 'add_bulk', label: 'Add Students by Bulk' },
 ];
 
 const MembersModal: React.FC<MembersModalProps> = ({
@@ -66,26 +85,110 @@ const MembersModal: React.FC<MembersModalProps> = ({
   const [deleting, setDeleting] = useState<boolean>(false);
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [bulkLoading, setBulkLoading] = useState<boolean>(false);
+  const [teacherDetails, setTeacherDetails] = useState<Array<{
+    teacher: User;
+    quarters: {
+      firstQuarter: boolean;
+      secondQuarter: boolean;
+      thirdQuarter: boolean;
+      fourthQuarter: boolean;
+    };
+    isAssignedToAllQuarters: boolean;
+  }>>([]);
+  const [teacherLoading, setTeacherLoading] = useState<boolean>(true);
 
   // Constants for capacity management
   const MAX_STUDENTS = 30;
   const availableSlots = MAX_STUDENTS - enrolledStudents.length;
   const isAtCapacity = enrolledStudents.length >= MAX_STUDENTS;
 
+  // Fetch full teacher details if only ID is provided
+  const fetchTeacherDetails = async () => {
+    if (!subjectId) {
+      console.log('No subject ID provided');
+      setTeacherDetails([]);
+      setTeacherLoading(false);
+      return;
+    }
+
+    try {
+      setTeacherLoading(true);
+      
+      // Fetch the subject to get teachers array
+      const subjectResponse = await apiClient.get(`/subjects/${subjectId}`);
+      const subject = subjectResponse.data.data;
+      
+      if (!subject || !subject.teachers || subject.teachers.length === 0) {
+        console.log('No teachers assigned to this subject');
+        setTeacherDetails([]);
+        setTeacherLoading(false);
+        return;
+      }
+
+      // Fetch full details for all teachers
+      const teacherDetailsPromises = subject.teachers.map(async (teacherAssignment: any) => {
+        const teacherId = teacherAssignment.teacher?._id || teacherAssignment.teacher;
+        
+        if (!teacherId) return null;
+
+        try {
+          const teacherResponse = await apiClient.get(`/users/${teacherId}`);
+          return {
+            teacher: teacherResponse.data.data,
+            quarters: teacherAssignment.quarters,
+            isAssignedToAllQuarters: teacherAssignment.isAssignedToAllQuarters,
+          };
+        } catch (error) {
+          console.error(`Failed to fetch teacher ${teacherId}:`, error);
+          return null;
+        }
+      });
+
+      const allTeacherDetails = await Promise.all(teacherDetailsPromises);
+      const validTeachers = allTeacherDetails.filter(t => t !== null);
+      
+      setTeacherDetails(validTeachers);
+    } catch (error: any) {
+      console.error('Error fetching teacher details:', error);
+      console.error('Error details:', error.response?.data);
+      setTeacherDetails([]);
+    } finally {
+      setTeacherLoading(false);
+    }
+  };
+
   const fetchActiveStudents = async () => {
     try {
       console.log('Fetching all active students...');
-      const response = await apiClient.get('/users?role=Student&status=active');
-      console.log('Active students response:', response.data);
-      setAllStudents(response.data.data || []);
+      let allStudentsData: User[] = [];
+      let page = 1;
+      let hasMore = true;
+
+      // Fetch all pages of students
+      while (hasMore) {
+        const response = await apiClient.get(
+          `/users?role=Student&status=active&page=${page}&limit=100`
+        );
+        const students = response.data.data || [];
+
+        if (students.length === 0) {
+          hasMore = false;
+        } else {
+          allStudentsData = [...allStudentsData, ...students];
+          page++;
+        }
+      }
+
+      console.log('Active students response:', allStudentsData);
+      setAllStudents(allStudentsData);
     } catch (error: any) {
-      console.error('Error fetching all students:', error);
-      console.error('Error details:', error.response?.data);
+      console.log('Error fetching all students:', error);
+      console.log('Error details:', error.response?.data);
       const errorMessage = error.response?.data?.message || error.message || 'Failed to fetch all active students';
       if (Platform.OS === 'web') {
-        window.alert(`Error fetching all active students: ${errorMessage}`);
+        console.log(`Error fetching all active students: ${errorMessage}`);
       } else {
-        Alert.alert('Error', `Failed to fetch all active students: ${errorMessage}`);
+        console.log('Error', `Failed to fetch all active students: ${errorMessage}`);
       }
       setAllStudents([]);
     }
@@ -159,10 +262,10 @@ const MembersModal: React.FC<MembersModalProps> = ({
       const errorMessage = error.response?.data?.message || error.message || 'Failed to fetch enrolled students';
 
       if (Platform.OS === 'web') {
-        window.alert(`Error: ${errorMessage}`);
+        console.log(`Error: ${errorMessage}`);
       }
       if (Platform.OS === 'android' || Platform.OS === 'ios') {
-        Alert.alert('Error', errorMessage);
+        console.log('Error', errorMessage);
       }
       setEnrolledStudents([]);
     } finally {
@@ -170,16 +273,22 @@ const MembersModal: React.FC<MembersModalProps> = ({
     }
   };
 
-  // Update the useEffect to handle the dependency better
   useEffect(() => {
-    // Fetch active students first, then enrolled students
     const fetchData = async () => {
-      await fetchActiveStudents(); // This populates allStudents
-      await fetchEnrolledStudents(); // This now can use allStudents as fallback
+      await fetchTeacherDetails(); // Fetch teacher details first
+      await fetchActiveStudents();
+      await fetchEnrolledStudents();
     };
 
     fetchData();
-  }, [subjectId, user, allStudents.length]); // Added allStudents.length as a dependency for re-fetch enrolled students if allStudents changes
+  }, [subjectId, user]);
+
+  // Update the useEffect dependency
+  useEffect(() => {
+    if (subjectId) {
+      fetchTeacherDetails();
+    }
+  }, [subjectId]);
 
   const getAvailableStudents = () => {
     const enrolledIds = enrolledStudents.map(student => student._id);
@@ -224,7 +333,7 @@ const MembersModal: React.FC<MembersModalProps> = ({
       setEmail('');
       setAddStudentModalVisible(false);
       fetchEnrolledStudents();
-      fetchActiveStudents(); // Refresh all students to update available list
+      fetchActiveStudents();
     } catch (error: any) {
       const errorMessage = error.response?.data?.message || 'Failed to enroll student';
       if (Platform.OS === 'web') {
@@ -257,7 +366,6 @@ const MembersModal: React.FC<MembersModalProps> = ({
       return;
     }
 
-    // Warn if trying to add more students than available slots
     if (selectedStudents.length > availableSlots) {
       const message = `You selected ${selectedStudents.length} students, but only ${availableSlots} slots are available. Only the first ${availableSlots} students will be enrolled.`;
       
@@ -327,14 +435,14 @@ const MembersModal: React.FC<MembersModalProps> = ({
         await apiClient.put(`/subjects/${subjectId}/unenroll-student/${studentId}`);
         window.alert('Success: Student removed successfully');
         fetchEnrolledStudents();
-        fetchActiveStudents(); // Refresh all students to update available list
+        fetchActiveStudents();
       } catch (error: any) {
         const errorMessage = error.response?.data?.message || 'Failed to remove student';
         window.alert(`Error: ${errorMessage}`);
       } finally {
         setDeleting(false);
       }
-    } else { // Android or iOS
+    } else {
       Alert.alert(
         'Confirm Removal',
         `Are you sure you want to remove ${studentName} from this subject?`,
@@ -349,7 +457,7 @@ const MembersModal: React.FC<MembersModalProps> = ({
                 await apiClient.put(`/subjects/${subjectId}/unenroll-student/${studentId}`);
                 Alert.alert('Success', 'Student removed successfully');
                 fetchEnrolledStudents();
-                fetchActiveStudents(); // Refresh all students to update available list
+                fetchActiveStudents();
               } catch (error: any) {
                 const errorMessage = error.response?.data?.message || 'Failed to remove student';
                 Alert.alert('Error', errorMessage);
@@ -369,7 +477,6 @@ const MembersModal: React.FC<MembersModalProps> = ({
       if (isSelected) {
         return prev.filter(id => id !== studentId);
       } else {
-        // Check if adding this student would exceed available slots
         const newSelectionCount = prev.length + 1;
         if (newSelectionCount > availableSlots) {
           const message = `You can only select up to ${availableSlots} more students (${availableSlots} slots available).`;
@@ -431,6 +538,7 @@ const MembersModal: React.FC<MembersModalProps> = ({
             className={`p-2 rounded-md ${isDarkMode ? 'bg-red-500' : 'bg-red-600'}`}
             style={{ padding: 8, borderRadius: 8 }}
             onPress={() => {
+              fetchTeacherDetails();
               fetchEnrolledStudents();
               fetchActiveStudents();
             }}
@@ -471,25 +579,80 @@ const MembersModal: React.FC<MembersModalProps> = ({
       {/* Teacher Section */}
       <View style={cardStyle(isDarkMode ?? false)}>
         <Text className={`font-pbold text-lg mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-          Teacher:
+          {teacherDetails.length > 1 ? 'Teachers:' : 'Teacher:'}
         </Text>
-        <View className='flex-row items-center'>
-          <Image
-            style={{ width: 40, height: 40, borderRadius: 25, marginRight: 12 }}
-            source={teacher?.profilePicture ? { uri: teacher?.profilePicture } : require('@/assets/images/sample_profile_picture.png')}
-          />
-          <View className='flex-1'>
-            <Text className={`font-inter_semibold ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              {teacher.middleName
-                ? `${teacher.firstName} ${teacher.middleName} ${teacher.lastName}`
-                : `${teacher.firstName} ${teacher.lastName}`
+        {teacherLoading ? (
+          <ActivityIndicator size='small' color="#3B82F6" />
+        ) : teacherDetails.length > 0 ? (
+          <View>
+            {teacherDetails.map((teacherAssignment, index) => {
+              const teacher = teacherAssignment.teacher;
+              
+              // Build quarter info string
+              let quarterInfo = '';
+              if (!teacherAssignment.isAssignedToAllQuarters) {
+                const quarters = [];
+                if (teacherAssignment.quarters.firstQuarter) quarters.push('1st');
+                if (teacherAssignment.quarters.secondQuarter) quarters.push('2nd');
+                if (teacherAssignment.quarters.thirdQuarter) quarters.push('3rd');
+                if (teacherAssignment.quarters.fourthQuarter) quarters.push('4th');
+                
+                if (quarters.length > 0) {
+                  quarterInfo = ` (${quarters.join(', ')} Quarter${quarters.length > 1 ? 's' : ''})`;
+                }
               }
-            </Text>
-            <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-              {teacher.email}
-            </Text>
+
+              return (
+                <View 
+                  key={teacher._id} 
+                  className='flex-row items-center'
+                  style={{ 
+                    marginBottom: index < teacherDetails.length - 1 ? 12 : 0,
+                    paddingBottom: index < teacherDetails.length - 1 ? 12 : 0,
+                    borderBottomWidth: index < teacherDetails.length - 1 ? 1 : 0,
+                    borderBottomColor: isDarkMode ? '#333' : '#E5E7EB',
+                  }}
+                >
+                  <Image
+                    style={{ width: 40, height: 40, borderRadius: 25, marginRight: 12 }}
+                    source={teacher.profilePicture 
+                      ? { uri: teacher.profilePicture } 
+                      : require('@/assets/images/sample_profile_picture.png')
+                    }
+                    contentFit="cover"
+                    onError={(error) => {
+                      console.error('Error loading teacher profile picture:', error);
+                      console.log('Teacher profile picture URL:', teacher.profilePicture);
+                    }}
+                    onLoad={() => {
+                      console.log('Teacher profile picture loaded successfully');
+                    }}
+                  />
+                  <View className='flex-1'>
+                    <Text className={`font-inter_semibold ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                      {teacher.middleName
+                        ? `${teacher.firstName} ${teacher.middleName} ${teacher.lastName}`
+                        : `${teacher.firstName} ${teacher.lastName}`
+                    }
+                    {quarterInfo && (
+                      <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                        {quarterInfo}
+                      </Text>
+                    )}
+                    </Text>
+                    <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                      {teacher.email}
+                    </Text>
+                  </View>
+                </View>
+              );
+            })}
           </View>
-        </View>
+        ) : (
+          <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+            No teachers assigned to this subject
+          </Text>
+        )}
       </View>
 
       {/* Students Section */}
@@ -498,7 +661,7 @@ const MembersModal: React.FC<MembersModalProps> = ({
       </Text>
 
       {loading ? (
-        <ActivityIndicator size='large' color={isDarkMode ? '#E0E0E0' : 'black'} />
+        <ActivityIndicator size='large' color="#3B82F6" />
       ) : enrolledStudents.length > 0 ? (
         <ScrollView>
           {enrolledStudents.map((student) => (
@@ -507,6 +670,7 @@ const MembersModal: React.FC<MembersModalProps> = ({
                 <Image
                   style={{ width: 40, height: 40, borderRadius: 20, marginRight: 12 }}
                   source={student.profilePicture ? { uri: student.profilePicture } : require('@/assets/images/sample_profile_picture.png')}
+                  contentFit="cover"
                 />
                 <View className='flex-1'>
                   <Text className={`font-inter_semibold ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
@@ -688,7 +852,7 @@ const MembersModal: React.FC<MembersModalProps> = ({
                           {student.middleName
                             ? `${student.firstName} ${student.middleName} ${student.lastName}`
                             : `${student.firstName} ${student.lastName}`
-                          }
+                        }
                         </Text>
                         <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
                           {student.email}

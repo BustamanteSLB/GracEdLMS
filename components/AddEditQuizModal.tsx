@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   useWindowDimensions,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Picker } from '@react-native-picker/picker';
 import { Checkbox } from 'expo-checkbox';
 import { RadioButton, RadioButtonGroup } from '@/components/RadioButton';
@@ -19,6 +20,9 @@ import * as DocumentPicker from 'expo-document-picker';
 import DeleteIcon from '@/assets/icons/delete.svg';
 import { Image } from 'expo-image';
 import { cssInterop } from 'nativewind';
+import Dropdown, { DropdownItem } from '@/components/Dropdown';
+import DropdownMobile from '@/components/DropdownMobile';
+import DownIcon from '@/assets/icons/down.svg';
 
 cssInterop(Image, { className: "style" });
 
@@ -88,6 +92,8 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
   });
 
   const { width } = useWindowDimensions();
+  const isWeb = Platform.OS === 'web';
+  
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
@@ -107,6 +113,9 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
   });
   const [generatingAI, setGeneratingAI] = useState(false);
 
+  // Add state for existing Firebase URLs
+  const [existingImageUrls, setExistingImageUrls] = useState<{[key: number]: string[]}>({});
+
   // Initialize form data
   useEffect(() => {
     if (quiz) {
@@ -119,6 +128,15 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
         timeLimit: quiz.timeLimit?.toString() || '',
       });
       setQuestions(quiz.questions);
+      
+      // Extract existing Firebase URLs from quiz questions
+      const existingUrls: {[key: number]: string[]} = {};
+      quiz.questions.forEach((question, index) => {
+        if (question.images && question.images.length > 0) {
+          existingUrls[index] = question.images;
+        }
+      });
+      setExistingImageUrls(existingUrls);
     } else {
       // Reset form for new quiz
       setFormData({
@@ -130,6 +148,7 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
         timeLimit: '',
       });
       setQuestions([]);
+      setExistingImageUrls({});
     }
     setSelectedImages({});
   }, [quiz, visible]);
@@ -273,12 +292,74 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
     }
   };
 
-  // Remove image
+  // Helper function to get image URL (Firebase or local preview)
+  const getImageUrl = (questionIndex: number, imageIndex: number, isPreview: boolean = false) => {
+    // Check if there are new selected images for this question
+    const newImages = selectedImages[questionIndex];
+    if (newImages && imageIndex < newImages.length) {
+      const file = newImages[imageIndex];
+      if (Platform.OS === 'web') {
+        return URL.createObjectURL(file as File);
+      } else {
+        return (file as DocumentPicker.DocumentPickerAsset).uri;
+      }
+    }
+    
+    // Check if there are existing Firebase URLs
+    const existingUrls = existingImageUrls[questionIndex];
+    if (existingUrls) {
+      const adjustedIndex = imageIndex - (newImages?.length || 0);
+      if (adjustedIndex >= 0 && adjustedIndex < existingUrls.length) {
+        return existingUrls[adjustedIndex];
+      }
+    }
+    
+    return null;
+  };
+
+  // Helper function to get all images for a question (new + existing)
+  const getAllImagesForQuestion = (questionIndex: number) => {
+    const newImages = selectedImages[questionIndex] || [];
+    const existingUrls = existingImageUrls[questionIndex] || [];
+    
+    return [
+      ...newImages.map((file, index) => ({
+        type: 'new',
+        file,
+        name: file.name,
+        url: Platform.OS === 'web' ? URL.createObjectURL(file as File) : (file as DocumentPicker.DocumentPickerAsset).uri,
+        index
+      })),
+      ...existingUrls.map((url, index) => ({
+        type: 'existing',
+        file: null,
+        name: url.split('/').pop() || 'image',
+        url,
+        index: newImages.length + index
+      }))
+    ];
+  };
+
+  // Remove image (handles both new and existing)
   const removeImage = (questionIndex: number, imageIndex: number) => {
-    setSelectedImages(prev => ({
-      ...prev,
-      [questionIndex]: (prev[questionIndex] || []).filter((_, i) => i !== imageIndex)
-    }));
+    const newImages = selectedImages[questionIndex] || [];
+    
+    if (imageIndex < newImages.length) {
+      // Removing a new image
+      setSelectedImages(prev => ({
+        ...prev,
+        [questionIndex]: newImages.filter((_, i) => i !== imageIndex)
+      }));
+    } else {
+      // Removing an existing Firebase image
+      const existingUrls = existingImageUrls[questionIndex] || [];
+      const adjustedIndex = imageIndex - newImages.length;
+      
+      setExistingImageUrls(prev => ({
+        ...prev,
+        [questionIndex]: existingUrls.filter((_, i) => i !== adjustedIndex)
+      }));
+    }
   };
 
   // Calculate total points
@@ -389,13 +470,21 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
 
     try {
       // Clean up questions before sending
-      const cleanedQuestions = questions.map(question => ({
-        ...question,
-        options: question.options.filter(opt => opt.text.trim() !== ''), // Remove empty options
-        images: selectedImages[questions.indexOf(question)] ? 
-          selectedImages[questions.indexOf(question)].map(file => file.name) : 
-          (question.images || [])
-      }));
+      const cleanedQuestions = questions.map((question, questionIndex) => {
+        const newImages = selectedImages[questionIndex] || [];
+        const existingUrls = existingImageUrls[questionIndex] || [];
+        
+        return {
+          ...question,
+          options: question.options.filter(opt => opt.text.trim() !== ''),
+          images: [
+            // Map new image filenames for upload
+            ...newImages.map(file => file.name),
+            // Keep existing Firebase URLs
+            ...existingUrls
+          ]
+        };
+      });
 
       console.log('Cleaned questions:', cleanedQuestions);
 
@@ -415,7 +504,7 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
 
       formDataToSend.append('questions', JSON.stringify(cleanedQuestions));
 
-      // Add image files
+      // Add only new image files
       Object.entries(selectedImages).forEach(([questionIndex, files]) => {
         files.forEach((file) => {
           if (Platform.OS === 'web') {
@@ -558,19 +647,22 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 
-      // Set the generated questions
+      // CHANGED: The response now only contains questions and metadata, not a saved quiz
+      // Set the generated questions (don't create the quiz yet)
       setQuestions(response.data.data.questions);
       
-      // Update form data
-      setFormData(prev => ({
-        ...prev,
-        title: response.data.data.title,
-      }));
+      // Update form data with AI-generated title if user didn't provide one
+      if (!formData.title) {
+        setFormData(prev => ({
+          ...prev,
+          title: response.data.data.title,
+        }));
+      }
 
-      // Switch back to edit mode
+      // Switch back to edit mode so user can review and save
       setAiGenerationMode(false);
 
-      const message = response.data.message || 'AI quiz generated successfully!';
+      const message = response.data.message || 'AI quiz generated successfully! Review the questions and click "Create Quiz" to save.';
       if (Platform.OS === 'web') {
         window.alert(message);
       } else {
@@ -659,6 +751,29 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
                 </>
               )}
             </View>
+            {aiGenerationData.selectedFile && (
+              <TouchableOpacity
+                onPress={(e) => {
+                  e.stopPropagation();
+                  setAiGenerationData(prev => ({ ...prev, selectedFile: null }));
+                }}
+                style={{
+                  backgroundColor: '#EF4444',
+                  borderRadius: 12,
+                  width: 24,
+                  height: 24,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  marginLeft: 8,
+                }}
+              >
+                <Image
+                  source={require('@/assets/icons/close.png')}
+                  style={{ width: 12, height: 12 }}
+                  tintColor="white"
+                />
+              </TouchableOpacity>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -677,7 +792,7 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
               borderRadius: 8,
               padding: 12,
               color: isDarkMode ? '#E0E0E0' : '#111827',
-              fontFamily: 'Inter-18pt-Regular',
+              fontFamily: 'Inter-Regular',
             }}
             placeholderTextColor={isDarkMode ? '#9ca3af' : '#6B7280'}
           />
@@ -729,17 +844,17 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
             <RadioButton 
               value="easy" 
               label="Easy"
-              labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontFamily: 'Inter-18pt-Regular' }}
+              labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontFamily: 'Inter-Regular' }}
             />
             <RadioButton 
               value="medium" 
               label="Medium"
-              labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontFamily: 'Inter-18pt-Regular' }}
+              labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontFamily: 'Inter-Regular' }}
             />
             <RadioButton 
               value="hard" 
               label="Hard"
-              labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontFamily: 'Inter-18pt-Regular' }}
+              labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontFamily: 'Inter-Regular' }}
             />
           </RadioButtonGroup>
         </View>
@@ -797,17 +912,17 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
         <RadioButton 
           value="multiple_choice" 
           label="Multiple Choice (Single Answer)"
-          labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontFamily: 'Inter-18pt-Regular' }}
+          labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontFamily: 'Inter-Regular' }}
         />
         <RadioButton 
           value="multiple_answers" 
           label="Multiple Choice (Multiple Answers)"
-          labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontFamily: 'Inter-18pt-Regular' }}
+          labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontFamily: 'Inter-Regular' }}
         />
         <RadioButton 
           value="true_false" 
           label="True/False"
-          labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontFamily: 'Inter-18pt-Regular' }}
+          labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontFamily: 'Inter-Regular' }}
         />
       </RadioButtonGroup>
     </View>
@@ -829,18 +944,21 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
           padding: 12,
         }}>
           {question.type === 'multiple_answers' ? (
+            // Use Expo Checkbox for multiple answers
             <Checkbox
               value={option.isCorrect}
               onValueChange={(value) => updateOption(questionIndex, optionIndex, 'isCorrect', value)}
               color={option.isCorrect ? '#3B82F6' : undefined}
-              style={{ marginRight: 12 }}
+              style={{ marginRight: 12, width: 20, height: 20 }}
             />
           ) : (
+            // Use RadioButton for single choice (multiple_choice, true_false)
             <RadioButton
               value={optionIndex}
               selected={option.isCorrect}
               onPress={() => updateOption(questionIndex, optionIndex, 'isCorrect', !option.isCorrect)}
               activeColor="#3B82F6"
+              inactiveColor={isDarkMode ? '#6B7280' : '#D1D5DB'}
               width={20}
               height={20}
               style={{ marginRight: 12 }}
@@ -857,7 +975,7 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
               borderRadius: 6,
               color: isDarkMode ? '#E0E0E0' : '#111827',
               marginRight: 8,
-              fontFamily: 'Inter-18pt-Regular',
+              fontFamily: 'Inter-Regular',
             }}
             placeholderTextColor={isDarkMode ? '#9ca3af' : '#6B7280'}
           />
@@ -868,7 +986,8 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
             >
               <Image
                 source={require('@/assets/icons/close.png')}
-                style={{ width: 16, height: 16, tintColor: '#EF4444' }}
+                style={{ width: 16, height: 16 }}
+                tintColor='#EF4444'
               />
             </TouchableOpacity>
           )}
@@ -938,7 +1057,7 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
             color: isDarkMode ? '#E0E0E0' : '#111827',
             minHeight: 80,
             textAlignVertical: 'top',
-            fontFamily: 'Inter-18pt-Regular',
+            fontFamily: 'Inter-Regular',
           }}
           placeholderTextColor={isDarkMode ? '#9ca3af' : '#6B7280'}
         />
@@ -948,72 +1067,7 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
       {renderQuestionOptions(question, index)}
 
       {/* Image upload */}
-      <View style={{ marginBottom: 16 }}>
-        <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
-          Images (Optional)
-        </Text>
-        <TouchableOpacity
-          onPress={() => handleImagePick(index)}
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            padding: 12,
-            backgroundColor: isDarkMode ? '#2A2A2A' : '#F3F4F6',
-            borderRadius: 8,
-            borderWidth: 1,
-            borderColor: isDarkMode ? '#333333' : '#D1D5DB',
-            borderStyle: 'dashed',
-          }}
-        >
-          <Image
-            source={require('@/assets/icons/image.png')}
-            style={{ width: 20, height: 20, marginRight: 8, tintColor: '#3B82F6' }}
-          />
-          <Text className='font-inter_regular text-sm text-[#3B82F6]'>
-            Add Images
-          </Text>
-        </TouchableOpacity>
-        
-        {selectedImages[index] && selectedImages[index].length > 0 && (
-          <View style={{ marginTop: 8 }}>
-            {selectedImages[index].map((image, imgIndex) => (
-              <View key={imgIndex} style={{ 
-                flexDirection: 'row', 
-                alignItems: 'center', 
-                padding: 8,
-                backgroundColor: isDarkMode ? '#2A2A2A' : '#F9FAFB',
-                borderRadius: 6,
-                marginBottom: 4,
-              }}>
-                <Image
-                  source={{ uri: Platform.OS === 'web' ? URL.createObjectURL(image as File) : (image as DocumentPicker.DocumentPickerAsset).uri }}
-                  style={{ 
-                    width: 40, 
-                    height: 40, 
-                    borderRadius: 4,
-                    marginRight: 8,
-                    backgroundColor: isDarkMode ? '#333333' : '#E5E7EB',
-                  }}
-                  contentFit='cover'
-                />
-                <Text className={`font-inter_regular text-xs flex-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
-                  {image.name}
-                </Text>
-                <TouchableOpacity
-                  onPress={() => removeImage(index, imgIndex)}
-                  style={{ padding: 4 }}
-                >
-                  <Image
-                    source={require('@/assets/icons/close.png')}
-                    style={{ width: 12, height: 12 }}
-                    tintColor={isDarkMode ? '#dc2626' : '#ef4444'}
-                  />
-                </TouchableOpacity>
-              </View>
-            ))}
-          </View>
-        )}
-      </View>
+      {renderImageUploadSection(index)}
 
       {/* Question settings */}
       <View style={{ 
@@ -1050,7 +1104,7 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
               color: isDarkMode ? '#E0E0E0' : '#111827',
               width: 60,
               textAlign: 'center',
-              fontFamily: 'Inter-18pt-Regular',
+              fontFamily: 'Inter-Regular',
             }}
           />
         </View>
@@ -1110,74 +1164,65 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
             {index + 1}. {question.text}
           </Text>
 
-          {selectedImages[index] && selectedImages[index].length > 0 && (
-            <View style={{ marginBottom: 12 }}>
-              {selectedImages[index].map((image, imgIndex) => (
-                <View key={imgIndex} style={{ marginBottom: 8 }}>
-                  <TouchableOpacity
-                    onPress={() => {
-                      const imageUri = Platform.OS === 'web' 
-                        ? URL.createObjectURL(image as File) 
-                        : (image as DocumentPicker.DocumentPickerAsset).uri;
-                      handleImagePress(imageUri);
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Image
-                      source={{ 
-                        uri: Platform.OS === 'web' 
-                          ? URL.createObjectURL(image as File) 
-                          : (image as DocumentPicker.DocumentPickerAsset).uri 
-                      }}
-                      style={{
-                        width: '100%',
-                        height: 200,
-                        borderRadius: 8,
-                        backgroundColor: isDarkMode ? '#333333' : '#E5E7EB',
-                      }}
-                      resizeMode="contain"
-                    />
-                  </TouchableOpacity>
-                  <Text className={`font-inter_regular text-xs mt-2 ${isDarkMode ? 'text-gray-400' : 'text-[#6B7280]'}`}>
-                    {image.name}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          )}
+          {renderPreviewImages(index)}
 
           <View style={{ marginLeft: 8 }}>
-            {question.options.map((option, optionIndex) => (
-              <View key={optionIndex} style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                marginBottom: 8,
-              }}>
-                <View style={{
-                  width: 20,
-                  height: 20,
-                  borderRadius: question.type === 'multiple_choice' || question.type === 'true_false' ? 10 : 4,
-                  borderWidth: 2,
-                  borderColor: option.isCorrect ? '#10B981' : '#9CA3AF',
-                  backgroundColor: option.isCorrect ? '#10B981' : 'transparent',
-                  marginRight: 12,
-                  justifyContent: 'center',
+            {question.type === 'multiple_answers' ? (
+              // For multiple answers, show as checkboxes in preview
+              question.options.map((option, optionIndex) => (
+                <View key={optionIndex} style={{
+                  flexDirection: 'row',
                   alignItems: 'center',
+                  marginBottom: 8,
+                  padding: 8,
+                  borderRadius: 8,
+                  backgroundColor: option.isCorrect ? (isDarkMode ? '#065F46' : '#ECFDF5') : 'transparent',
                 }}>
-                  {option.isCorrect && (
-                    <View style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: question.type === 'multiple_choice' || question.type === 'true_false' ? 4 : 2,
-                      backgroundColor: 'white',
-                    }} />
-                  )}
+                  <Checkbox
+                    value={option.isCorrect}
+                    disabled={true}
+                    style={{
+                      marginRight: 12,
+                      borderRadius: 4,
+                      width: 20,
+                      height: 20,
+                    }}
+                    color={option.isCorrect ? '#10B981' : undefined}
+                  />
+                  <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'} ${option.isCorrect ? 'font-inter_semibold' : ''}`}>
+                    {option.text}
+                  </Text>
                 </View>
-                <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'} ${option.isCorrect ? 'font-inter_semibold' : ''}`}>
-                  {option.text}
-                </Text>
-              </View>
-            ))}
+              ))
+            ) : (
+              // For single choice, show as radio buttons in preview
+              question.options.map((option, optionIndex) => (
+                <RadioButton
+                  key={optionIndex}
+                  value={option.text}
+                  label={option.text}
+                  selected={option.isCorrect}
+                  disabled={true}
+                  activeColor="#10B981"
+                  inactiveColor={isDarkMode ? '#6B7280' : '#D1D5DB'}
+                  width={20}
+                  height={20}
+                  style={{
+                    marginBottom: 8,
+                    padding: 8,
+                    borderRadius: 8,
+                    backgroundColor: option.isCorrect ? (isDarkMode ? '#065F46' : '#ECFDF5') : 'transparent',
+                  }}
+                  labelStyle={{
+                    fontSize: 14,
+                    fontFamily: option.isCorrect ? 'Inter-SemiBold' : 'Inter-Regular',
+                    color: isDarkMode ? '#E5E7EB' : '#374151',
+                    flex: 1,
+                  }}
+                  labelClassName={isDarkMode ? 'text-gray-200' : 'text-gray-700'}
+                />
+              ))
+            )}
           </View>
 
           <View style={{ marginTop: 12, flexDirection: 'row', justifyContent: 'space-between' }}>
@@ -1199,14 +1244,133 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
     setImagePreviewModal(true);
   };
 
+  // Render image upload section
+  const renderImageUploadSection = (questionIndex: number) => (
+    <View style={{ marginBottom: 16 }}>
+      <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
+        Images (optional)
+      </Text>
+      
+      {/* Upload button */}
+      <TouchableOpacity
+        onPress={() => handleImagePick(questionIndex)}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          padding: 12,
+          backgroundColor: isDarkMode ? '#2A2A2A' : '#F3F4F6',
+          borderRadius: 8,
+          borderWidth: 1,
+          borderColor: isDarkMode ? '#333333' : '#D1D5DB',
+          borderStyle: 'dashed',
+          marginBottom: 12,
+        }}
+      >
+        <Image
+          source={require('@/assets/icons/upload.png')}
+          style={{ width: 20, height: 20, marginRight: 8, tintColor: '#3B82F6' }}
+        />
+        <Text className='font-inter_regular text-sm text-[#3B82F6]'>
+          Add Images
+        </Text>
+      </TouchableOpacity>
+
+      {/* Display selected images */}
+      {getAllImagesForQuestion(questionIndex).length > 0 && (
+        <View style={{ 
+          flexDirection: 'row', 
+          flexWrap: 'wrap', 
+          gap: 8 
+        }}>
+          {getAllImagesForQuestion(questionIndex).map((image, imageIndex) => (
+            <View key={imageIndex} style={{ 
+              position: 'relative',
+              width: 80,
+              height: 80,
+            }}>
+              <Image
+                source={{ uri: image.url }}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  borderRadius: 8,
+                }}
+                resizeMode="cover"
+              />
+              <TouchableOpacity
+                onPress={() => removeImage(questionIndex, image.index)}
+                style={{
+                  position: 'absolute',
+                  top: -8,
+                  right: -8,
+                  backgroundColor: '#EF4444',
+                  borderRadius: 12,
+                  width: 24,
+                  height: 24,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+              >
+                <Image
+                  source={require('@/assets/icons/close.png')}
+                  style={{ width: 12, height: 12 }}
+                  tintColor="white"
+                />
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+
+  // Render preview images
+  const renderPreviewImages = (questionIndex: number) => {
+    const images = getAllImagesForQuestion(questionIndex);
+    if (images.length === 0) return null;
+
+    return (
+      <View style={{ marginBottom: 12 }}>
+        <View style={{ 
+          flexDirection: 'row', 
+          flexWrap: 'wrap', 
+          gap: 8 
+        }}>
+          {images.map((image, imageIndex) => (
+            <TouchableOpacity
+              key={imageIndex}
+              onPress={() => handleImagePress(image.url)}
+              style={{
+                width: 80,
+                height: 80,
+                borderRadius: 8,
+                overflow: 'hidden',
+              }}
+            >
+              <Image
+                source={{ uri: image.url }}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                }}
+                resizeMode="cover"
+              />
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+    );
+  };
+
   return (
     <Modal
       visible={visible}
       animationType="slide"
       transparent={false}
       onRequestClose={onClose}
+      statusBarTranslucent={false}
     >
-      <View style={{ flex: 1, backgroundColor: isDarkMode ? '#121212' : '#F9FAFB' }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#121212' : '#F9FAFB' }} edges={['top', 'bottom']}>
         {/* Header */}
         <View style={{
           backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
@@ -1299,7 +1463,7 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
                     borderRadius: 8,
                     padding: 12,
                     color: isDarkMode ? '#E0E0E0' : '#111827',
-                    fontFamily: 'Inter-18pt-Regular',
+                    fontFamily: 'Inter-Regular',
                   }}
                   placeholderTextColor={isDarkMode ? '#9ca3af' : '#6B7280'}
                 />
@@ -1318,7 +1482,7 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
                     borderRadius: 8,
                     padding: 12,
                     color: isDarkMode ? '#E0E0E0' : '#111827',
-                    fontFamily: 'Inter-18pt-Regular',
+                    fontFamily: 'Inter-Regular',
                   }}
                   placeholderTextColor={isDarkMode ? '#9ca3af' : '#6B7280'}
                 />
@@ -1340,7 +1504,7 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
                     color: isDarkMode ? '#E0E0E0' : '#111827',
                     minHeight: 80,
                     textAlignVertical: 'top',
-                    fontFamily: 'Inter-18pt-Regular',
+                    fontFamily: 'Inter-Regular',
                   }}
                   placeholderTextColor={isDarkMode ? '#9ca3af' : '#6B7280'}
                 />
@@ -1351,38 +1515,35 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
                   <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
                     Subject *
                   </Text>
-                  <View style={{ 
-                    backgroundColor: isDarkMode ? '#2A2A2A' : '#F9FAFB', 
-                    borderRadius: 8,
-                    borderWidth: 1,
-                    borderColor: isDarkMode ? '#333333' : '#D1D5DB',
-                  }}>
-                    <Picker
+                  {isWeb ? (
+                    <Dropdown
+                      data={[
+                        { label: 'Select a subject', value: '' },
+                        ...subjects.map((subject) => ({
+                          label: `${subject.subjectName}${subject.gradeLevel ? ` - ${subject.gradeLevel}` : ''}${subject.section ? ` (${subject.section})` : ''}`,
+                          value: subject._id,
+                        })),
+                      ]}
                       selectedValue={formData.subject}
                       onValueChange={(itemValue) => setFormData({ ...formData, subject: itemValue })}
-                      style={{
-                        color: isDarkMode ? '#E0E0E0' : '#111827',
-                        backgroundColor: 'transparent',
-                        fontFamily: 'Inter-18pt-Regular',
-                        padding: 8
-                      }}
-                      dropdownIconColor={isDarkMode ? '#E0E0E0' : '#6B7280'}
-                    >
-                      <Picker.Item 
-                        label="Select a subject" 
-                        value="" 
-                        color={isDarkMode ? '#9ca3af' : '#6B7280'}
-                      />
-                      {subjects.map((subject) => (
-                        <Picker.Item
-                          key={subject._id}
-                          label={`${subject.subjectName}${subject.gradeLevel ? ` - ${subject.gradeLevel}` : ''}${subject.section ? ` (${subject.section})` : ''}`}
-                          value={subject._id}
-                          color={isDarkMode ? '#E0E0E0' : '#111827'}
-                        />
-                      ))}
-                    </Picker>
-                  </View>
+                      placeholder="Select a subject"
+                    />
+                  ) : (
+                    <DropdownMobile
+                      label="Subject"
+                      selectedValue={formData.subject}
+                      onValueChange={(itemValue) => setFormData({ ...formData, subject: itemValue })}
+                      items={[
+                        { label: 'Select a subject', value: '' },
+                        ...subjects.map((subject) => ({
+                          label: `${subject.subjectName}${subject.gradeLevel ? ` - ${subject.gradeLevel}` : ''}${subject.section ? ` (${subject.section})` : ''}`,
+                          value: subject._id,
+                        })),
+                      ]}
+                      placeholder="Select a subject"
+                      buttonRightIcon={DownIcon}
+                    />
+                  )}
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
@@ -1398,9 +1559,9 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
                         key={quarter}
                         value={quarter}
                         label={quarter}
-                        labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontSize: 12, fontFamily: 'Inter-18pt-Regular' }}
-                        width={16}
-                        height={16}
+                        labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontSize: 12, fontFamily: 'Inter-Regular' }}
+                        width={24}
+                        height={24}
                       />
                     ))}
                   </RadioButtonGroup>
@@ -1421,48 +1582,58 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
                     borderRadius: 8,
                     padding: 12,
                     color: isDarkMode ? '#E0E0E0' : '#111827',
-                    fontFamily: 'Inter-18pt-Regular',
+                    fontFamily: 'Inter-Regular',
                   }}
                   placeholderTextColor={isDarkMode ? '#9ca3af' : '#6B7280'}
                 />
               </View>
 
-              <View style={{
-                flexDirection: 'row',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                paddingTop: 16,
-                borderTopWidth: 1,
-                borderTopColor: isDarkMode ? '#333333' : '#E5E7EB',
-              }}>
-                <Text className={`font-inter_semibold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
-                  Total Points: {calculateTotalPoints()}
-                </Text>
-                <TouchableOpacity
-                  onPress={addQuestion}
-                  style={{
-                    backgroundColor: '#3B82F6',
-                    paddingHorizontal: 16,
-                    paddingVertical: 8,
-                    borderRadius: 8,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                  }}
-                >
-                  <Image
-                    source={require('@/assets/icons/plus.png')}
-                    style={{ width: 16, height: 16, marginRight: 8 }}
-                    tintColor="white"
-                  />
-                  <Text className='font-inter_medium text-white'>
-                    Add Question
+              {questions.length > 0 && (
+                <View style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  paddingTop: 16,
+                  borderTopWidth: 1,
+                  borderTopColor: isDarkMode ? '#333333' : '#E5E7EB',
+                }}>
+                  <Text className={`font-inter_semibold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
+                    Total Points: {calculateTotalPoints()}
                   </Text>
-                </TouchableOpacity>
-              </View>
+                </View>
+              )}
             </View>
 
             {/* Questions */}
             {questions.map((question, index) => renderQuestion(question, index))}
+
+            {/* Add Question Button - appears below last question or in empty state */}
+            {questions.length > 0 && (
+              <TouchableOpacity
+                onPress={addQuestion}
+                style={{
+                  backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
+                  borderRadius: 12,
+                  padding: 16,
+                  marginBottom: 16,
+                  borderWidth: 2,
+                  borderColor: '#3B82F6',
+                  borderStyle: 'dashed',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Image
+                  source={require('@/assets/icons/plus.png')}
+                  style={{ width: 20, height: 20, marginRight: 8 }}
+                  tintColor="#3B82F6"
+                />
+                <Text className='font-inter_semibold text-base text-[#3B82F6]'>
+                  Add Question
+                </Text>
+              </TouchableOpacity>
+            )}
 
             {questions.length === 0 && (
               <View style={{
@@ -1562,24 +1733,22 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
           </View>
         </View>
 
-        {/* Image Preview Modal */}
+        {/* Image Preview Modal - UPDATED */}
         <Modal
           visible={imagePreviewModal}
           animationType="fade"
           transparent={true}
           onRequestClose={() => setImagePreviewModal(false)}
+          statusBarTranslucent={true}
         >
-          <View style={{
+          <SafeAreaView style={{
             flex: 1,
             backgroundColor: 'rgba(0, 0, 0, 0.9)',
-            justifyContent: 'center',
-            alignItems: 'center',
-            padding: 20,
-          }}>
+          }} edges={['top']}>
             <TouchableOpacity
               style={{
                 position: 'absolute',
-                top: 40,
+                top: 60,
                 right: 20,
                 zIndex: 1,
                 backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -1612,9 +1781,9 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
                 />
               )}
             </TouchableOpacity>
-          </View>
+          </SafeAreaView>
         </Modal>
-      </View>
+      </SafeAreaView>
     </Modal>
   );
 };

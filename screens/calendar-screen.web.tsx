@@ -1,14 +1,36 @@
-import { Modal, Pressable, Text, TouchableOpacity, View, VirtualizedList, useColorScheme, useWindowDimensions, ActivityIndicator, ListRenderItem } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { StatusBar } from 'expo-status-bar'
-import { useDarkMode } from '@/contexts/DarkModeContext'
-import { useAuth } from '@/contexts/AuthContext'
-import { cssInterop } from 'nativewind'
-import DatePicker, { DateType, useDefaultClassNames, useDefaultStyles } from "react-native-ui-datepicker";
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+  VirtualizedList,
+  useColorScheme,
+  useWindowDimensions,
+  Alert,
+  ActivityIndicator,
+  ListRenderItem,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { StatusBar } from "expo-status-bar";
+import { useDarkMode } from "@/contexts/DarkModeContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { cssInterop } from "nativewind";
+import DatePicker, {
+  DateType,
+  useDefaultClassNames,
+  useDefaultStyles,
+} from "react-native-ui-datepicker";
 import dayjs from "dayjs";
-import { Image } from 'expo-image'
-import apiClient from '@/app/services/apiClient'
+import { Image } from "expo-image";
+import apiClient from "@/app/services/apiClient";
+import CalendarIcon from "@/assets/icons/calendar_month.svg";
+import CloseIcon from "@/assets/icons/close.svg";
+import ColoredCalendarIcon from "@/assets/icons/colored_calendar.svg";
+import ColoredTimeIcon from "@/assets/icons/colored_time.svg";
 
 interface User {
   _id: string;
@@ -21,9 +43,9 @@ interface User {
   sex: string;
   phoneNumber: string;
   address: string;
-  role: 'Admin' | 'Teacher' | 'Student';
+  role: "Admin" | "Teacher" | "Student";
   profilePicture?: string;
-  status: 'active' | 'inactive' | 'suspended' | 'pending' | 'archived';
+  status: "active" | "inactive" | "suspended" | "pending" | "archived";
   createdAt: string;
   updatedAt: string;
 }
@@ -39,44 +61,45 @@ interface Events {
   endDate: string;
   priority: "high" | "medium" | "low";
   targetAudience: "all" | "students" | "teachers" | "admins";
-  eventType: "academic" | "administrative" | "holiday" | "meeting" | "deadline" | "other";
-  status?: 'upcoming' | 'ongoing' | 'past';
+  eventType:
+    | "academic"
+    | "administrative"
+    | "holiday"
+    | "meeting"
+    | "deadline"
+    | "other";
+  status?: "upcoming" | "ongoing" | "past";
   createdAt: string;
   updatedAt: string;
 }
 
-// VirtualizedList item types
-type SidebarItemType = 'loading' | 'empty' | 'event';
-type MainItemType = 'loading' | 'empty' | 'event';
-
-interface SidebarListItem {
-  id: string;
-  type: SidebarItemType;
-  data?: Events;
-}
-
-interface MainListItem {
-  id: string;
-  type: MainItemType;
-  data?: Events;
-}
+type CalendarView = "day" | "week" | "month";
 
 // Student's calendar page
 const CalendarWeb: React.FC = () => {
+  document.title = 'Calendar - GracEdLMS';
   const colorScheme = useColorScheme();
   const { isDarkMode } = useDarkMode();
   const { width } = useWindowDimensions();
   const { user } = useAuth();
 
-  // Calendar state
-  const [calendarVisible, setCalendarVisible] = useState(false);
-  const [selectedDate, setSelectedDate] = useState(dayjs());
-
   // Events state
   const [events, setEvents] = useState<Events[]>([]);
-  const [todaysEvents, setTodaysEvents] = useState<Events[]>([]);
+  const [weekEvents, setWeekEvents] = useState<Events[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Date selection state
+  const [selectedDate, setSelectedDate] = useState(dayjs());
+  const [calendarView, setCalendarView] = useState<CalendarView>("week");
+
+  // Calendar picker modal state
+  const [calendarPickerVisible, setCalendarPickerVisible] = useState(false);
+
+  // Event detail modal state
+  const [eventDetailVisible, setEventDetailVisible] = useState(false);
+  const [selectedEventForDetail, setSelectedEventForDetail] =
+    useState<Events | null>(null);
 
   // Image viewing modal
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
@@ -87,40 +110,66 @@ const CalendarWeb: React.FC = () => {
   cssInterop(Image, { className: "style" });
 
   // Check if current user is a student
-  const isStudent = user?.role === 'Student';
-  const isTeacher = user?.role === 'Teacher';
-  const isAdmin = user?.role === 'Admin';
+  const isStudent = user?.role === "Student";
+  const isTeacher = user?.role === "Teacher";
+  const isAdmin = user?.role === "Admin";
+
+  // Determine if sidebar should be shown
+  const showSidebar = width >= 768;
+  const sidebarWidth = width >= 1024 ? 350 : 275;
+
+  // Generate time slots for day/week view
+  const timeSlots = useMemo(() => {
+    const slots = [];
+    for (let hour = 0; hour < 24; hour++) {
+      slots.push({
+        hour,
+        label: dayjs().hour(hour).minute(0).format("h A"),
+      });
+    }
+    return slots;
+  }, []);
+
+  // Get week days based on selected date
+  const weekDays = useMemo(() => {
+    const startOfWeek = selectedDate.startOf("week");
+    return Array.from({ length: 7 }, (_, i) => startOfWeek.add(i, "day"));
+  }, [selectedDate]);
 
   // Filter events based on user role and target audience
-  const filterEventsByRole = useCallback((eventsList: Events[]) => {
-    if (isAdmin) {
-      // Admins can see all events
+  const filterEventsByRole = useCallback(
+    (eventsList: Events[]) => {
+      if (isAdmin) {
+        return eventsList;
+      } else if (isTeacher) {
+        return eventsList.filter(
+          (event) =>
+            event.targetAudience === "all" ||
+            event.targetAudience === "teachers"
+        );
+      } else if (isStudent) {
+        return eventsList.filter(
+          (event) =>
+            event.targetAudience === "all" ||
+            event.targetAudience === "students"
+        );
+      }
       return eventsList;
-    } else if (isTeacher) {
-      // Teachers can see events for 'all' and 'teachers'
-      return eventsList.filter(event => 
-        event.targetAudience === 'all' || event.targetAudience === 'teachers'
-      );
-    } else if (isStudent) {
-      // Students can only see events for 'all' and 'students'
-      return eventsList.filter(event => 
-        event.targetAudience === 'all' || event.targetAudience === 'students'
-      );
-    }
-    return eventsList;
-  }, [isAdmin, isTeacher, isStudent]);
+    },
+    [isAdmin, isTeacher, isStudent]
+  );
 
   // Fetch all events
   const fetchEvents = useCallback(async () => {
     try {
       setIsLoading(true);
       setError(null);
-      
-      const response = await apiClient.get('/events', {
+
+      const response = await apiClient.get("/events", {
         params: {
           limit: 100,
-          page: 1
-        }
+          page: 1,
+        },
       });
 
       if (response.data.success) {
@@ -128,88 +177,427 @@ const CalendarWeb: React.FC = () => {
         setEvents(filteredEvents);
       }
     } catch (err: any) {
-      console.error('Error fetching events:', err);
-      setError(err.response?.data?.message || 'Failed to fetch events');
+      console.error("Error fetching events:", err);
+      setError(err.response?.data?.message || "Failed to fetch events");
     } finally {
       setIsLoading(false);
     }
   }, [filterEventsByRole]);
 
-  // Fetch events for selected date
-  const fetchEventsForDate = useCallback(async (date: dayjs.Dayjs) => {
+  // Fetch events for current week
+  const fetchWeekEvents = useCallback(async () => {
     try {
-      const startOfDay = date.startOf('day').toISOString();
-      const endOfDay = date.endOf('day').toISOString();
+      const startOfWeek = selectedDate.startOf("week").toISOString();
+      const endOfWeek = selectedDate.endOf("week").toISOString();
 
-      const response = await apiClient.get('/events/date-range', {
+      const response = await apiClient.get("/events/date-range", {
         params: {
-          startDate: startOfDay,
-          endDate: endOfDay
-        }
+          startDate: startOfWeek,
+          endDate: endOfWeek,
+        },
       });
 
       if (response.data.success) {
         const filteredEvents = filterEventsByRole(response.data.data);
-        setTodaysEvents(filteredEvents);
+        setWeekEvents(filteredEvents);
       }
     } catch (err: any) {
-      console.error('Error fetching events for date:', err);
-      setError(err.response?.data?.message || 'Failed to fetch events for selected date');
+      console.error("Error fetching week events:", err);
+      setError(
+        err.response?.data?.message || "Failed to fetch events for week"
+      );
     }
-  }, [filterEventsByRole]);
+  }, [selectedDate, filterEventsByRole]);
+
+  // Open event detail modal
+  const openEventDetail = useCallback((event: Events) => {
+    setSelectedEventForDetail(event);
+    setEventDetailVisible(true);
+  }, []);
 
   // Priority color helper
   const getPriorityColor = useCallback((priority: string) => {
     switch (priority) {
-      case 'high': return isDarkMode ? '#dc2626' : '#ef4444';
-      case 'medium': return isDarkMode ? '#d97706' : '#f59e0b';
-      case 'low': return isDarkMode ? '#059669' : '#10b981';
-      default: return isDarkMode ? '#6b7280' : '#9ca3af';
+      case "high":
+        return "#EF4444";
+      case "medium":
+        return "#F59E0B";
+      case "low":
+        return "#10B981";
+      default:
+        return "#6B7280";
     }
-  }, [isDarkMode]);
+  }, []);
 
-  // Format time helper
-  const formatTime = useCallback((dateString: string) => {
-    return dayjs(dateString).format('h:mm A');
+  // Event type color helper
+  const getEventTypeColor = useCallback((eventType: string) => {
+    switch (eventType) {
+      case "academic":
+        return "#3B82F6";
+      case "administrative":
+        return "#8B5CF6";
+      case "holiday":
+        return "#EC4899";
+      case "meeting":
+        return "#06B6D4";
+      case "deadline":
+        return "#EF4444";
+      default:
+        return "#6B7280";
+    }
+  }, []);
+
+  // Format date range helper
+  const formatDateRange = useCallback((startDate: string, endDate: string) => {
+    const start = dayjs(startDate);
+    const end = dayjs(endDate);
+
+    if (start.isSame(end, "day")) {
+      return start.format("MMM DD, YYYY");
+    }
+
+    return `${start.format("MMM DD, YYYY")} - ${end.format("MMM DD, YYYY")}`;
   }, []);
 
   // Get user full name helper
   const getUserFullName = useCallback((user: User) => {
     const { firstName, middleName, lastName } = user;
-    return middleName ? `${firstName} ${middleName} ${lastName}` : `${firstName} ${lastName}`;
+    return middleName
+      ? `${firstName} ${middleName} ${lastName}`
+      : `${firstName} ${lastName}`;
   }, []);
 
-  // Navigate to previous/next day
-  const navigateDay = useCallback((direction: 'prev' | 'next') => {
-    const newDate = direction === 'prev' 
-      ? selectedDate.subtract(1, 'day') 
-      : selectedDate.add(1, 'day');
-    setSelectedDate(newDate);
-  }, [selectedDate]);
+  // Navigate to previous/next period
+  const navigatePeriod = useCallback(
+    (direction: "prev" | "next") => {
+      const unit =
+        calendarView === "day"
+          ? "day"
+          : calendarView === "week"
+          ? "week"
+          : "month";
+      const newDate =
+        direction === "prev"
+          ? selectedDate.subtract(1, unit)
+          : selectedDate.add(1, unit);
+      setSelectedDate(newDate);
+    },
+    [selectedDate, calendarView]
+  );
 
-  // Get event type display text
-  const getEventTypeDisplay = useCallback((eventType: string) => {
-    const typeMap: { [key: string]: string } = {
-      academic: '📚 Academic',
-      administrative: '🏢 Administrative',
-      holiday: '🎉 Holiday',
-      meeting: '📅 Meeting',
-      deadline: '⏰ Deadline',
-      other: '🔗 Other'
-    };
-    return typeMap[eventType] || eventType;
+  // Get events for a specific day and time slot
+  const getEventsForDayAndTime = useCallback(
+    (day: dayjs.Dayjs, hour: number) => {
+      return weekEvents.filter((event) => {
+        const eventStart = dayjs(event.startDate);
+        const eventEnd = dayjs(event.endDate);
+
+        const isMarkedAllDay = (event as any).isAllDay === true;
+        if (isMarkedAllDay) return false;
+
+        return eventStart.isSame(day, "day") && eventStart.hour() === hour;
+      });
+    },
+    [weekEvents]
+  );
+
+  // Get all-day events for a specific day
+  const getAllDayEvents = useCallback(
+    (day: dayjs.Dayjs) => {
+      return weekEvents.filter((event) => {
+        const eventStart = dayjs(event.startDate);
+        const eventEnd = dayjs(event.endDate);
+
+        const isMarkedAllDay = (event as any).isAllDay === true;
+        const isMultiDay = !eventStart.isSame(eventEnd, "day");
+
+        const overlapsDay =
+          eventStart.isSame(day, "day") ||
+          eventEnd.isSame(day, "day") ||
+          (eventStart.isBefore(day, "day") && eventEnd.isAfter(day, "day"));
+
+        return overlapsDay && (isMarkedAllDay || isMultiDay);
+      });
+    },
+    [weekEvents]
+  );
+
+  // Calculate event height based on duration
+  const calculateEventHeight = useCallback(
+    (startDate: string, endDate: string) => {
+      const start = dayjs(startDate);
+      const end = dayjs(endDate);
+      const durationMinutes = end.diff(start, "minute");
+      const hourHeight = 60;
+      return Math.max((durationMinutes / 60) * hourHeight - 4, 60);
+    },
+    []
+  );
+
+  // Calculate event top offset within the hour slot
+  const calculateEventTopOffset = useCallback((startDate: string) => {
+    const start = dayjs(startDate);
+    const minutes = start.minute();
+    const hourHeight = 60;
+    return (minutes / 60) * hourHeight;
   }, []);
 
-  // Get target audience display text
-  const getTargetAudienceDisplay = useCallback((audience: string) => {
-    const audienceMap: { [key: string]: string } = {
-      all: '👥 Everyone',
-      students: '🎓 Students',
-      teachers: '👨‍🏫 Teachers',
-      admins: '👑 Admins'
-    };
-    return audienceMap[audience] || audience;
-  }, []);
+  // Render event card in calendar grid
+  const renderEventCard = useCallback(
+    (event: Events, isAllDay: boolean = false) => {
+      const eventStart = dayjs(event.startDate);
+      const eventEnd = dayjs(event.endDate);
+      const duration = eventEnd.diff(eventStart, "minute");
+      const isMarkedAllDay = (event as any).isAllDay === true;
+
+      const eventHeight =
+        !isAllDay && !isMarkedAllDay
+          ? calculateEventHeight(event.startDate, event.endDate)
+          : undefined;
+      const topOffset =
+        !isAllDay && !isMarkedAllDay
+          ? calculateEventTopOffset(event.startDate)
+          : 0;
+
+      return (
+        <TouchableOpacity
+          key={event._id}
+          className="rounded-md p-2"
+          style={{
+            backgroundColor: getEventTypeColor(event.eventType),
+            borderLeftWidth: 4,
+            borderLeftColor: getPriorityColor(event.priority),
+            marginBottom: 4,
+            minHeight: isAllDay || isMarkedAllDay ? 32 : 60,
+            height: eventHeight,
+            position: !isAllDay && !isMarkedAllDay ? "absolute" : "relative",
+            top: topOffset,
+            left: 4,
+            right: 4,
+            zIndex: 10,
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.1,
+            shadowRadius: 4,
+            elevation: 3,
+          }}
+          onPress={() => openEventDetail(event)}
+        >
+          <Text
+            className="font-inter_semibold text-xs text-white"
+            numberOfLines={1}
+          >
+            {event.title}
+          </Text>
+          {!isAllDay && !isMarkedAllDay && (
+            <Text
+              className="font-inter_regular text-xs text-white opacity-90"
+              numberOfLines={1}
+            >
+              {eventStart.format("h:mm A")} - {eventEnd.format("h:mm A")}
+            </Text>
+          )}
+        </TouchableOpacity>
+      );
+    },
+    [
+      getEventTypeColor,
+      getPriorityColor,
+      openEventDetail,
+      calculateEventHeight,
+      calculateEventTopOffset,
+    ]
+  );
+
+  // Render week view
+  const renderWeekView = useCallback(() => {
+    return (
+      <View className="flex-1">
+        {/* Week header with dates */}
+        <View
+          className={`flex-row ${isDarkMode ? "bg-[#121212]" : "bg-white"}`}
+          style={{
+            borderBottomWidth: 1,
+            borderBottomColor: isDarkMode ? "#333333" : "#E0E0E0",
+          }}
+        >
+          {showSidebar && (
+            <View
+              style={{
+                width: 80,
+                borderRightColor: isDarkMode ? "#1E1E1E" : "#F1F3F4",
+              }}
+              className="p-2 border-r-2"
+            >
+              <Text
+                className={`font-inter_regular text-xs ${
+                  isDarkMode ? "text-gray-400" : "text-gray-500"
+                }`}
+              >
+                GMT+8
+              </Text>
+            </View>
+          )}
+
+          {weekDays.map((day, index) => {
+            const isToday = day.isSame(dayjs(), "day");
+
+            return (
+              <View
+                key={index}
+                className="flex-1 items-center p-2"
+                style={{
+                  borderLeftWidth: index > 0 || !showSidebar ? 1 : 0,
+                  borderLeftColor: isDarkMode ? "#333333" : "#E0E0E0",
+                }}
+              >
+                <Text
+                  className={`font-inter_semibold text-xs ${
+                    isDarkMode ? "text-gray-400" : "text-gray-600"
+                  }`}
+                >
+                  {day.format("ddd").toUpperCase()}
+                </Text>
+                <View
+                  className={`mt-1 rounded-full items-center justify-center ${
+                    isToday ? "bg-[#1A73E8]" : ""
+                  }`}
+                  style={{
+                    width: 32,
+                    height: 32,
+                  }}
+                >
+                  <Text
+                    className={`font-inter_semibold text-lg ${
+                      isToday
+                        ? "text-white"
+                        : isDarkMode
+                        ? "text-[#E0E0E0]"
+                        : "text-black"
+                    }`}
+                  >
+                    {day.format("D")}
+                  </Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+
+        {/* All-day events section */}
+        <View
+          className={`flex-row ${isDarkMode ? "bg-[#1A1A1A]" : "bg-[#F9FAFB]"}`}
+          style={{
+            borderBottomWidth: 1,
+            borderBottomColor: isDarkMode ? "#333333" : "#E0E0E0",
+            minHeight: 48,
+          }}
+        >
+          {showSidebar && (
+            <View
+              style={{
+                width: 80,
+                borderRightColor: isDarkMode ? "#1E1E1E" : "#F1F3F4",
+              }}
+              className="p-2 items-center justify-center border-r-2"
+            >
+              <Text
+                className={`font-inter_regular text-xs ${
+                  isDarkMode ? "text-gray-400" : "text-gray-500"
+                }`}
+              >
+                All-day
+              </Text>
+            </View>
+          )}
+
+          {weekDays.map((day, index) => {
+            const allDayEvents = getAllDayEvents(day);
+
+            return (
+              <View
+                key={index}
+                className="flex-1 p-1"
+                style={{
+                  borderLeftWidth: index > 0 || !showSidebar ? 1 : 0,
+                  borderLeftColor: isDarkMode ? "#333333" : "#E0E0E0",
+                }}
+              >
+                {allDayEvents.map((event) => renderEventCard(event, true))}
+              </View>
+            );
+          })}
+        </View>
+
+        {/* Time slots grid */}
+        <ScrollView showsVerticalScrollIndicator={false} className="flex-1">
+          {timeSlots.map((slot, slotIndex) => (
+            <View
+              key={slot.hour}
+              className="flex-row"
+              style={{
+                borderBottomWidth: 1,
+                borderBottomColor: isDarkMode ? "#1E1E1E" : "#F1F3F4",
+                height: 60,
+              }}
+            >
+              {showSidebar && (
+                <View
+                  style={{
+                    width: 80,
+                    borderRightColor: isDarkMode ? "#1E1E1E" : "#F1F3F4",
+                  }}
+                  className="p-2 pr-3 items-center justify-start border-r-2"
+                >
+                  <Text
+                    className={`font-inter_regular text-xs ${
+                      isDarkMode ? "text-gray-400" : "text-gray-500"
+                    }`}
+                  >
+                    {slot.label}
+                  </Text>
+                </View>
+              )}
+
+              {weekDays.map((day, dayIndex) => {
+                const eventsInSlot = getEventsForDayAndTime(day, slot.hour);
+                const isCurrentHour =
+                  day.isSame(dayjs(), "day") && dayjs().hour() === slot.hour;
+
+                return (
+                  <View
+                    key={dayIndex}
+                    className={`flex-1 ${
+                      isCurrentHour
+                        ? isDarkMode
+                          ? "bg-[#1A1A2E]"
+                          : "bg-[#E8F0FE]"
+                        : ""
+                    }`}
+                    style={{
+                      borderLeftWidth: dayIndex > 0 || !showSidebar ? 1 : 0,
+                      borderLeftColor: isDarkMode ? "#1E1E1E" : "#F1F3F4",
+                      position: "relative",
+                    }}
+                  >
+                    {eventsInSlot.map((event) => renderEventCard(event, false))}
+                  </View>
+                );
+              })}
+            </View>
+          ))}
+        </ScrollView>
+      </View>
+    );
+  }, [
+    weekDays,
+    timeSlots,
+    isDarkMode,
+    showSidebar,
+    getAllDayEvents,
+    getEventsForDayAndTime,
+    renderEventCard,
+  ]);
 
   // Load events on component mount and when selected date changes
   useEffect(() => {
@@ -217,450 +605,799 @@ const CalendarWeb: React.FC = () => {
   }, [fetchEvents]);
 
   useEffect(() => {
-    fetchEventsForDate(selectedDate);
-  }, [selectedDate, fetchEventsForDate]);
-
-  // Filtered today's events by selected date
-  const filteredTodaysEvents = useMemo(() => {
-    return todaysEvents.filter(event => {
-      const eventStart = dayjs(event.startDate);
-      const eventEnd = dayjs(event.endDate);
-      const selected = selectedDate.startOf('day');
-      
-      return eventStart.isSame(selected, 'day') || 
-             eventEnd.isSame(selected, 'day') || 
-             (eventStart.isBefore(selected, 'day') && eventEnd.isAfter(selected, 'day'));
-    });
-  }, [todaysEvents, selectedDate]);
-
-  // Prepare sidebar virtualized list data
-  const sidebarListData = useMemo((): SidebarListItem[] => {
-    if (isLoading) {
-      return [{ id: 'loading', type: 'loading' }];
-    }
-    
-    if (filteredTodaysEvents.length === 0) {
-      return [{ id: 'empty', type: 'empty' }];
-    }
-    
-    return filteredTodaysEvents.map(event => ({
-      id: event._id,
-      type: 'event' as SidebarItemType,
-      data: event
-    }));
-  }, [isLoading, filteredTodaysEvents]);
-
-  // Prepare main virtualized list data
-  const mainListData = useMemo((): MainListItem[] => {
-    if (error) {
-      return [{ id: 'error', type: 'empty' }];
-    }
-    
-    if (isLoading) {
-      return [{ id: 'loading', type: 'loading' }];
-    }
-    
-    if (filteredTodaysEvents.length === 0) {
-      return [{ id: 'empty', type: 'empty' }];
-    }
-    
-    return filteredTodaysEvents.map(event => ({
-      id: event._id,
-      type: 'event' as MainItemType,
-      data: event
-    }));
-  }, [error, isLoading, filteredTodaysEvents]);
-
-  // Sidebar item renderer
-  const renderSidebarItem: ListRenderItem<SidebarListItem> = useCallback(({ item }) => {
-    switch (item.type) {
-      case 'loading':
-        return (
-          <View 
-            className='w-full items-center rounded-lg p-2 mb-2'
-            style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5' }}
-          >
-            <ActivityIndicator size="small" color={isDarkMode ? '#E0E0E0' : '#000'} />
-            <Text className={`font-inter_regular my-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Loading events...
-            </Text>
-          </View>
-        );
-      
-      case 'empty':
-        return (
-          <View 
-            className='w-full items-center rounded-lg p-2 mb-2'
-            style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5' }}
-          >
-            <Text className={`font-inter_regular my-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              No events scheduled.
-            </Text>
-          </View>
-        );
-      
-      case 'event':
-        if (!item.data) return null;
-        const event = item.data;
-        
-        return (
-          <View
-            className='w-full rounded-lg p-4 mb-2'
-            style={{ 
-              backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5', 
-              borderLeftWidth: 4,
-              borderLeftColor: getPriorityColor(event.priority)
-            }}
-          >
-            <View className='flex-row items-center'>
-              <Text 
-                className={`font-inter_semibold text-sm mr-auto ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}
-                numberOfLines={1}
-                ellipsizeMode='tail'
-              >
-                {event.title}
-              </Text>
-              <View 
-                className='flex-row items-center rounded-full px-2 py-1'
-                style={{ backgroundColor: getPriorityColor(event.priority) }}
-              >
-                <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-[#E0E0E0]' : 'text-white'}`}>
-                  {event.priority === 'high' ? 'High' : event.priority === 'medium' ? 'Medium' : 'Low'}
-                </Text>
-              </View>
-            </View>
-            <View className='flex-row items-center flex-shrink'>
-              <Text 
-                className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}
-              >
-                {formatTime(event.startDate)} - {formatTime(event.endDate)}
-              </Text>
-            </View>
-          </View>
-        );
-      
-      default:
-        return null;
-    }
-  }, [isDarkMode, getPriorityColor, formatTime]);
-
-  // Main item renderer
-  const renderMainItem: ListRenderItem<MainListItem> = useCallback(({ item }) => {
-    switch (item.type) {
-      case 'loading':
-        return (
-          <View className={`w-full items-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} rounded-lg p-4 mt-2`}>
-            <ActivityIndicator size="large" color={isDarkMode ? '#E0E0E0' : '#000'} />
-            <Text className={`font-inter_regular text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Loading events...
-            </Text>
-          </View>
-        );
-      
-      case 'empty':
-        if (error) {
-          return (
-            <View className='w-full items-center bg-red-100 rounded-lg p-4 mt-2 mb-2'>
-              <Text className='font-inter_regular text-red-800'>
-                {error}
-              </Text>
-            </View>
-          );
-        }
-        
-        return (
-          <View className={`w-full items-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} rounded-lg p-4 mt-2`}>
-            <Image
-              source={require('@/assets/images/no_events.png')}
-              style={{ width: 100, height: 100, marginBottom: 8 }}
-              contentFit='contain'
-            />
-            <Text className={`font-inter_regular text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              No events scheduled for this day
-            </Text>
-            <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-              {isStudent ? 'Check back later for new events.' : 'Create an event to get started.'}
-            </Text>
-          </View>
-        );
-      
-      case 'event':
-        if (!item.data) return null;
-        const event = item.data;
-        
-        return (
-          <View 
-            className={`w-full ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} p-4 mb-4 rounded-lg`}
-            style={{
-              borderLeftWidth: 8,
-              borderLeftColor: getPriorityColor(event.priority)
-            }}
-          >
-            {/* User Details */}
-            <View className='flex-row items-center mb-2'>
-              <Image
-                source={event.createdBy.profilePicture ? { uri: event.createdBy.profilePicture } : require('@/assets/images/sample_profile_picture.png')}
-                style={{ width: 40, height: 40, marginRight: 8, borderRadius: 20 }}
-                contentFit='cover'
-              />
-              <View className='mr-auto'>
-                <Text 
-                  className={`font-inter_semibold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}
-                  numberOfLines={1}
-                  ellipsizeMode='tail'
-                >
-                  {getUserFullName(event.createdBy)}
-                </Text>
-                <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                  {dayjs(event.createdAt).format('MMMM D, YYYY h:mm A')}
-                </Text>
-              </View>
-              
-              {/* Role indicator */}
-              <View 
-                className='rounded-full px-2 py-1'
-                style={{ backgroundColor: isDarkMode ? '#374151' : '#E5E7EB' }}
-              >
-                <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                  {event.createdBy.role}
-                </Text>
-              </View>
-            </View>
-
-            {/* Event Title */}
-            <View className='w-full items-center bg-secondary-web rounded-lg p-4 mb-2'>
-              <Text className='font-inter_bold text-lg text-white'>
-                {event.title}
-              </Text>
-            </View>
-
-            {/* Priority Warning */}
-            {event.priority === 'high' && (
-              <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-red-400' : 'text-red-500'} mb-2`}>
-                ⚠️ IMPORTANT! 
-              </Text>
-            )}
-
-            {/* Event Details */}
-            <View className='mb-2'>
-              <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'} mb-1`}>
-                Deadline: {formatTime(event.startDate)} - {formatTime(event.endDate)}
-              </Text>
-              <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                Event Type: {event.eventType === 'academic' ? 'Academic' : event.eventType === 'administrative' ? 'Administrative' : event.eventType === 'holiday' ? 'Holiday' : event.eventType === 'meeting' ? 'Meeting' : event.eventType === 'deadline' ? 'Deadline' : 'Other'}
-              </Text>
-            </View>
-
-            {/* Header Text */}
-            <Text className={`font-inter_semibold text-lg ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              {event.header}
-            </Text>
-
-            {/* Body */}
-            <Text className={`font-inter_regular text-sm mt-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              {event.body}
-            </Text>
-
-            {/* Images */}
-            {event.images && event.images.length > 0 && (
-              <View className='flex-row flex-wrap mt-2'>
-                {event.images.map((imageUrl, index) => (
-                  <Pressable 
-                    key={index}
-                    onPress={() => {
-                      setSelectedImageUrl(imageUrl);
-                      setImageViewerVisible(true);
-                    }}
-                  >
-                    <Image
-                      source={{ uri: imageUrl }}
-                      style={{ width: 100, height: 100, marginRight: 8, marginBottom: 8, borderRadius: 8 }}
-                      contentFit='cover'
-                    />
-                  </Pressable>
-                ))}
-              </View>
-            )}
-          </View>
-        );
-      
-      default:
-        return null;
-    }
-  }, [isDarkMode, getPriorityColor, getUserFullName, formatTime, getEventTypeDisplay, getTargetAudienceDisplay, error, isStudent]);
-
-  // VirtualizedList get item function
-  const getSidebarItem = useCallback((data: SidebarListItem[], index: number) => data[index], []);
-  const getMainItem = useCallback((data: MainListItem[], index: number) => data[index], []);
-  
-  // VirtualizedList get item count function
-  const getSidebarItemCount = useCallback((data: SidebarListItem[]) => data.length, []);
-  const getMainItemCount = useCallback((data: MainListItem[]) => data.length, []);
-
-  // VirtualizedList key extractor
-  const sidebarKeyExtractor = useCallback((item: SidebarListItem) => item.id, []);
-  const mainKeyExtractor = useCallback((item: MainListItem) => item.id, []);
+    fetchWeekEvents();
+  }, [fetchWeekEvents]);
 
   return (
-    <SafeAreaView className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-      {/* Header */}
-      <View 
-        className='flex-row items-center p-4' 
-        style={{
-          borderBottomWidth: 1,
-          borderBottomColor: isDarkMode ? '#333333' : '#E0E0E0'
-        }}
-      >
-        <View className='flex-col mr-auto'>
-          <Text className={`font-inter_semibold text-2xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-            {selectedDate.format('dddd')}
-          </Text>
-          <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-            {selectedDate.format('MMMM D, YYYY')}
-          </Text>
-        </View>
-        <View className='flex-row items-center'>
-          <TouchableOpacity
-            className='rounded-md px-2 py-3 mr-1 items-center'
-            style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F3F2F1' }}
-            onPress={() => navigateDay('prev')}
-          >
-            <Text className={`font-inter_semibold ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              ‹
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            className='rounded-md p-2 mr-1 items-center'
-            style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F3F2F1' }}
-            onPress={() => {
-              setSelectedDate(dayjs());
-              setCalendarVisible(true);
+    <SafeAreaView
+      className={`flex-1 ${isDarkMode ? "bg-[#0F0F0F]" : "bg-[#F1F3F4]"}`}
+    >
+      <View className="flex-1 flex-row">
+        {/* Sidebar */}
+        {showSidebar && (
+          <View
+            className={`${isDarkMode ? "bg-[#121212]" : "bg-white"} p-4`}
+            style={{
+              width: sidebarWidth,
+              borderRightWidth: 1,
+              borderRightColor: isDarkMode ? "#333333" : "#E0E0E0",
             }}
           >
-            <Text className={`font-inter_semibold ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Today
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            className='rounded-md px-2 py-3 items-center'
-            style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F3F2F1' }}
-            onPress={() => navigateDay('next')}
+            {/* Mini Calendar */}
+            <View className="mb-4">
+              <DatePicker
+                calendar="gregory"
+                mode="single"
+                date={selectedDate}
+                firstDayOfWeek={0}
+                navigationPosition="right"
+                onChange={(params) => {
+                  if (params?.date) {
+                    const newDate = dayjs(params.date);
+                    setSelectedDate(newDate);
+                  }
+                }}
+                classNames={{
+                  ...defaultClassNames,
+                  today: "rounded-full",
+                  today_label: `font-inter_semibold text-sm ${
+                    isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                  }`,
+                  month_selector_label: `font-inter_bold text-sm ${
+                    isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                  }`,
+                  year_selector_label: `font-inter_bold text-sm ${
+                    isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                  }`,
+                  weekday_label: `font-inter_semibold text-xs ${
+                    isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                  }`,
+                  outside_label: `font-inter_regular text-sm ${
+                    isDarkMode ? "text-gray-400" : "text-gray-500"
+                  }`,
+                  day_label: `font-inter_regular text-sm ${
+                    isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                  }`,
+                  selected_month: "bg-[#1A73E8] rounded-lg",
+                  selected_month_label:
+                    "font-inter_semibold text-white text-sm",
+                  month_label: `font-inter_regular text-sm ${
+                    isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                  }`,
+                  year_label: `font-inter_regular text-sm ${
+                    isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                  }`,
+                  selected_year: "bg-[#1A73E8] rounded-lg",
+                  selected_year_label: "font-inter_semibold text-white text-sm",
+                  selected: "bg-[#1A73E8] rounded-full",
+                  selected_label: "font-inter_semibold text-white text-sm",
+                  disabled: "opacity-50",
+                }}
+                className={`w-full ${isDarkMode ? "bg-[#121212]" : "bg-white"}`}
+                showOutsideDays={true}
+                styles={{
+                  button_prev_image: {
+                    tintColor: isDarkMode ? "#E0E0E0" : "black",
+                  },
+                  button_next_image: {
+                    tintColor: isDarkMode ? "#E0E0E0" : "black",
+                  },
+                }}
+              />
+            </View>
+
+            {/* Week Events Count */}
+            <View
+              className={`rounded-lg p-3 ${
+                isDarkMode ? "bg-[#1E1E1E]" : "bg-[#F1F3F4]"
+              }`}
+            >
+              <Text
+                className={`font-inter_semibold text-sm ${
+                  isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                }`}
+              >
+                {weekEvents.length}{" "}
+                {weekEvents.length === 1 ? "event" : "events"}
+              </Text>
+              <Text
+                className={`font-inter_regular text-xs ${
+                  isDarkMode ? "text-gray-400" : "text-gray-500"
+                }`}
+              >
+                this week
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* Main Content */}
+        <View className="flex-1">
+          {showSidebar ? (
+            // Desktop / Tablet Header
+            <View
+              className={`flex-row items-center justify-between px-6 py-4 ${
+                isDarkMode ? "bg-[#121212]" : "bg-white"
+              }`}
+              style={{
+                borderBottomWidth: 1,
+                borderBottomColor: isDarkMode ? "#333333" : "#E0E0E0",
+              }}
+            >
+              <View className="flex-row items-center">
+                <Text
+                  className={`font-inter_semibold text-2xl mr-2 ${
+                    isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                  }`}
+                >
+                  {selectedDate.format("MMM YYYY")}
+                </Text>
+                <TouchableOpacity
+                  className={`rounded-full p-2 mr-2`}
+                  onPress={() => navigatePeriod("prev")}
+                  style={{
+                    backgroundColor: isDarkMode ? "#1E1E1E" : "#F1F3F4",
+                  }}
+                >
+                  <Text
+                    className={`font-inter_semibold text-xl ${
+                      isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                    }`}
+                  >
+                    ‹
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  className={`rounded-md px-4 py-2 mr-2`}
+                  onPress={() => setSelectedDate(dayjs())}
+                  style={{
+                    backgroundColor: isDarkMode ? "#1E1E1E" : "#F1F3F4",
+                  }}
+                >
+                  <Text
+                    className={`font-inter_semibold text-sm ${
+                      isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                    }`}
+                  >
+                    Today
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  className={`rounded-full p-2`}
+                  onPress={() => navigatePeriod("next")}
+                  style={{
+                    backgroundColor: isDarkMode ? "#1E1E1E" : "#F1F3F4",
+                  }}
+                >
+                  <Text
+                    className={`font-inter_semibold text-xl ${
+                      isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                    }`}
+                  >
+                    ›
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* View Selector */}
+              <View className="flex-row items-center">
+                <View
+                  className="flex-row rounded-lg overflow-hidden"
+                  style={{
+                    borderWidth: 1,
+                    borderColor: isDarkMode ? "#333333" : "#E0E0E0",
+                  }}
+                >
+                  <TouchableOpacity
+                    className={`px-4 py-2 ${
+                      calendarView === "day"
+                        ? isDarkMode
+                          ? "bg-[#1A73E8]"
+                          : "bg-[#1A73E8]"
+                        : ""
+                    }`}
+                    onPress={() => setCalendarView("day")}
+                  >
+                    <Text
+                      className={`font-inter_semibold text-sm ${
+                        calendarView === "day"
+                          ? "text-white"
+                          : isDarkMode
+                          ? "text-[#E0E0E0]"
+                          : "text-black"
+                      }`}
+                    >
+                      Day
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    className={`px-4 py-2 ${
+                      calendarView === "week"
+                        ? isDarkMode
+                          ? "bg-[#1A73E8]"
+                          : "bg-[#1A73E8]"
+                        : ""
+                    }`}
+                    onPress={() => setCalendarView("week")}
+                    style={{
+                      borderLeftWidth: 1,
+                      borderRightWidth: 1,
+                      borderColor: isDarkMode ? "#333333" : "#E0E0E0",
+                    }}
+                  >
+                    <Text
+                      className={`font-inter_semibold text-sm ${
+                        calendarView === "week"
+                          ? "text-white"
+                          : isDarkMode
+                          ? "text-[#E0E0E0]"
+                          : "text-black"
+                      }`}
+                    >
+                      Week
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    className={`px-4 py-2 ${
+                      calendarView === "month"
+                        ? isDarkMode
+                          ? "bg-[#1A73E8]"
+                          : "bg-[#1A73E8]"
+                        : ""
+                    }`}
+                    onPress={() => setCalendarView("month")}
+                  >
+                    <Text
+                      className={`font-inter_semibold text-sm ${
+                        calendarView === "month"
+                          ? "text-white"
+                          : isDarkMode
+                          ? "text-[#E0E0E0]"
+                          : "text-black"
+                      }`}
+                    >
+                      Month
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          ) : (
+            // Mobile Header
+            <View
+              className={`flex-row items-center justify-between px-4 py-3 ${
+                isDarkMode ? "bg-[#121212]" : "bg-white"
+              }`}
+              style={{
+                borderBottomWidth: 1,
+                borderBottomColor: isDarkMode ? "#333333" : "#E0E0E0",
+              }}
+            >
+              <Text
+                className={`font-inter_semibold text-lg mr-2 ${
+                  isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                }`}
+              >
+                {selectedDate.format("MMM YYYY")}
+              </Text>
+
+              <View className="flex-row items-center">
+                <TouchableOpacity
+                  className={`rounded-full p-2 mr-1 ${
+                    isDarkMode ? "bg-[#1E1E1E]" : "bg-[#F1F3F4]"
+                  }`}
+                  onPress={() => navigatePeriod("prev")}
+                >
+                  <Text
+                    className={`font-inter_semibold ${
+                      isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                    }`}
+                  >
+                    ‹
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  className={`rounded-md px-3 py-2 mr-1 ${
+                    isDarkMode ? "bg-[#1E1E1E]" : "bg-[#F1F3F4]"
+                  }`}
+                  onPress={() => setSelectedDate(dayjs())}
+                >
+                  <Text
+                    className={`font-inter_semibold text-xs ${
+                      isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                    }`}
+                  >
+                    Today
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  className={`rounded-full p-2 mr-1 ${
+                    isDarkMode ? "bg-[#1E1E1E]" : "bg-[#F1F3F4]"
+                  }`}
+                  onPress={() => navigatePeriod("next")}
+                >
+                  <Text
+                    className={`font-inter_semibold ${
+                      isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                    }`}
+                  >
+                    ›
+                  </Text>
+                </TouchableOpacity>
+
+                {/* View Selector */}
+                <View
+                  className="flex-row rounded-lg overflow-hidden"
+                  style={{
+                    borderWidth: 1,
+                    borderColor: isDarkMode ? "#333333" : "#E0E0E0",
+                  }}
+                >
+                  <TouchableOpacity
+                    className={`px-4 py-2 ${
+                      calendarView === "day"
+                        ? isDarkMode
+                          ? "bg-[#1A73E8]"
+                          : "bg-[#1A73E8]"
+                        : ""
+                    }`}
+                    onPress={() => setCalendarView("day")}
+                  >
+                    <Text
+                      className={`font-inter_semibold text-xs ${
+                        calendarView === "day"
+                          ? "text-white"
+                          : isDarkMode
+                          ? "text-[#E0E0E0]"
+                          : "text-black"
+                      }`}
+                    >
+                      Day
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    className={`px-4 py-2 ${
+                      calendarView === "week"
+                        ? isDarkMode
+                          ? "bg-[#1A73E8]"
+                          : "bg-[#1A73E8]"
+                        : ""
+                    }`}
+                    onPress={() => setCalendarView("week")}
+                    style={{
+                      borderLeftWidth: 1,
+                      borderRightWidth: 1,
+                      borderColor: isDarkMode ? "#333333" : "#E0E0E0",
+                    }}
+                  >
+                    <Text
+                      className={`font-inter_semibold text-xs ${
+                        calendarView === "week"
+                          ? "text-white"
+                          : isDarkMode
+                          ? "text-[#E0E0E0]"
+                          : "text-black"
+                      }`}
+                    >
+                      Week
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    className={`px-4 py-2 ${
+                      calendarView === "month"
+                        ? isDarkMode
+                          ? "bg-[#1A73E8]"
+                          : "bg-[#1A73E8]"
+                        : ""
+                    }`}
+                    onPress={() => setCalendarView("month")}
+                  >
+                    <Text
+                      className={`font-inter_semibold text-xs ${
+                        calendarView === "month"
+                          ? "text-white"
+                          : isDarkMode
+                          ? "text-[#E0E0E0]"
+                          : "text-black"
+                      }`}
+                    >
+                      Month
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          )}
+
+          {/* Calendar View */}
+          <View
+            className="flex-1"
+            style={{ backgroundColor: isDarkMode ? "#0F0F0F" : "#FFFFFF" }}
           >
-            <Text className={`font-inter_semibold ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              ›
-            </Text>
-          </TouchableOpacity>
+            {isLoading ? (
+              <View className="flex-1 items-center justify-center">
+                <ActivityIndicator size="large" color="#1A73E8" />
+                <Text
+                  className={`font-inter_regular mt-4 ${
+                    isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                  }`}
+                >
+                  Loading calendar...
+                </Text>
+              </View>
+            ) : (
+              renderWeekView()
+            )}
+          </View>
+
+          {/* Floating Calendar Button for mobile */}
+          {!showSidebar && (
+            <TouchableOpacity
+              onPress={() => setCalendarPickerVisible(true)}
+              style={{
+                position: "absolute",
+                bottom: 24,
+                right: 24,
+                width: 56,
+                height: 56,
+                borderRadius: 28,
+                backgroundColor: isDarkMode ? "#2C2C2E" : "#FFFFFF",
+                alignItems: "center",
+                justifyContent: "center",
+                shadowColor: "#000",
+                shadowOpacity: 0.3,
+                shadowRadius: 6,
+                shadowOffset: { width: 0, height: 3 },
+                elevation: 6,
+              }}
+            >
+              <CalendarIcon
+                width={24}
+                height={24}
+                color={isDarkMode ? "#FFFFFF" : "#000000"}
+              />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
-      {/* Main Content */}
-      <View className='h-full flex-row'>
-        {/* Sidebar - Today's Schedule with VirtualizedList */}
-        <View
-          className={`p-4 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}
-          style={{
-            borderRightWidth: 1,
-            borderRightColor: isDarkMode ? '#333333' : '#E0E0E0',
-            width: '30%',
-            display: width < 768 ? 'none' : 'flex',
-          }}
-        >
-          <Text className={`font-inter_semibold text-lg mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-            {selectedDate.format('MMM D')} Schedule:
-          </Text>
-          
-          <VirtualizedList
-            data={sidebarListData}
-            initialNumToRender={10}
-            renderItem={renderSidebarItem}
-            keyExtractor={sidebarKeyExtractor}
-            getItemCount={getSidebarItemCount}
-            getItem={getSidebarItem}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ flexGrow: 1 }}
-            removeClippedSubviews={true}
-            maxToRenderPerBatch={5}
-            updateCellsBatchingPeriod={50}
-            windowSize={10}
-          />
-        </View>
-
-        {/* Main Content - Events List with VirtualizedList */}
-        <View 
-          className='p-4 h-full'
-          style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5', width: width < 768 ? '100%' : '70%' }}
-        >
-          <Text className={`font-inter_semibold text-xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'} mb-2`}>
-            Events for {selectedDate.format('MMMM D, YYYY')}
-          </Text>
-          
-          <VirtualizedList
-            data={mainListData}
-            initialNumToRender={5}
-            renderItem={renderMainItem}
-            keyExtractor={mainKeyExtractor}
-            getItemCount={getMainItemCount}
-            getItem={getMainItem}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ flexGrow: 1, paddingBottom: 100 }}
-            removeClippedSubviews={true}
-            maxToRenderPerBatch={3}
-            updateCellsBatchingPeriod={50}
-            windowSize={8}
-          />
-        </View>
-      </View>
-
-      {/* Date Selector Modal */}
+      {/* Calendar Picker Modal */}
       <Modal
-        visible={calendarVisible}
+        visible={calendarPickerVisible}
         animationType="fade"
         transparent={true}
-        onRequestClose={() => setCalendarVisible(false)}
+        onRequestClose={() => setCalendarPickerVisible(false)}
       >
         <Pressable
-          className="flex-1 p-4 justify-center items-center bg-black/50"
-          onPressOut={() => setCalendarVisible(false)}
+          className="flex-1 justify-center items-center bg-black/50"
+          onPress={() => setCalendarPickerVisible(false)}
         >
-          <View className={`p-4 rounded-2xl shadow-lg ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
+          <Pressable
+            className={`w-[90%] max-w-[400px] rounded-lg p-4 ${
+              isDarkMode ? "bg-[#121212]" : "bg-white"
+            }`}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View className="flex-row justify-between items-center mt-2 mb-4">
+              <Text
+                className={`font-inter_bold text-xl ${
+                  isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                }`}
+              >
+                Select Date
+              </Text>
+              <TouchableOpacity onPress={() => setCalendarPickerVisible(false)}>
+                <CloseIcon
+                  width={24}
+                  height={24}
+                  color={isDarkMode ? "#E0E0E0" : "black"}
+                />
+              </TouchableOpacity>
+            </View>
+
             <DatePicker
-              calendar='gregory'
+              calendar="gregory"
               mode="single"
               date={selectedDate}
-              firstDayOfWeek={1}
+              firstDayOfWeek={0}
+              navigationPosition="right"
               onChange={(params) => {
                 if (params?.date) {
                   const newDate = dayjs(params.date);
                   setSelectedDate(newDate);
                 }
-                setCalendarVisible(false);
               }}
-              classNames={{ 
+              classNames={{
                 ...defaultClassNames,
-                today: 'border-amber-500',
-                month_selector_label: `font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`,
-                year_selector_label: `font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`,
-                weekday_label: `font-inter_semibold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`,
-                outside_label: `font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`,
-                day_label: `font-inter_regular text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`,
-                selected_month: 'bg-primary-web rounded-lg',
+                today: "rounded-full",
+                today_label: `font-inter_semibold text-sm ${
+                  isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                }`,
+                month_selector_label: `font-inter_bold text-sm ${
+                  isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                }`,
+                year_selector_label: `font-inter_bold text-sm ${
+                  isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                }`,
+                weekday_label: `font-inter_semibold text-xs ${
+                  isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                }`,
+                outside_label: `font-inter_regular text-sm ${
+                  isDarkMode ? "text-gray-400" : "text-gray-500"
+                }`,
+                day_label: `font-inter_regular text-sm ${
+                  isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                }`,
+                selected_month: "bg-[#1A73E8] rounded-lg",
                 selected_month_label: "font-inter_semibold text-white text-sm",
-                month_label: `font-inter_regular text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`,
-                year_label: `font-inter_regular text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`,
-                selected_year: 'bg-primary-web rounded-lg',
+                month_label: `font-inter_regular text-sm ${
+                  isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                }`,
+                year_label: `font-inter_regular text-sm ${
+                  isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                }`,
+                selected_year: "bg-[#1A73E8] rounded-lg",
                 selected_year_label: "font-inter_semibold text-white text-sm",
-                selected: 'bg-primary-web rounded-full',
+                selected: "bg-[#1A73E8] rounded-full",
                 selected_label: "font-inter_semibold text-white text-sm",
-                disabled: 'opacity-50',
+                disabled: "opacity-50",
               }}
-              className={`max-w-[325px] w-full ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}
+              className={`w-full ${isDarkMode ? "bg-[#121212]" : "bg-white"}`}
               showOutsideDays={true}
               styles={{
-                button_prev_image: {tintColor: isDarkMode ? '#E0E0E0' : 'black'},
-                button_next_image: {tintColor: isDarkMode ? '#E0E0E0' : 'black'},
+                button_prev_image: {
+                  tintColor: isDarkMode ? "#E0E0E0" : "black",
+                },
+                button_next_image: {
+                  tintColor: isDarkMode ? "#E0E0E0" : "black",
+                },
               }}
             />
-          </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Event Detail Modal */}
+      <Modal
+        visible={eventDetailVisible}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setEventDetailVisible(false)}
+      >
+        <Pressable
+          className="flex-1 justify-center items-center bg-black/50"
+          onPress={() => setEventDetailVisible(false)}
+        >
+          <Pressable
+            className={`w-[90%] max-w-[600px] rounded-lg p-6 ${
+              isDarkMode ? "bg-[#121212]" : "bg-white"
+            }`}
+            onPress={(e) => e.stopPropagation()}
+          >
+            {selectedEventForDetail && (
+              <>
+                <View className="flex-row justify-between items-start mb-4">
+                  <View
+                    className="rounded-md px-3 py-1"
+                    style={{
+                      backgroundColor: getEventTypeColor(
+                        selectedEventForDetail.eventType
+                      ),
+                    }}
+                  >
+                    <Text className="font-inter_semibold text-xs text-white">
+                      {selectedEventForDetail.eventType.toUpperCase()}
+                    </Text>
+                  </View>
+
+                  <TouchableOpacity
+                    onPress={() => setEventDetailVisible(false)}
+                  >
+                    <CloseIcon
+                      width={24}
+                      height={24}
+                      color={isDarkMode ? "#E0E0E0" : "black"}
+                    />
+                  </TouchableOpacity>
+                </View>
+
+                <Text
+                  className={`font-inter_bold text-2xl mb-2 ${
+                    isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                  }`}
+                >
+                  {selectedEventForDetail.title}
+                </Text>
+
+                <View className="flex-row items-center mb-3">
+                  <View>
+                    {(selectedEventForDetail as any).isAllDay ? (
+                      <View className="flex-row items-center">
+                        <ColoredCalendarIcon
+                          width={20}
+                          height={20}
+                          className="mr-1"
+                        />
+                        <Text
+                          className={`font-inter_regular text-sm ${
+                            isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                          }`}
+                        >
+                          {formatDateRange(
+                            selectedEventForDetail.startDate,
+                            selectedEventForDetail.endDate
+                          )}
+                        </Text>
+                      </View>
+                    ) : (
+                      <View className="flex-col">
+                        <View className="flex-row items-center">
+                          <ColoredCalendarIcon
+                            width={20}
+                            height={20}
+                            className="mr-1"
+                          />
+                          <Text
+                            className={`font-inter_regular text-sm ${
+                              isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                            }`}
+                          >
+                            {dayjs(selectedEventForDetail.startDate).format(
+                              "MMM DD, YYYY"
+                            )}
+                            {!dayjs(selectedEventForDetail.startDate).isSame(
+                              dayjs(selectedEventForDetail.endDate),
+                              "day"
+                            ) &&
+                              ` - ${dayjs(
+                                selectedEventForDetail.endDate
+                              ).format("MMM DD, YYYY")}`}
+                          </Text>
+                        </View>
+                        <View className="flex-row items-center">
+                          <ColoredTimeIcon
+                            width={20}
+                            height={20}
+                            className="mr-1"
+                          />
+                          <Text
+                            className={`font-inter_regular text-sm ${
+                              isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                            }`}
+                          >
+                            {dayjs(selectedEventForDetail.startDate).format(
+                              "h:mm A"
+                            )}{" "}
+                            -{" "}
+                            {dayjs(selectedEventForDetail.endDate).format(
+                              "h:mm A"
+                            )}
+                          </Text>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                </View>
+
+                <View className="flex-row items-center mb-4">
+                  <View
+                    className="rounded-full px-3 py-1"
+                    style={{
+                      backgroundColor: getPriorityColor(
+                        selectedEventForDetail.priority
+                      ),
+                    }}
+                  >
+                    <Text className="font-inter_semibold text-xs text-white">
+                      {selectedEventForDetail.priority === "high"
+                        ? "🔴 High Priority"
+                        : selectedEventForDetail.priority === "medium"
+                        ? "🟡 Medium Priority"
+                        : "🟢 Low Priority"}
+                    </Text>
+                  </View>
+                </View>
+
+                <Text
+                  className={`font-inter_semibold text-base mb-2 ${
+                    isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                  }`}
+                >
+                  {selectedEventForDetail.header}
+                </Text>
+
+                <ScrollView className="max-h-[200px] mb-4">
+                  <Text
+                    className={`font-inter_regular text-sm ${
+                      isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                    }`}
+                  >
+                    {selectedEventForDetail.body}
+                  </Text>
+                </ScrollView>
+
+                {selectedEventForDetail.images &&
+                  selectedEventForDetail.images.length > 0 && (
+                    <View className="flex-row flex-wrap mb-4">
+                      {selectedEventForDetail.images.map((imageUrl, index) => (
+                        <Pressable
+                          key={index}
+                          onPress={() => {
+                            setSelectedImageUrl(imageUrl);
+                            setImageViewerVisible(true);
+                          }}
+                        >
+                          <Image
+                            source={{ uri: imageUrl }}
+                            style={{
+                              width: 100,
+                              height: 100,
+                              marginRight: 8,
+                              marginBottom: 8,
+                              borderRadius: 8,
+                            }}
+                            contentFit="cover"
+                          />
+                        </Pressable>
+                      ))}
+                    </View>
+                  )}
+
+                <View
+                  className={`rounded-lg p-3 mb-4 ${
+                    isDarkMode ? "bg-[#1E1E1E]" : "bg-[#F1F3F4]"
+                  }`}
+                >
+                  <Text
+                    className={`font-inter_regular text-xs ${
+                      isDarkMode ? "text-gray-400" : "text-gray-500"
+                    } mb-1`}
+                  >
+                    Created by
+                  </Text>
+                  <View className="flex-row items-center">
+                    <Image
+                      source={
+                        selectedEventForDetail.createdBy.profilePicture
+                          ? {
+                              uri: selectedEventForDetail.createdBy
+                                .profilePicture,
+                            }
+                          : require("@/assets/images/sample_profile_picture.png")
+                      }
+                      style={{
+                        width: 32,
+                        height: 32,
+                        marginRight: 8,
+                        borderRadius: 16,
+                      }}
+                      contentFit="cover"
+                    />
+                    <View>
+                      <Text
+                        className={`font-inter_semibold text-sm ${
+                          isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                        }`}
+                      >
+                        {getUserFullName(selectedEventForDetail.createdBy)}
+                      </Text>
+                      <Text
+                        className={`font-inter_regular text-xs ${
+                          isDarkMode ? "text-gray-400" : "text-gray-500"
+                        }`}
+                      >
+                        {dayjs(selectedEventForDetail.createdAt).format(
+                          "MMM D, YYYY h:mm A"
+                        )}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              </>
+            )}
+          </Pressable>
         </Pressable>
       </Modal>
 
@@ -678,16 +1415,16 @@ const CalendarWeb: React.FC = () => {
           {selectedImageUrl && (
             <Image
               source={{ uri: selectedImageUrl }}
-              style={{ width: '90%', height: '90%' }}
-              contentFit='contain'
+              style={{ width: "90%", height: "90%" }}
+              contentFit="contain"
             />
           )}
         </Pressable>
       </Modal>
 
-      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'}/>
+      <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
     </SafeAreaView>
-  )
-}
+  );
+};
 
-export default CalendarWeb
+export default CalendarWeb;

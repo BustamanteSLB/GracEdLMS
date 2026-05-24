@@ -1,4 +1,4 @@
-import { View, Text, useColorScheme, TextInput, Alert, ActivityIndicator, Keyboard, TouchableOpacity } from 'react-native'
+import { View, Text, useColorScheme, TextInput, Alert, ActivityIndicator, Keyboard, TouchableOpacity, Platform } from 'react-native'
 import React, { useEffect, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useDarkMode } from '@/contexts/DarkModeContext';
@@ -7,14 +7,17 @@ import { cssInterop } from 'nativewind';
 import { Image } from 'expo-image';
 import { ScrollView } from 'react-native-gesture-handler';
 import { Picker } from '@react-native-picker/picker';
-import CustomButton from '@/components/CustomButton';
 import { useRouter } from 'expo-router';
 import apiClient, { ApiResponse } from '@/app/services/apiClient';
-import { useAuth } from '@/contexts/AuthContext'; // Import useAuth
+import { useAuth } from '@/contexts/AuthContext';
 import { User } from '@/app/types';
+import * as ImagePicker from 'expo-image-picker';
+import DropdownMobile, { DropdownMobileItem } from '@/components/DropdownMobile';
+import DownIcon from '@/assets/icons/down.svg';
+
+cssInterop(Image, { className: "style" });
 
 const EditProfileAndroid = () => {
-
   const colorScheme = useColorScheme();
   const { isDarkMode } = useDarkMode();
   const router = useRouter();
@@ -23,27 +26,106 @@ const EditProfileAndroid = () => {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
 
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [isSecure, setSecure] = useState(true);
+  const [isConfirmSecure, setConfirmSecure] = useState(true);
 
-  const sexList = [
-    { label: 'Male', value: 'Male' },
-    { label: 'Female', value: 'Female' },
-    { label: 'Other', value: 'Other' },
-  ];
-
-  const [profilePicture, setProfilePicture] = useState('')
-  const [sex, setSex] = useState<'Male' | 'Female' | 'Other'>('Male');
+  const [profilePicture, setProfilePicture] = useState('');
+  const [sex, setSex] = useState<string>('Male');
   const [email, setEmail] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [address, setAddress] = useState('');
 
-useEffect(() => {
+  const toggleSecure = () => setSecure(prev => !prev);
+  const toggleConfirmSecure = () => setConfirmSecure(prev => !prev);
+
+  // Function to handle image upload to Firebase
+  const handleImageUpload = async () => {
+    try {
+      setIsUploadingImage(true);
+
+      // Mobile image picker
+      try {
+        const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        
+        if (permissionResult.granted === false) {
+          Alert.alert('Permission Required', 'Permission to access camera roll is required!');
+          setIsUploadingImage(false);
+          return;
+        }
+
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: true,
+          aspect: [1, 1],
+          quality: 0.8,
+        });
+
+        if (result.canceled) {
+          // User cancelled image selection
+          setIsUploadingImage(false);
+          return;
+        }
+
+        if (result.assets && result.assets[0]) {
+          const asset = result.assets[0];
+          
+          // Create FormData for mobile
+          const formData = new FormData();
+          formData.append('profileImage', {
+            uri: asset.uri,
+            type: asset.mimeType || 'image/jpeg',
+            name: asset.fileName || 'profile.jpg',
+          } as any);
+
+          try {
+            // Use the new auth route for user profile picture upload
+            const response = await apiClient.post('/auth/upload-profile-picture', formData, {
+              headers: {
+                'Content-Type': 'multipart/form-data',
+              },
+            });
+
+            if (response.data.success) {
+              setProfilePicture(response.data.data.url);
+              // Refresh user data to get updated profile picture
+              await fetchCurrentUser();
+              Alert.alert('Success', 'Profile picture uploaded and updated successfully!');
+            } else {
+              Alert.alert('Upload Failed', response.data.message);
+            }
+          } catch (error: any) {
+            console.error('Upload error:', error);
+            Alert.alert('Upload Failed', error.response?.data?.message || error.message);
+          }
+        }
+      } catch (error: any) {
+        console.error('Image picker error:', error);
+        Alert.alert('Error', error.message);
+      } finally {
+        setIsUploadingImage(false);
+      }
+    } catch (error: any) {
+      console.error('Image upload error:', error);
+      Alert.alert('Error', error.message);
+      setIsUploadingImage(false);
+    }
+  };
+
+  useEffect(() => {
     if (user) {
-      setProfilePicture(user.profilePicture || '')
+      setProfilePicture(user.profilePicture || '');
       setEmail(user.email || '');
-      setPhoneNumber(user.phoneNumber || '');
+      // Handle phone number - remove +63 prefix if present for display
+      const phoneNum = user.phoneNumber || '';
+      if (phoneNum.startsWith('+63')) {
+        setPhoneNumber(phoneNum.substring(3));
+      } else {
+        setPhoneNumber(phoneNum);
+      }
       setAddress(user.address || '');
       setSex(user.sex || 'Male');
       setLoading(false);
@@ -62,11 +144,12 @@ useEffect(() => {
     let errorMessages: string[] = [];
 
     try {
+      // Update profile details
       const updatedData: { [key: string]: any } = {
         profilePicture,
-        email,
-        phoneNumber,
-        address,
+        email: email && email.trim() !== '' ? email.trim() : undefined,
+        phoneNumber: phoneNumber && phoneNumber.trim() !== '' ? `+63${phoneNumber}` : undefined,
+        address: address && address.trim() !== '' ? address.trim() : undefined,
         sex,
       };
       
@@ -78,6 +161,7 @@ useEffect(() => {
       errorMessages.push(err.response?.data?.message || 'Failed to update profile details.');
     }
 
+    // Handle password update separately
     if (newPassword !== '' || confirmNewPassword !== '') {
       if (newPassword === '') {
         errorMessages.push('New password cannot be empty.');
@@ -85,17 +169,46 @@ useEffect(() => {
         errorMessages.push('New passwords do not match.');
       } else if (newPassword.length < 8) {
         errorMessages.push('New password must be at least 8 characters long.');
-      }
-
-      if (errorMessages.length === 0) {
+      } else {
+        // Check if new password is same as current password
         try {
-          await apiClient.put('/auth/updatepassword', { currentPassword: 'users_current_password', newPassword });
-          successMessages.push('Password updated successfully!');
-          setNewPassword('');
-          setConfirmNewPassword('');
+          // First verify the new password against current password
+          const verifyResponse = await apiClient.post('/auth/verify-password', { 
+            password: newPassword 
+          });
+          
+          if (verifyResponse.data.success && verifyResponse.data.data.isMatch) {
+            errorMessages.push('New password cannot be the same as your current password.');
+          } else {
+            // Password is different, proceed with update
+            try {
+              await apiClient.put('/auth/reset-my-password', { newPassword });
+              successMessages.push('Password updated successfully!');
+              setNewPassword('');
+              setConfirmNewPassword('');
+            } catch (err: any) {
+              console.error('Error updating password:', err.response?.data || err.message);
+              errorMessages.push(err.response?.data?.message || 'Failed to update password.');
+            }
+          }
         } catch (err: any) {
-          console.error('Error updating password:', err.response?.data || err.message);
-          errorMessages.push(err.response?.data?.message || 'Failed to update password.');
+          // If verify endpoint fails, it might mean password is different or endpoint error
+          // Proceed with password update
+          if (err.response?.status === 401) {
+            // Password is different, proceed
+            try {
+              await apiClient.put('/auth/reset-my-password', { newPassword });
+              successMessages.push('Password updated successfully!');
+              setNewPassword('');
+              setConfirmNewPassword('');
+            } catch (updateErr: any) {
+              console.error('Error updating password:', updateErr.response?.data || updateErr.message);
+              errorMessages.push(updateErr.response?.data?.message || 'Failed to update password.');
+            }
+          } else {
+            console.error('Error verifying password:', err.response?.data || err.message);
+            errorMessages.push('Failed to verify password. Please try again.');
+          }
         }
       }
     }
@@ -103,185 +216,588 @@ useEffect(() => {
     setSubmitting(false);
 
     if (successMessages.length > 0 && errorMessages.length === 0) {
-      Alert.alert('Success', successMessages.join('\n')); // Replaced window.alert
-      router.replace('/(students)/profile'); // Corrected navigation path
+      Alert.alert('Success', successMessages.join('\n'));
+      router.replace('/(students)/profile');
     } else if (errorMessages.length > 0) {
-      Alert.alert('Error', errorMessages.join('\n')); // Replaced window.alert
+      Alert.alert('Error', errorMessages.join('\n'));
     } else {
-      Alert.alert('No Changes', 'No updates were submitted.'); // Replaced window.alert
+      Alert.alert('No Changes', 'No updates were submitted.');
     }
+  };
+
+  const handleBack = () => {
+    router.push('/(students)/profile');
   };
 
   if (loading || authIsLoading) {
     return (
-      <SafeAreaView className={`flex-1 items-center justify-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-        <ActivityIndicator size="large" color={isDarkMode ? '#E0E0E0}' : '#000000'} />
-        <Text className={`font-inter_regular mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-          Loading Profile data...
-        </Text>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'black' : 'white'} />
+      <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' }}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color="#3B82F6" />
+          <Text style={{
+            fontFamily: 'Inter-Regular',
+            marginTop: 16,
+            fontSize: 14,
+            color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+          }}>
+            Loading Profile data...
+          </Text>
+        </View>
+        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       </SafeAreaView>
     );
   }
 
   if (error && !user) {
     return (
-      <SafeAreaView className={`flex-1 items-center justify-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-        <Text className={`font-inter_regular text-center text-red-500 ${isDarkMode ? 'text-red-400' : 'text-red-600'}`}>
-          Error: {error}
-        </Text>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'black' : 'white'} />
+      <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' }}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <View style={{
+            backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+            borderRadius: 12,
+            padding: 24,
+            alignItems: 'center',
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.1,
+            shadowRadius: 8,
+            elevation: 4,
+          }}>
+            <Image
+              source={require('@/assets/icons/error.png')}
+              style={{ width: 64, height: 64, marginBottom: 16 }}
+              tintColor="#F44336"
+              contentFit="contain"
+            />
+            <Text style={{
+              fontSize: 18,
+              fontFamily: 'Inter-Bold',
+              color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+              textAlign: 'center',
+              marginBottom: 8,
+            }}>
+              Profile Loading Failed
+            </Text>
+            <Text style={{
+              fontSize: 14,
+              fontFamily: 'Inter-Regular',
+              color: '#F44336',
+              textAlign: 'center',
+              marginBottom: 20,
+            }}>
+              {error}
+            </Text>
+            <TouchableOpacity
+              onPress={handleBack}
+              style={{
+                backgroundColor: '#1877F2',
+                borderRadius: 8,
+                paddingVertical: 12,
+                paddingHorizontal: 24,
+              }}
+            >
+              <Text style={{
+                color: '#FFFFFF',
+                fontSize: 16,
+                fontFamily: 'Inter-SemiBold',
+              }}>
+                Go Back
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       </SafeAreaView>
     );
   }
 
+  // Determine full name with optional middle name
+  const fullName = user?.middleName
+    ? `${user?.firstName} ${user?.middleName} ${user?.lastName}`
+    : `${user?.firstName} ${user?.lastName}`;
+
   return (
-    <SafeAreaView className='flex-1 h-full bg-primary-android'>
-      <ScrollView contentContainerStyle={{ 
-        flexGrow: 1, 
-        alignItems: 'center', 
-        justifyContent: 'center', 
-        padding: 16 
-      }}>
-        <View className={`w-full max-w-3xl rounded-xl p-4 ${isDarkMode ? 'bg-[#121212] shadow-none' : 'bg-white shadow-lg'}`}>
-          <Text className={`font-inter_bold text-center text-xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-            Edit Your Profile
-          </Text>
-        
-          <Text className={`ml-2 mt-4 mb-1 font-inter_semibold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-            Profile Picture URL:
-          </Text>
-          <View className={`flex-row items-center border rounded-xl mb-2 px-3 py-2 
-            ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>  
-            <TextInput
-              className={`flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
-              placeholder="Image Url (e.g. https://example.com/image.jpg)"
-              placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-              autoCapitalize="none"
-              selectionColor="#22C55E"
-              value={profilePicture}
-              onChangeText={setProfilePicture}
-            />
-          </View>
-          <Text className={`ml-2 mb-1 font-inter_semibold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-            Email:
-          </Text>
-          <View className={`flex-row items-center border rounded-xl mb-2 px-3 py-2 
-            ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>  
-            <TextInput
-              className={`flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
-              placeholder="Image Url (e.g. https://example.com/image.jpg)"
-              placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-              autoCapitalize="none"
-              selectionColor="#22C55E"
-              value={email}
-              onChangeText={setEmail}
-            />
-          </View>
-          <Text className={`ml-2 mb-1 font-inter_semibold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-            Sex:
-          </Text>
-          <View className={`overflow-hidden border rounded-xl mb-2 ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>
-            <Picker
-              style={{ backgroundColor: isDarkMode ? '#1E1E1E' : 'white', color: isDarkMode ? '#E0E0E0' : 'black', height: 55, width: '100%', fontFamily: 'Inter-18pt-Regular', fontSize: 16, padding: 12 }}
-              selectedValue={sex}
-              onValueChange={(itemValue) => setSex(itemValue)}
-              dropdownIconColor={isDarkMode ? '#E0E0E0' : 'black'}
-              mode='dropdown'
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' }}>
+      <ScrollView 
+        contentContainerStyle={{
+          flexGrow: 1,
+          paddingVertical: 20,
+          paddingHorizontal: 16,
+        }}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Header */}
+        <View style={{
+          backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+          borderRadius: 12,
+          padding: 20,
+          marginBottom: 16,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.1,
+          shadowRadius: 8,
+          elevation: 4,
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+            <TouchableOpacity
+              onPress={handleBack}
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 20,
+                backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                justifyContent: 'center',
+                alignItems: 'center',
+                marginRight: 12,
+              }}
             >
-              <Picker.Item label="Select Sex" value="" style={{ fontFamily:'Inter-18pt-Regular', fontSize: 16}} />
-                {sexList.map((option) => (
-                  <Picker.Item key={option.value} label={option.label} value={option.value} style={{ fontFamily: 'Inter-18pt-Regular', fontSize: 16 }}  />
-              ))}
-            </Picker>
+              <Image
+                source={require('@/assets/icons/back.png')}
+                style={{ width: 20, height: 20 }}
+                tintColor={isDarkMode ? '#E4E6EA' : '#1C1E21'}
+                contentFit="contain"
+              />
+            </TouchableOpacity>
+            <View style={{ flex: 1 }}>
+              <Text style={{
+                fontSize: 24,
+                fontFamily: 'Inter-Bold',
+                color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+              }}>
+                Edit Your Profile
+              </Text>
+              <Text style={{
+                fontSize: 15,
+                fontFamily: 'Inter-Regular',
+                color: isDarkMode ? '#B0B3B8' : '#65676B',
+                marginTop: 2,
+              }}>
+                Update your personal information and settings
+              </Text>
+            </View>
           </View>
-          <Text className={`ml-2 mb-1 font-inter_semibold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-            New Password:
-          </Text>
-          <View className={`flex-row items-center border rounded-xl mb-2 px-3 py-2 h-[55px]
-            ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>  
-            <TextInput
-              className={`flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
-              placeholder="Enter new password"
-              placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-              autoCapitalize="none"
-              selectionColor="#22C55E"
-              value={newPassword}
-              onChangeText={setNewPassword}
-              secureTextEntry
-            />
-          </View>
-          <Text className={`ml-2 mb-1 font-inter_semibold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-            Confirm Password:
-          </Text>
-          <View className={`flex-row items-center border rounded-xl mb-2 px-3 py-2 h-[55px]
-            ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>  
-            <TextInput
-              className={`flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
-              placeholder="Confirm new password"
-              placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-              autoCapitalize="none"
-              selectionColor="#22C55E"
-              value={confirmNewPassword}
-              onChangeText={setConfirmNewPassword}
-              secureTextEntry
-            />
-          </View>
-          <Text className={`ml-2 mb-1 font-inter_semibold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-            Phone Number:
-          </Text>
-          <View className={`flex-row items-center border rounded-xl mb-2 px-3 py-2 h-[55px]
-            ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>  
-            <TextInput
-              className={`flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
-              placeholder="Enter phone number"
-              keyboardType="phone-pad"
-              placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-              autoCapitalize="none"
-              selectionColor="#22C55E"
-              value={phoneNumber}
-              onChangeText={setPhoneNumber}
-              maxLength={16}
-            />
-          </View>
-          <Text className={`ml-2 mb-2 font-inter_regular text-xs ${isDarkMode ? 'text-red-500' : 'text-red-600'}`}>
-            Format: +639XXXXXXXXX or 09XXXXXXXXX
-          </Text>
-          <Text className={`ml-2 mb-1 font-inter_semibold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-            Address:
-          </Text>
-          <View className={`flex-row items-center border rounded-xl mb-2 px-3 py-2 
-            ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>  
-            <TextInput
-              className={`flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
-              placeholder="Enter address"
-              placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-              autoCapitalize="none"
-              multiline={true}
-              selectionColor="#22C55E"
-              value={address}
-              onChangeText={setAddress}
-            />
-          </View>
-          
-          <CustomButton
-            containerStyles='bg-secondary-android h-[55px] mt-2'
-            handlePress={handleEditProfile}
-            title={submitting ? 'Updating' : 'Save Changes'}
-            isLoading={submitting}
-          />
-          <TouchableOpacity
-            className='bg-gray-400 rounded-xl h-[55px] w-full justify-center items-center p-2 mt-4'
-            onPress={() => router.push('/(students)/profile')}
-            activeOpacity={0.7}
-          >
-            <Text className='text-black font-psemibold text-lg'>
-              Back to Profile
+        </View>
+
+        {/* Main Form Container */}
+        <View style={{
+          backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+          borderRadius: 12,
+          padding: 20,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.1,
+          shadowRadius: 8,
+          elevation: 4,
+        }}>
+          {/* Profile Picture Section */}
+          <View style={{ alignItems: 'center', marginBottom: 24 }}>
+            <View style={{
+              width: 120,
+              height: 120,
+              borderRadius: 60,
+              backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+              justifyContent: 'center',
+              alignItems: 'center',
+              marginBottom: 12,
+              overflow: 'hidden',
+            }}>
+              {profilePicture ? (
+                <Image
+                  source={{ uri: profilePicture }}
+                  style={{ width: 120, height: 120, borderRadius: 60 }}
+                  contentFit="cover"
+                />
+              ) : (
+                <Image
+                  source={require('@/assets/icons/account.png')}
+                  style={{ width: 40, height: 40 }}
+                  tintColor={isDarkMode ? '#B0B3B8' : '#65676B'}
+                  contentFit="contain"
+                />
+              )}
+            </View>
+            
+            {/* User Name Display */}
+            <Text style={{
+              fontSize: 18,
+              fontFamily: 'Inter-Bold',
+              color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+              textAlign: 'center',
+              marginBottom: 4,
+            }}>
+              {fullName}
             </Text>
-          </TouchableOpacity>
+            
+            <View style={{
+              backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+              borderRadius: 16,
+              marginBottom: 12,
+            }}>
+              <Text style={{
+                fontSize: 14,
+                fontFamily: 'Inter-SemiBold',
+                color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+              }}>
+                ID: {user?.userId}
+              </Text>
+            </View>
+            
+            <TouchableOpacity
+              onPress={handleImageUpload}
+              disabled={isUploadingImage}
+              style={{
+                backgroundColor: '#1877F2',
+                paddingHorizontal: 16,
+                paddingVertical: 8,
+                borderRadius: 20,
+                flexDirection: 'row',
+                alignItems: 'center',
+                opacity: isUploadingImage ? 0.7 : 1,
+              }}
+            >
+              {isUploadingImage ? (
+                <>
+                  <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                  <Text style={{
+                    fontSize: 14,
+                    fontFamily: 'Inter-SemiBold',
+                    color: '#FFFFFF',
+                  }}>
+                    Uploading...
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Image
+                    source={require('@/assets/icons/camera.png')}
+                    style={{ width: 16, height: 16, marginRight: 8 }}
+                    tintColor="#FFFFFF"
+                    contentFit="contain"
+                  />
+                  <Text style={{
+                    fontSize: 14,
+                    fontFamily: 'Inter-SemiBold',
+                    color: '#FFFFFF',
+                  }}>
+                    {profilePicture ? 'Change Photo' : 'Add Photo'}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          {/* Form Fields */}
+          <View style={{ gap: 16 }}>
+            {/* Email */}
+            <View>
+              <Text style={{
+                fontSize: 14,
+                fontFamily: 'Inter-SemiBold',
+                color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                marginBottom: 8,
+              }}>
+                Email Address
+              </Text>
+              <TextInput
+                style={{
+                  backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                  borderRadius: 8,
+                  paddingHorizontal: 16,
+                  paddingVertical: 12,
+                  fontSize: 16,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  borderWidth: 1,
+                  borderColor: 'transparent',
+                }}
+                placeholder="Enter email address"
+                placeholderTextColor={isDarkMode ? '#8A8D91' : '#8A8D91'}
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+            </View>
+
+            {/* Sex */}
+            <View>
+              <Text style={{
+                fontSize: 14,
+                fontFamily: 'Inter-SemiBold',
+                color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                marginBottom: 8,
+              }}>
+                Gender
+              </Text>
+              <DropdownMobile
+                label="Gender"
+                selectedValue={sex}
+                onValueChange={(value) => setSex(value as 'Male' | 'Female' | 'Other')}
+                items={[
+                  { label: 'Male', value: 'Male' },
+                  { label: 'Female', value: 'Female' },
+                  { label: 'Other', value: 'Other' },
+                ]}
+                placeholder="Select Gender"
+                buttonRightIcon={DownIcon}
+              />
+            </View>
+
+            {/* Password Fields */}
+            <View>
+              <Text style={{
+                fontSize: 14,
+                fontFamily: 'Inter-SemiBold',
+                color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                marginBottom: 8,
+              }}>
+                New Password
+              </Text>
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                borderRadius: 8,
+              }}>
+                <TextInput
+                  style={{
+                    flex: 1,
+                    fontSize: 16,
+                    fontFamily: 'Inter-Regular',
+                    color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                    borderRadius: 8,
+                    paddingHorizontal: 16,
+                    paddingVertical: 12,
+                  }}
+                  placeholder="Enter new password"
+                  placeholderTextColor={isDarkMode ? '#8A8D91' : '#8A8D91'}
+                  value={newPassword}
+                  onChangeText={setNewPassword}
+                  secureTextEntry={isSecure}
+                  maxLength={30}
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity onPress={toggleSecure} style={{ marginHorizontal: 12 }}>
+                  <Image
+                    source={isSecure ? require('@/assets/icons/show_password.png') : require('@/assets/icons/hide_password.png')}
+                    style={{ width: 20, height: 20 }}
+                    tintColor={isDarkMode ? '#B0B3B8' : '#65676B'}
+                    contentFit="contain"
+                  />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View>
+              <Text style={{
+                fontSize: 14,
+                fontFamily: 'Inter-SemiBold',
+                color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                marginBottom: 8,
+              }}>
+                Confirm New Password
+              </Text>
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                borderRadius: 8,
+              }}>
+                <TextInput
+                  style={{
+                    flex: 1,
+                    fontSize: 16,
+                    fontFamily: 'Inter-Regular',
+                    color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                    borderRadius: 8,
+                    paddingHorizontal: 16,
+                    paddingVertical: 12,
+                  }}
+                  placeholder="Confirm new password"
+                  placeholderTextColor={isDarkMode ? '#8A8D91' : '#8A8D91'}
+                  value={confirmNewPassword}
+                  onChangeText={setConfirmNewPassword}
+                  secureTextEntry={isConfirmSecure}
+                  maxLength={30}
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity onPress={toggleConfirmSecure} style={{ marginHorizontal: 12 }}>
+                  <Image
+                    source={isConfirmSecure ? require('@/assets/icons/show_password.png') : require('@/assets/icons/hide_password.png')}
+                    style={{ width: 20, height: 20 }}
+                    tintColor={isDarkMode ? '#B0B3B8' : '#65676B'}
+                    contentFit="contain"
+                  />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Phone Number */}
+            <View>
+              <Text style={{
+                fontSize: 14,
+                fontFamily: 'Inter-SemiBold',
+                color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                marginBottom: 8,
+              }}>
+                Phone Number
+              </Text>
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                borderRadius: 8,
+                paddingHorizontal: 16,
+                paddingVertical: 12,
+              }}>
+                <Text style={{
+                  fontSize: 16,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  marginRight: 8,
+                }}>
+                  +63
+                </Text>
+                <TextInput
+                  style={{
+                    flex: 1,
+                    fontSize: 16,
+                    fontFamily: 'Inter-Regular',
+                    color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  }}
+                  placeholder="Enter phone number"
+                  placeholderTextColor={isDarkMode ? '#8A8D91' : '#8A8D91'}
+                  value={phoneNumber}
+                  onChangeText={(text) => {
+                    const numericText = text.replace(/[^0-9]/g, '');
+                    setPhoneNumber(numericText);
+                  }}
+                  maxLength={10}
+                  keyboardType="numeric"
+                />
+              </View>
+            </View>
+
+            {/* Address */}
+            <View>
+              <Text style={{
+                fontSize: 14,
+                fontFamily: 'Inter-SemiBold',
+                color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                marginBottom: 8,
+              }}>
+                Address
+              </Text>
+              <TextInput
+                style={{
+                  backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                  borderRadius: 8,
+                  paddingHorizontal: 16,
+                  paddingVertical: 12,
+                  fontSize: 16,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  borderWidth: 1,
+                  borderColor: 'transparent',
+                  minHeight: 80,
+                }}
+                placeholder="Enter complete address"
+                placeholderTextColor={isDarkMode ? '#8A8D91' : '#8A8D91'}
+                value={address}
+                onChangeText={setAddress}
+                multiline
+                textAlignVertical="top"
+              />
+            </View>
+          </View>
+
+          {/* Info Banner */}
+          <View style={{
+            backgroundColor: isDarkMode ? '#263A52' : '#E3F2FD',
+            borderRadius: 8,
+            padding: 16,
+            marginTop: 24,
+            marginBottom: 24,
+            borderLeftWidth: 4,
+            borderLeftColor: '#1877F2',
+          }}>
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+              <Image
+                source={require('@/assets/icons/info.png')}
+                style={{ width: 20, height: 20, marginRight: 12, marginTop: 2 }}
+                tintColor="#1877F2"
+                contentFit="contain"
+              />
+              <Text style={{
+                fontSize: 14,
+                fontFamily: 'Inter-Regular',
+                color: isDarkMode ? '#9BD1FF' : '#1565C0',
+                flex: 1,
+                lineHeight: 20,
+              }}>
+                Leave password fields empty to keep current password. Email, phone number, and address are optional fields.
+              </Text>
+            </View>
+          </View>
+
+          {/* Action Buttons */}
+          <View style={{ gap: 12 }}>
+            <TouchableOpacity
+              onPress={handleEditProfile}
+              disabled={submitting}
+              style={{
+                backgroundColor: submitting ? (isDarkMode ? '#1565C0' : '#1565C0') : '#1877F2',
+                borderRadius: 8,
+                padding: 16,
+                alignItems: 'center',
+                opacity: submitting ? 0.7 : 1,
+              }}
+            >
+              {submitting ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                  <Text style={{
+                    fontSize: 16,
+                    fontFamily: 'Inter-SemiBold',
+                    color: '#FFFFFF',
+                  }}>
+                    Updating...
+                  </Text>
+                </View>
+              ) : (
+                <Text style={{
+                  fontSize: 16,
+                  fontFamily: 'Inter-SemiBold',
+                  color: '#FFFFFF',
+                }}>
+                  Save Changes
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleBack}
+              style={{
+                backgroundColor: isDarkMode ? '#3A3B3C' : '#E4E6EA',
+                borderRadius: 8,
+                padding: 16,
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{
+                fontSize: 16,
+                fontFamily: 'Inter-SemiBold',
+                color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+              }}>
+                Cancel
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </ScrollView>
-      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'}/>
+      <StatusBar style={isDarkMode ? 'light' : 'dark'} />
     </SafeAreaView>
   )
 }

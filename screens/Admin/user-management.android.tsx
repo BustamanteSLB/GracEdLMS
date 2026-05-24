@@ -1,6 +1,6 @@
-import { Text, View, useColorScheme, ActivityIndicator, VirtualizedList, TouchableOpacity, Modal, Platform, TextInput } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { Text, View, ScrollView, useColorScheme, ActivityIndicator, TouchableOpacity, Modal, TextInput, Alert } from 'react-native'
+import { FlashList } from '@shopify/flash-list'
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import { StatusBar } from 'expo-status-bar'
 import { useDarkMode } from '@/contexts/DarkModeContext'
 import { cssInterop } from 'nativewind'
@@ -12,14 +12,127 @@ import DeleteIcon from '@/assets/icons/delete.svg';
 import { router } from 'expo-router'
 import { Picker } from '@react-native-picker/picker'
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
-import { FlashList } from '@shopify/flash-list'
+import * as FileSystem from 'expo-file-system/legacy';
+import * as MediaLibrary from 'expo-media-library';
+import * as Sharing from 'expo-sharing';
+import DropdownMobile, { DropdownMobileItem } from '@/components/DropdownMobile';
+
+// Add DownIcon import
+import DownIcon from '@/assets/icons/down.svg';
 
 cssInterop(Image, { className: "style" });
 
+// Update downloadSampleExcel function - remove web implementation
+const downloadSampleExcel = async () => {
+  try {
+    // Sample data structure that matches the backend requirements
+    const sampleData = [
+      // Header row
+      ['userId', 'username', 'firstName', 'middleName', 'lastName', 'email', 'password', 'phoneNumber', 'address', 'role', 'sex'],
+      // Sample data rows
+      ['STU-2024-001', 'jsmith', 'John', 'Michael', 'Smith', 'john.smith@example.com', 'password123', '9123456789', '123 Main St, City, Province', 'Student', 'Male'],
+      ['TEA-2024-001', 'mjohnson', 'Mary', '', 'Johnson', 'mary.johnson@example.com', 'securepass456', '9987654321', '456 Oak Ave, City, Province', 'Teacher', 'Female'],
+      ['ADM-2024-001', 'rbrown', 'Robert', 'James', 'Brown', '', 'adminpass789', '', '', 'Admin', 'Male'],
+      ['STU-2024-002', 'sdavis', 'Sarah', 'Ann', 'Davis', '', 'studentpass', '9555123456', '789 Pine St, City, Province', 'Student', 'Female'],
+    ];
+
+    // Create CSV content
+    const csvContent = sampleData.map(row => row.join(',')).join('\n');
+    const fileName = 'User_Import_Template.csv';
+    const fileUri = FileSystem.documentDirectory + fileName;
+    
+    // Write file to app directory first
+    await FileSystem.writeAsStringAsync(fileUri, csvContent);
+    
+    // Check if sharing is available
+    const isAvailable = await Sharing.isAvailableAsync();
+    
+    if (isAvailable) {
+      // Use sharing to let user save/share the file
+      await Sharing.shareAsync(fileUri, {
+        mimeType: 'text/csv',
+        dialogTitle: 'Save User Import Template',
+        UTI: 'public.comma-separated-values-text'
+      });
+      
+      Alert.alert(
+        'Template Ready', 
+        'Sample template has been prepared. You can now save it to your device or share it.',
+        [{ text: 'OK' }]
+      );
+    } else {
+      // Fallback: Try to save to Downloads folder using MediaLibrary
+      try {
+        // Request permissions
+        const { status } = await MediaLibrary.requestPermissionsAsync();
+        
+        if (status === 'granted') {
+          // Create asset from file
+          const asset = await MediaLibrary.createAssetAsync(fileUri);
+          
+          // Try to save to Downloads album
+          let album = await MediaLibrary.getAlbumAsync('Download');
+          if (album == null) {
+            album = await MediaLibrary.createAlbumAsync('Download', asset, false);
+          } else {
+            await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
+          }
+          
+          Alert.alert(
+            'Success', 
+            'Sample template saved to Downloads folder.',
+            [{ text: 'OK' }]
+          );
+        } else {
+          // Permission denied, show file location
+          Alert.alert(
+            'Template Created', 
+            `Sample template created at: ${fileUri}\n\nTo access this file, you may need to use a file manager app.`,
+            [{ text: 'OK' }]
+          );
+        }
+      } catch (mediaError) {
+        console.error('MediaLibrary error:', mediaError);
+        
+        // Final fallback - just show the file location
+        Alert.alert(
+          'Template Created', 
+          `Sample template created at: ${fileUri}\n\nTo access this file, you may need to use a file manager app or try the share option in your device.`,
+          [{ text: 'OK' }]
+        );
+      }
+    }
+    
+  } catch (error) {
+    console.error('Error creating sample file:', error);
+    Alert.alert('Error', 'Error creating sample file. Please try again.');
+  }
+};
+
 const UserManageAndroid = () => {
 
-  // AddUserModal component
+  // Pagination interface
+  interface PaginationInfo {
+    currentPage: number;
+    totalPages: number;
+    totalItems: number;
+    itemsPerPage: number;
+    hasNext: boolean;
+    hasPrev: boolean;
+  }
+
+  // Enhanced API response interface with pagination
+  interface UserListApiResponse extends ApiResponse {
+    data?: User[];
+    count?: number;
+    total?: number;
+    pagination?: {
+      next?: { page: number; limit: number };
+      prev?: { page: number; limit: number };
+    };
+  }
+
+  // AddUserModal component (Facebook-inspired design)
   interface AddUserModalProps {
     isVisible: boolean;
     onClose: () => void;
@@ -28,7 +141,6 @@ const UserManageAndroid = () => {
   }
 
   const AddUserModal: React.FC<AddUserModalProps> = ({ isVisible, onClose, onSubmitBulkFile, isDarkMode }) => {
-
     const [pickedFile, setPickedFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [modalError, setModalError] = useState<string | null>(null);
@@ -58,12 +170,11 @@ const UserManageAndroid = () => {
     };
 
     const handleSubmitFile = async () => {
-      if (!pickedFile || (!pickedFile.uri && !pickedFile.file)) {
+      if (!pickedFile || !pickedFile.uri) {
         setModalError('Please select an Excel file first.');
         return;
       }
 
-      // Validate file type
       const fileName = pickedFile.name.toLowerCase();
       const isExcelFile = fileName.endsWith('.xlsx') || fileName.endsWith('.xls') || 
                          pickedFile.mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
@@ -78,34 +189,21 @@ const UserManageAndroid = () => {
       setModalError(null);
 
       try {
-        // For Excel files, we need to send them as FormData to the backend
-        // The backend will handle parsing the Excel file using exceljs
         const formData = new FormData();
 
-        if (Platform.OS === 'web') {
-          // On web, use the File object
-          const webFile = pickedFile.file;
-          if (webFile) {
-            formData.append('excelFile', webFile);
-          } else {
-            throw new Error('File object not available for web.');
-          }
-        } else {
-          // On native platforms, create a file object from URI
-          const fileInfo = await FileSystem.getInfoAsync(pickedFile.uri!);
-          if (!fileInfo.exists) {
-            throw new Error('File does not exist.');
-          }
-
-          const fileToUpload = {
-            uri: pickedFile.uri,
-            type: pickedFile.mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            name: pickedFile.name,
-          };
-          formData.append('excelFile', fileToUpload as any);
+        // Mobile implementation only
+        const fileInfo = await FileSystem.getInfoAsync(pickedFile.uri);
+        if (!fileInfo.exists) {
+          throw new Error('File does not exist.');
         }
 
-        // Send the Excel file to the backend for processing
+        const fileToUpload = {
+          uri: pickedFile.uri,
+          type: pickedFile.mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          name: pickedFile.name,
+        };
+        formData.append('excelFile', fileToUpload as any);
+
         const response = await apiClient.post('/users/bulk-excel', formData, {
           headers: {
             'Content-Type': 'multipart/form-data',
@@ -119,21 +217,14 @@ const UserManageAndroid = () => {
             if (response.data.data?.failedCount && response.data.data.failedCount > 0) {
               successMessage += ` ${response.data.data.failedCount} failed. Check console for details.`;
               console.warn('Bulk import failures:', response.data.data.errors);
-              if (Platform.OS === 'web') {
-                window.alert(successMessage + '\nSome users failed to import. See console for details.');
-              }
+              Alert.alert('Partial Success', successMessage + '\nSome users failed to import. See console for details.');
             } else {
-              if (Platform.OS === 'web') {
-                window.alert(successMessage);
-              }
+              Alert.alert('Success', successMessage);
             }
           } else {
-            if (Platform.OS === 'web') {
-              window.alert(response.data.message || successMessage);
-            }
+            Alert.alert('Success', response.data.message || successMessage);
           }
           onClose();
-          // Refresh the user list (this will be handled by the parent component)
         } else {
           let errorMessage = 'Error: ' + (response.data.message || 'Failed to import users from Excel.');
           if (response.data.data?.errors) {
@@ -170,137 +261,367 @@ const UserManageAndroid = () => {
         visible={isVisible}
         onRequestClose={onClose}
       >
-        <View style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', padding: 16 }} className='flex-1 justify-center items-center'>
-          <View
-            className={`rounded-lg p-4 ${isDarkMode ? 'bg-[#1E1E1E] shadow-none' : 'bg-white shadow-lg'}`}
-            style={{ maxWidth: 500 }}
-          >
-            <Text className={`font-inter_bold text-xl text-center ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Adding New Users
-            </Text>
-
-            <Text className={`font-inter_medium text-base mt-2 mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Choose your option:
-            </Text>
-
-            {/* Excel File Format Instructions */}
-            <View className='mb-4 p-3 rounded-lg' style={{ backgroundColor: isDarkMode ? '#2A2A2A' : '#F0F8FF' }}>
-              <Text className={`font-inter_semibold text-sm mb-1 ${isDarkMode ? 'text-blue-300' : 'text-blue-800'}`}>
-                Excel File Format Requirements:
-              </Text>
-              <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-blue-200' : 'text-blue-700'}`}>
-                1. First row must contain headers: username, firstName, lastName, email, password, phoneNumber, address, role, sex
-              </Text>
-              <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-blue-200' : 'text-blue-700'}`}>
-                2. Role values: Admin, Teacher, Student
-              </Text>
-              <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-blue-200' : 'text-blue-700'}`}>
-                3. Sex values: Male, Female, Other
-              </Text>
-              <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-blue-200' : 'text-blue-700'}`}>
-                4. Supported formats: .xlsx, .xls
-              </Text>
+        <View style={{ 
+          flex: 1, 
+          backgroundColor: 'rgba(0, 0, 0, 0.6)', 
+          justifyContent: 'center', 
+          alignItems: 'center',
+          padding: 20 
+        }}>
+          <View style={{
+            backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+            borderRadius: 12,
+            padding: 24,
+            width: '100%',
+            maxWidth: 500,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 8 },
+            shadowOpacity: 0.25,
+            shadowRadius: 16,
+            elevation: 8,
+          }}>
+            {/* Header */}
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              marginBottom: 20,
+            }}>
+              <View style={{
+                width: 40,
+                height: 40,
+                borderRadius: 20,
+                backgroundColor: '#1877F2',
+                justifyContent: 'center',
+                alignItems: 'center',
+                marginRight: 12,
+              }}>
+                <Image
+                  source={require('@/assets/icons/add_user.png')}
+                  style={{ width: 20, height: 20 }}
+                  tintColor="#FFFFFF"
+                  contentFit="contain"
+                  cachePolicy="memory-disk"
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{
+                  fontSize: 20,
+                  fontFamily: 'Inter-24pt-Bold',
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                }}>
+                  Add New Users
+                </Text>
+                <Text style={{
+                  fontSize: 14,
+                  fontFamily: 'Inter-18pt-Regular',
+                  color: isDarkMode ? '#B0B3B8' : '#65676B',
+                  marginTop: 2,
+                }}>
+                  Choose how to add users to the system
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={onClose}
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 16,
+                  backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+              >
+                <Image
+                  source={require('@/assets/icons/close.png')}
+                  style={{ width: 16, height: 16 }}
+                  tintColor={isDarkMode ? '#E4E6EA' : '#1C1E21'}
+                  contentFit="contain"
+                  cachePolicy="memory-disk"
+                />
+              </TouchableOpacity>
             </View>
 
-            <View className='flex-column'>
+            {/* Excel Requirements Info */}
+            <View style={{
+              backgroundColor: isDarkMode ? '#263A52' : '#E3F2FD',
+              borderRadius: 8,
+              padding: 16,
+              marginBottom: 20,
+              borderLeftWidth: 4,
+              borderLeftColor: '#1877F2',
+            }}>
+              <Text style={{
+                fontSize: 14,
+                fontFamily: 'Inter-24pt-SemiBold',
+                color: isDarkMode ? '#9BD1FF' : '#1565C0',
+                marginBottom: 8,
+              }}>
+                📋 Excel File Requirements:
+              </Text>
+              <Text style={{
+                fontSize: 12,
+                fontFamily: 'Inter-18pt-Regular',
+                color: isDarkMode ? '#9BD1FF' : '#1565C0',
+                lineHeight: 16,
+                marginBottom: 12,
+              }}>
+                • Required headers: userId, username, firstName, lastName, password, role, sex{'\n'}
+                • Optional headers: middleName, email, phoneNumber, address{'\n'}
+                • Role values: Admin, Teacher, Student{'\n'}
+                • Sex values: Male, Female, Other{'\n'}
+                • Supported formats: .xlsx, .xls
+              </Text>
+              <Text style={{
+                fontSize: 12,
+                fontFamily: 'Inter-18pt-Regular',
+                color: isDarkMode ? '#9BD1FF' : '#1565C0',
+                lineHeight: 16,
+                marginBottom: 12,
+              }}>Sample template will be saved to your device:</Text>
+              
+              {/* Download Sample Template Button */}
               <TouchableOpacity
-                className='bg-secondary-web rounded-xl h-[50px] w-full justify-center items-center p-2'
-                onPress={handleAddUser}
-                activeOpacity={0.7}
+                onPress={downloadSampleExcel}
+                style={{
+                  backgroundColor: isDarkMode ? '#42B883' : '#10B981',
+                  borderRadius: 6,
+                  paddingVertical: 8,
+                  paddingHorizontal: 12,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  alignSelf: 'flex-start',
+                }}
               >
-                <Text className='text-black font-psemibold text-lg'>
+                <Image
+                  source={require('@/assets/icons/download.png')}
+                  style={{ width: 16, height: 16, marginRight: 6 }}
+                  tintColor="#FFFFFF"
+                  contentFit="contain"
+                  cachePolicy="memory-disk"
+                />
+                <Text style={{
+                  fontSize: 12,
+                  fontFamily: 'Inter-24pt-SemiBold',
+                  color: '#FFFFFF',
+                }}>
+                  Download Sample Template
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Action Buttons */}
+            <View style={{ gap: 12 }}>
+              {/* Single User Button */}
+              <TouchableOpacity
+                onPress={handleAddUser}
+                style={{
+                  backgroundColor: '#1877F2',
+                  borderRadius: 8,
+                  paddingVertical: 16,
+                  paddingHorizontal: 20,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Image
+                  source={require('@/assets/icons/add_user.png')}
+                  style={{ width: 24, height: 24, marginRight: 8 }}
+                  tintColor="#FFFFFF"
+                  contentFit="contain"
+                  cachePolicy="memory-disk"
+                />
+                <Text style={{
+                  color: '#FFFFFF',
+                  fontSize: 16,
+                  fontFamily: 'Inter-24pt-SemiBold',
+                }}>
                   Add Single User
                 </Text>
               </TouchableOpacity>
 
+              {/* File Upload Button */}
               <TouchableOpacity
-                className='bg-green-500 rounded-xl h-[50px] w-full justify-center items-center p-2 mt-4'
                 onPress={handlePickDocument}
-                activeOpacity={0.7}
+                style={{
+                  backgroundColor: isDarkMode ? '#42B883' : '#10B981',
+                  borderRadius: 8,
+                  paddingVertical: 16,
+                  paddingHorizontal: 20,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
               >
-                <View className='flex-row'>
-                  <Image
-                    className="w-[24] h-[24] mr-2"
-                    contentFit="contain"
-                    source={require('@/assets/icons/import_file.png')}
-                  />
-                  <Text className='text-white font-psemibold text-lg'>
-                    {pickedFile ? `File: ${pickedFile.name}` : 'Choose Excel File'}
-                  </Text>
-                </View>
+                <Image
+                  source={require('@/assets/icons/import_file.png')}
+                  style={{ width: 24, height: 24, marginRight: 8 }}
+                  tintColor="#FFFFFF"
+                  contentFit="contain"
+                  cachePolicy="memory-disk"
+                />
+                <Text style={{
+                  color: '#FFFFFF',
+                  fontSize: 16,
+                  fontFamily: 'Inter-24pt-SemiBold',
+                }}>
+                  {pickedFile ? 'Change Excel File' : 'Upload Excel File'}
+                </Text>
               </TouchableOpacity>
+            </View>
 
-              {pickedFile && (
-                <View className='mt-2 p-2 rounded-lg' style={{ backgroundColor: isDarkMode ? '#2A2A2A' : '#F0F0F0' }}>
-                  <Text className={`font-inter_semibold text-sm ${isDarkMode ? 'text-green-300' : 'text-green-800'}`}>
+            {/* Selected File Info */}
+            {pickedFile && (
+              <View style={{
+                backgroundColor: isDarkMode ? '#2A2A2A' : '#F0F2F5',
+                borderRadius: 8,
+                padding: 12,
+                marginTop: 12,
+                borderWidth: 1,
+                borderColor: isDarkMode ? '#42B883' : '#10B981',
+              }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Image
+                    source={require('@/assets/icons/excel_file.png')}
+                    style={{ width: 24, height: 24, marginRight: 8 }}
+                    tintColor={isDarkMode ? '#42B883' : '#10B981'}
+                    contentFit="contain"
+                    cachePolicy="memory-disk"
+                  />
+                  <Text style={{
+                    fontSize: 14,
+                    fontFamily: 'Inter-24pt-Bold',
+                    color: isDarkMode ? '#42B883' : '#10B981',
+                  }}>
                     Selected File:
                   </Text>
-                  <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                    Name: {pickedFile.name}
-                  </Text>
-                  <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                    Type: {pickedFile.mimeType || 'Excel file'}
-                  </Text>
-                  <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                    Size: {pickedFile.size ? (pickedFile.size / 1024).toFixed(2) + ' KB' : 'N/A'}
-                  </Text>
                 </View>
-              )}
-
-              {modalError && (
-                <View className='mt-2 p-2 rounded-lg bg-red-100'>
-                  <Text className='text-red-800 text-sm font-inter_regular'>
-                    {modalError}
-                  </Text>
-                </View>
-              )}
-            </View>
-
-            <View className='flex-row flex-shrink mt-4 items-center justify-center'>
-              <TouchableOpacity
-                className='bg-red-500 rounded-xl h-[50px] w-[48%] justify-center items-center p-2 mr-2'
-                onPress={onClose}
-                activeOpacity={0.7}
-              >
-                <Text className='text-white font-psemibold text-lg'>
-                  Cancel
+                <Text style={{
+                  fontSize: 12,
+                  fontFamily: 'Inter-18pt-Regular',
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  marginTop: 4,
+                  marginBottom: 2,
+                }}>
+                  Name: {pickedFile.name}
                 </Text>
-              </TouchableOpacity>
+                <Text style={{
+                  fontSize: 12,
+                  fontFamily: 'Inter-18pt-Regular',
+                  color: isDarkMode ? '#B0B3B8' : '#65676B',
+                  marginBottom: 2,
+                }}>
+                  Type: {pickedFile.mimeType || 'Excel file'}
+                </Text>
+                <Text style={{
+                  fontSize: 12,
+                  fontFamily: 'Inter-18pt-Regular',
+                  color: isDarkMode ? '#B0B3B8' : '#65676B',
+                }}>
+                  Size: {pickedFile.size ? (pickedFile.size / 1024).toFixed(2) + ' KB' : 'N/A'}
+                </Text>
+              </View>
+            )}
+
+            {/* Error Message */}
+            {modalError && (
+              <View style={{
+                backgroundColor: isDarkMode ? '#3E2723' : '#FFEBEE',
+                borderRadius: 8,
+                padding: 12,
+                marginTop: 12,
+                borderLeftWidth: 4,
+                borderLeftColor: '#F44336',
+              }}>
+                <Text style={{
+                  fontSize: 14,
+                  fontFamily: 'Inter-18pt-Regular',
+                  color: isDarkMode ? '#FFCDD2' : '#C62828',
+                }}>
+                  ⚠️ {modalError}
+                </Text>
+              </View>
+            )}
+
+            {/* Submit Button */}
+            {pickedFile && (
               <TouchableOpacity
-                className={`rounded-xl h-[50px] w-[48%] justify-center items-center p-2 ${
-                  (pickedFile && !isSubmitting) ? 'bg-blue-500' : 'bg-gray-400'
-                }`}
                 onPress={handleSubmitFile}
-                activeOpacity={(pickedFile && !isSubmitting) ? 0.7 : 1}
-                disabled={!pickedFile || isSubmitting}
+                disabled={isSubmitting}
+                style={{
+                  backgroundColor: isSubmitting ? (isDarkMode ? '#1565C0' : '#1565C0') : '#1877F2',
+                  borderRadius: 8,
+                  paddingVertical: 16,
+                  paddingHorizontal: 20,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginTop: 16,
+                  opacity: isSubmitting ? 0.7 : 1,
+                }}
               >
-                <Text className='text-white font-psemibold text-lg'>
-                  {isSubmitting ? 'Processing...' : 'Submit'}
-                </Text>
+                {isSubmitting ? (
+                  <>
+                    <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                    <Text style={{
+                      color: '#FFFFFF',
+                      fontSize: 16,
+                      fontFamily: 'Inter-24pt-SemiBold',
+                    }}>
+                      Processing...
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Image
+                      source={require('@/assets/icons/upload.png')}
+                      style={{ width: 20, height: 20, marginRight: 8 }}
+                      tintColor="#FFFFFF"
+                      contentFit="contain"
+                      cachePolicy="memory-disk"
+                    />
+                    <Text style={{
+                      color: '#FFFFFF',
+                      fontSize: 16,
+                      fontFamily: 'Inter-24pt-SemiBold',
+                    }}>
+                      Import Users
+                    </Text>
+                  </>
+                )}
               </TouchableOpacity>
-            </View>
+            )}
           </View>
         </View>
       </Modal>
     );
   };
 
-  interface UserListApiResponse extends ApiResponse {
-    data?: User[];
-  }
-
   const colorScheme = useColorScheme();
   const { isDarkMode } = useDarkMode();
+  
+  // Enhanced state management with pagination
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
   const [isAddUserModalVisible, setIsAddUserModalVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [searchResults, setSearchResults] = useState<User[]>([]);
 
+  // Fixed pagination state
+  const [pagination, setPagination] = useState<PaginationInfo>({
+    currentPage: 1,
+    totalPages: 1,
+    totalItems: 0,
+    itemsPerPage: 25,
+    hasNext: false,
+    hasPrev: false,
+  });
+
+  // Search is handled locally for better performance
   const filteredUsers = useMemo(() => {
     if (!searchQuery.trim()) {
       return users;
@@ -311,7 +632,7 @@ const UserManageAndroid = () => {
       const fullName = `${user.firstName} ${user.lastName}`.toLowerCase();
       const firstName = user.firstName.toLowerCase();
       const lastName = user.lastName.toLowerCase();
-      const email = user.email.toLowerCase();
+      const email = user.email?.toLowerCase() || '';
       const username = user.username?.toLowerCase() || '';
       const userId = user.userId?.toLowerCase() || '';
       
@@ -330,15 +651,40 @@ const UserManageAndroid = () => {
     setSearchQuery('');
   };
 
-  const fetchUsers = useCallback(async (roleFilter: string | null) => {
+  // Fixed fetchUsers with proper pagination handling
+  const fetchUsers = useCallback(async (
+    roleFilter: string | null, 
+    page: number = 1, 
+    append: boolean = false,
+    itemsPerPage?: number // Add this parameter
+  ) => {
     try {
-      setLoading(true);
+      if (!append) {
+        setLoading(true);
+      } else {
+        setLoadingMore(true);
+      }
       setError(null);
 
-      const params: { role?: string } = {}; 
+      // Use the passed itemsPerPage or current pagination value
+      const currentItemsPerPage = itemsPerPage || pagination.itemsPerPage;
+
+      const params: { 
+        role?: string; 
+        page: number; 
+        limit: number; 
+        sort?: string;
+      } = {
+        page,
+        limit: currentItemsPerPage, // Use the current value
+        sort: '-createdAt',
+      }; 
+      
       if (roleFilter) {
         params.role = roleFilter;
       }
+
+      console.log('Fetching users with params:', params);
 
       const response = await apiClient.get<UserListApiResponse>('/users', {
         params,
@@ -346,7 +692,31 @@ const UserManageAndroid = () => {
 
       if (response.data.success && response.data.data) {
         const nonArchivedUsers = response.data.data.filter(user => user.status !== 'archived');
-        setUsers(nonArchivedUsers);
+        
+        // Fixed pagination calculation with correct itemsPerPage
+        const totalItems = response.data.total || 0;
+        const totalPages = Math.ceil(totalItems / currentItemsPerPage);
+        
+        const newPagination: PaginationInfo = {
+          currentPage: page,
+          totalPages: totalPages,
+          totalItems: totalItems,
+          itemsPerPage: currentItemsPerPage, // Use the current value
+          hasNext: page < totalPages,
+          hasPrev: page > 1,
+        };
+        
+        setPagination(newPagination);
+
+        if (append && page > 1) {
+          // Append new users to existing list (for infinite scroll if implemented)
+          setUsers(prevUsers => [...prevUsers, ...nonArchivedUsers]);
+        } else {
+          // Replace users list (initial load, refresh, or page navigation)
+          setUsers(nonArchivedUsers);
+        }
+
+        console.log(`Loaded ${nonArchivedUsers.length} users (page ${page}/${totalPages})`);
       } else {
         setError(response.data.message || 'Failed to fetch users.');
       }
@@ -357,12 +727,24 @@ const UserManageAndroid = () => {
       );
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
-  }, []);
+  }, []); // Remove pagination.itemsPerPage from dependencies
 
+  // Refresh function that resets to page 1
+  const refreshUsers = useCallback(() => {
+    setRefreshing(true);
+    setPagination(prev => ({ ...prev, currentPage: 1 }));
+    fetchUsers(selectedRole, 1, false, pagination.itemsPerPage).finally(() => {
+      setRefreshing(false);
+    });
+  }, [fetchUsers, selectedRole, pagination.itemsPerPage]);
+
+  // Initial load and role filter changes
   useEffect(() => {
-    fetchUsers(selectedRole);
-  }, [fetchUsers, selectedRole]);
+    setPagination(prev => ({ ...prev, currentPage: 1 }));
+    fetchUsers(selectedRole, 1, false, pagination.itemsPerPage);
+  }, [selectedRole]); // Remove fetchUsers from dependencies
 
   const handleAddUser = () => {
     handleCloseAddUserModal();
@@ -377,15 +759,8 @@ const UserManageAndroid = () => {
     setIsAddUserModalVisible(false);
   };
 
-  const handleAddSingleUser = () => {
-    handleCloseAddUserModal();
-    router.push('/(admins)/add-user');
-  };
-
   const handleSubmitBulkUsersFile = async (usersData: User[]) => {
-    // This function is now handled differently since we're sending the Excel file directly
-    // The actual processing happens in the modal's handleSubmitFile function
-    fetchUsers(selectedRole); // Refresh the user list after successful import
+    refreshUsers();
   };
 
   const handleEditUser = (userId: string) => {
@@ -396,363 +771,1000 @@ const UserManageAndroid = () => {
   }
 
   const handleDeleteUser = (userId: string) => {
-    const confirmDelete = window.confirm(
-      'Are you sure you want to delete this user account? It will be archived.'
+    Alert.alert(
+      'Delete User',
+      'Are you sure you want to delete this user account? It will be archived.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            const deleteUser = async () => {
+              setDeletingId(userId);
+              try {
+                const response = await apiClient.delete<ApiResponse>(`/users/${userId}`);
+
+                if (response.data.success) {
+                  Alert.alert('Success', 'User account archived successfully.');
+                  setUsers((prevUsers) =>
+                    prevUsers.filter((user) => user._id !== userId)
+                  );
+                  setPagination(prev => ({
+                    ...prev,
+                    totalItems: Math.max(0, prev.totalItems - 1)
+                  }));
+                } else {
+                  Alert.alert('Error', response.data.message || 'Failed to archive user.');
+                }
+              } catch (err: any) {
+                console.error('Error archiving user:', err);
+                Alert.alert(
+                  'Error',
+                  err.response?.data?.message || err.message || 'An error occurred during archival.'
+                );
+              } finally {
+                setDeletingId(null);
+              }
+            };
+
+            deleteUser();
+          },
+        },
+      ],
+      { cancelable: true }
     );
+  };
 
-    if (confirmDelete) {
-      const deleteUser = async () => {
-        setDeletingId(userId);
-        try {
-          const response = await apiClient.delete<ApiResponse>(`/users/${userId}`);
-
-          if (response.data.success) {
-            window.alert('Success: User account archived successfully.');
-            setUsers((prevUsers) =>
-              prevUsers.filter((user) => user._id !== userId)
-            );
-          } else {
-            window.alert('Error: ' + (response.data.message || 'Failed to archive user.'));
-          }
-        } catch (err: any) {
-          console.error('Error archiving user:', err);
-          window.alert(
-            'Error: ' + (err.response?.data?.message || err.message || 'An error occurred during archival.')
-          );
-        } finally {
-          setDeletingId(null);
-        }
-      };
-
-      deleteUser();
+  // Fixed pagination navigation functions
+  const goToPreviousPage = useCallback(() => {
+    if (pagination.hasPrev && !loading && !loadingMore) {
+      const prevPage = pagination.currentPage - 1;
+      console.log(`Navigating to previous page: ${prevPage}`);
+      fetchUsers(selectedRole, prevPage, false, pagination.itemsPerPage);
     }
+  }, [pagination.hasPrev, pagination.currentPage, pagination.itemsPerPage, selectedRole, loading, loadingMore]);
+
+  const goToNextPage = useCallback(() => {
+    if (pagination.hasNext && !loading && !loadingMore) {
+      const nextPage = pagination.currentPage + 1;
+      console.log(`Navigating to next page: ${nextPage}`);
+      fetchUsers(selectedRole, nextPage, false, pagination.itemsPerPage);
+    }
+  }, [pagination.hasNext, pagination.currentPage, pagination.itemsPerPage, selectedRole, loading, loadingMore]);
+
+  const goToSpecificPage = useCallback((pageNumber: number) => {
+    if (pageNumber >= 1 && pageNumber <= pagination.totalPages && pageNumber !== pagination.currentPage && !loading && !loadingMore) {
+      console.log(`Navigating to page: ${pageNumber}`);
+      fetchUsers(selectedRole, pageNumber, false, pagination.itemsPerPage);
+    }
+  }, [pagination.totalPages, pagination.currentPage, pagination.itemsPerPage, selectedRole, loading, loadingMore]);
+
+  // Fixed pagination controls with Facebook-inspired design
+  const PaginationControls = () => {
+    const renderPageNumbers = () => {
+      const pages = [];
+      const maxVisiblePages = 5;
+      const currentPage = pagination.currentPage;
+      const totalPages = pagination.totalPages;
+
+      let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+      let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+
+      if (endPage - startPage + 1 < maxVisiblePages) {
+        startPage = Math.max(1, endPage - maxVisiblePages + 1);
+      }
+
+      // Add first page and ellipsis if needed
+      if (startPage > 1) {
+        pages.push(
+          <TouchableOpacity
+            key={1}
+            onPress={() => goToSpecificPage(1)}
+            style={{
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+              marginHorizontal: 2,
+              borderRadius: 6,
+              backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+            }}
+            disabled={loading || loadingMore}
+          >
+            <Text style={{
+              fontSize: 14,
+              fontFamily: 'Inter-24pt-SemiBold',
+              color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+            }}>
+              1
+            </Text>
+          </TouchableOpacity>
+        );
+        
+        if (startPage > 2) {
+          pages.push(
+            <Text key="ellipsis1" style={{
+              paddingHorizontal: 8,
+              paddingVertical: 8,
+              fontSize: 14,
+              fontFamily: 'Inter-18pt-Regular',
+              color: isDarkMode ? '#B0B3B8' : '#65676B',
+            }}>
+              ...
+            </Text>
+          );
+        }
+      }
+
+      // Add visible page numbers
+      for (let i = startPage; i <= endPage; i++) {
+        const isCurrentPage = i === currentPage;
+        pages.push(
+          <TouchableOpacity
+            key={i}
+            onPress={() => goToSpecificPage(i)}
+            style={{
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+              marginHorizontal: 2,
+              borderRadius: 6,
+              backgroundColor: isCurrentPage 
+                ? '#1877F2' 
+                : isDarkMode ? '#3A3B3C' : '#F0F2F5',
+            }}
+            disabled={loading || loadingMore || isCurrentPage}
+          >
+            <Text style={{
+              fontSize: 14,
+              fontFamily: 'Inter-24pt-SemiBold',
+              color: isCurrentPage 
+                ? '#FFFFFF' 
+                : isDarkMode ? '#E4E6EA' : '#1C1E21',
+            }}>
+              {i}
+            </Text>
+          </TouchableOpacity>
+        );
+      }
+
+      // Add last page and ellipsis if needed
+      if (endPage < totalPages) {
+        if (endPage < totalPages - 1) {
+          pages.push(
+            <Text key="ellipsis2" style={{
+              paddingHorizontal: 8,
+              paddingVertical: 8,
+              fontSize: 14,
+              fontFamily: 'Inter-18pt-Regular',
+              color: isDarkMode ? '#B0B3B8' : '#65676B',
+            }}>
+              ...
+            </Text>
+          );
+        }
+        
+        pages.push(
+          <TouchableOpacity
+            key={totalPages}
+            onPress={() => goToSpecificPage(totalPages)}
+            style={{
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+              marginHorizontal: 2,
+              borderRadius: 6,
+              backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+            }}
+            disabled={loading || loadingMore}
+          >
+            <Text style={{
+              fontSize: 14,
+              fontFamily: 'Inter-24pt-SemiBold',
+              color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+            }}>
+              {totalPages}
+            </Text>
+          </TouchableOpacity>
+        );
+      }
+
+      return pages;
+    };
+
+    if (searchQuery || pagination.totalPages <= 1) return null;
+
+    return (
+      <View style={{
+        backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+        paddingVertical: 16,
+        paddingHorizontal: 20,
+        borderRadius: 12,
+        marginHorizontal: 16,
+        marginTop: 16,
+        marginBottom: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+        elevation: 4,
+      }}>
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ 
+            flexDirection: 'row', 
+            justifyContent: 'center', 
+            alignItems: 'center',
+            paddingHorizontal: 8,
+          }}
+        >
+          {/* Items per page selector */}
+          <View style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            marginRight: 20,
+          }}>
+            <Text style={{
+              fontSize: 14,
+              fontFamily: 'Inter-18pt-Regular',
+              color: isDarkMode ? '#B0B3B8' : '#65676B',
+              marginRight: 8,
+            }}>
+              Show:
+            </Text>
+            <DropdownMobile
+              selectedValue={pagination.itemsPerPage.toString()}
+              onValueChange={(itemValue) => {
+                const newItemsPerPage = parseInt(itemValue);
+                console.log('Changing items per page to:', newItemsPerPage);
+                
+                // Update pagination state immediately
+                setPagination(prev => ({ 
+                  ...prev, 
+                  itemsPerPage: newItemsPerPage,
+                  currentPage: 1 
+                }));
+                
+                // Fetch with new items per page value
+                fetchUsers(selectedRole, 1, false, newItemsPerPage);
+              }}
+              items={[
+                { label: '10', value: '10' },
+                { label: '25', value: '25' },
+                { label: '50', value: '50' },
+                { label: '100', value: '100' }
+              ]}
+              buttonStyle={{
+                width: 80,
+                height: 50,
+              }}
+              containerStyle={{ width: 80 }}
+              buttonRightIcon={DownIcon}
+            />
+          </View>
+
+          {/* Navigation Controls */}
+          <View style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+          }}>
+            {/* Previous Button */}
+            <TouchableOpacity
+              onPress={goToPreviousPage}
+              disabled={!pagination.hasPrev || loading || loadingMore}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingHorizontal: 16,
+                paddingVertical: 8,
+                marginRight: 8,
+                borderRadius: 6,
+                backgroundColor: !pagination.hasPrev || loading || loadingMore
+                  ? isDarkMode ? '#3A3B3C' : '#F0F2F5'
+                  : '#1877F2',
+                opacity: !pagination.hasPrev || loading || loadingMore ? 0.5 : 1,
+              }}
+            >
+              <Image
+                source={require('@/assets/icons/back.png')}
+                style={{ width: 16, height: 16, marginRight: 4 }}
+                tintColor={!pagination.hasPrev || loading || loadingMore
+                  ? isDarkMode ? '#B0B3B8' : '#65676B'
+                  : '#FFFFFF'
+                }
+                contentFit="contain"
+                cachePolicy="memory-disk"
+              />
+              <Text style={{
+                fontSize: 14,
+                fontFamily: 'Inter-24pt-SemiBold',
+                color: !pagination.hasPrev || loading || loadingMore
+                  ? isDarkMode ? '#B0B3B8' : '#65676B'
+                  : '#FFFFFF',
+              }}>
+                Previous
+              </Text>
+            </TouchableOpacity>
+
+            {/* Page Numbers */}
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              marginHorizontal: 8,
+            }}>
+              {renderPageNumbers()}
+            </View>
+
+            {/* Next Button */}
+            <TouchableOpacity
+              onPress={goToNextPage}
+              disabled={!pagination.hasNext || loading || loadingMore}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingHorizontal: 16,
+                paddingVertical: 8,
+                marginLeft: 8,
+                borderRadius: 6,
+                backgroundColor: !pagination.hasNext || loading || loadingMore
+                  ? isDarkMode ? '#3A3B3C' : '#F0F2F5'
+                  : '#1877F2',
+                opacity: !pagination.hasNext || loading || loadingMore ? 0.5 : 1,
+              }}
+            >
+              <Text style={{
+                fontSize: 14,
+                fontFamily: 'Inter-24pt-SemiBold',
+                color: !pagination.hasNext || loading || loadingMore
+                  ? isDarkMode ? '#B0B3B8' : '#65676B'
+                  : '#FFFFFF',
+                marginRight: 4,
+              }}>
+                Next
+              </Text>
+              <Image
+                source={require('@/assets/icons/forward.png')}
+                style={{ width: 16, height: 16 }}
+                tintColor={!pagination.hasNext || loading || loadingMore
+                  ? isDarkMode ? '#B0B3B8' : '#65676B'
+                  : '#FFFFFF'
+                }
+                contentFit="contain"
+                cachePolicy="memory-disk"
+              />
+            </TouchableOpacity>
+          </View>
+
+          {/* Page Info */}
+          <View style={{
+            marginLeft: 20,
+            alignItems: 'center',
+          }}>
+            <Text style={{
+              fontSize: 12,
+              fontFamily: 'Inter-18pt-Regular',
+              color: isDarkMode ? '#B0B3B8' : '#65676B',
+            }}>
+              Page {pagination.currentPage} of {pagination.totalPages}
+            </Text>
+            <Text style={{
+              fontSize: 12,
+              fontFamily: 'Inter-18pt-Regular',
+              color: isDarkMode ? '#B0B3B8' : '#65676B',
+            }}>
+              {pagination.totalItems} total users
+            </Text>
+          </View>
+        </ScrollView>
+      </View>
+    );
   };
 
-  const getItemCount = (_data: User[] | null | undefined) => _data ? _data.length : 0;
+  // Add the renderUserItem function before the main component return
+  const renderUserItem = useCallback(({ item }: { item: User }) => {
+    const isCurrentItemDeleting = deletingId === item._id;
+    
+    const highlightText = (text: string, query: string) => {
+      if (!query.trim()) return text;
+      
+      const parts = text.split(new RegExp(`(${query})`, 'gi'));
+      return parts.map((part, index) => 
+        part.toLowerCase() === query.toLowerCase() ? 
+          <Text 
+            key={`highlight-${index}`}
+            style={{
+              backgroundColor: isDarkMode ? '#FFC107' : '#FFF59D',
+              fontFamily: 'Inter-24pt-Bold',
+            }}
+          >
+            {part}
+          </Text> : 
+          <Text key={`text-${index}`}>{part}</Text>
+      );
+    };
 
-  const getItem = (_data: User[] | null | undefined, index: number): User => {
-    return (_data as User[])[index];
-  };
+    return (
+      <View style={{
+        backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+        borderRadius: 12,
+        padding: 16,
+        marginVertical: 4,
+        flexDirection: 'row',
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 2,
+      }}>
+        {/* Profile Picture */}
+        <View style={{
+          width: 48,
+          height: 48,
+          borderRadius: 24,
+          overflow: 'hidden',
+          marginRight: 12,
+        }}>
+          <Image
+            source={item.profilePicture ? { uri: item.profilePicture } : require('@/assets/images/sample_profile_picture.png')}
+            style={{ width: 48, height: 48 }}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+          />
+        </View>
+
+        {/* User Info */}
+        <View style={{ flex: 1 }}>
+          <Text className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E4E6EA]' : 'text-[#1C1E21]'}`}>
+            {searchQuery ? 
+              highlightText(`${item.lastName}, ${item.firstName}`, searchQuery) :
+              `${item.lastName}, ${item.firstName}`
+            }
+          </Text>
+          
+          <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#B0B3B8]' : 'text-[#65676B]'}`}>
+            {searchQuery ? 
+              highlightText(item.email || 'No email', searchQuery) :
+              item.email || 'No email'
+            }
+          </Text>
+          
+          <Text style={{
+            fontSize: 12,
+            fontFamily: 'Inter-18pt-Regular',
+            color: isDarkMode ? '#B0B3B8' : '#65676B',
+            marginBottom: 4,
+          }}>
+            ID: {item.userId || 'N/A'} • Password: {item.temporaryPassword || 'N/A'}
+          </Text>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <View style={{
+              backgroundColor: item.status === 'active' ? '#10B981' : 
+                            item.status === 'inactive' ? '#F59E0B' :
+                            item.status === 'suspended' ? '#EF4444' : '#6B7280',
+              paddingHorizontal: 8,
+              paddingVertical: 2,
+              borderRadius: 12,
+              marginRight: 8,
+            }}>
+              <Text style={{
+                fontSize: 12,
+                fontFamily: 'Inter-24pt-Bold',
+                color: '#FFFFFF',
+              }}>
+                {item.status.toUpperCase()}
+              </Text>
+            </View>
+            
+            <View style={{
+              backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+              paddingHorizontal: 8,
+              paddingVertical: 2,
+              borderRadius: 12,
+            }}>
+              <Text style={{
+                fontSize: 12,
+                fontFamily: 'Inter-24pt-SemiBold',
+                color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+              }}>
+                {item.role}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Action Buttons */}
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TouchableOpacity
+            onPress={() => handleEditUser(item._id)}
+            style={{
+              backgroundColor: '#10B981',
+              borderRadius: 8,
+              padding: 10,
+            }}
+          >
+            <EditIcon width={20} height={20} fill="#FFFFFF"/>
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            onPress={() => handleDeleteUser(item._id)}
+            disabled={isCurrentItemDeleting}
+            style={{
+              backgroundColor: '#EF4444',
+              borderRadius: 8,
+              padding: 10,
+              opacity: isCurrentItemDeleting ? 0.6 : 1,
+            }}
+          >
+            {isCurrentItemDeleting ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <DeleteIcon width={20} height={20} fill="#FFFFFF"/>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }, [isDarkMode, searchQuery, deletingId, handleEditUser, handleDeleteUser]);
+
+  // Memoize the keyExtractor function
+  const keyExtractor = useCallback((item: User) => item._id, []);
 
   // --- Render Logic ---
-  if (loading) {
+  if (loading && users.length === 0) {
     return (
-      <SafeAreaView className={`flex-1 items-center justify-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-        <ActivityIndicator size="large" color={isDarkMode ? '#E0E0E0' : '#000000'} />
-        <Text className={`font-inter_regular mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>{`Loading Users...`}</Text>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'black' : 'white'}/>
-      </SafeAreaView>
+      <View style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' }}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color="#3B82F6" />
+          <Text style={{
+            fontFamily: 'Inter-18pt-Regular',
+            marginTop: 16,
+            fontSize: 14,
+            color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+          }}>
+            Loading Users...
+          </Text>
+        </View>
+        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+      </View>
     );
   }
 
-  if (error) {
+  if (error && users.length === 0) {
     return (
-      <SafeAreaView className={`flex-1 items-center justify-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-        <Text className={`font-inter_regular text-center text-red-500 ${isDarkMode ? 'text-red-400' : 'text-red-600'} `}>
-          {`Error: ${error}`}
-        </Text>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'black' : 'white'}/>
-      </SafeAreaView>
+      <View style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' }}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <View style={{
+            backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+            borderRadius: 12,
+            padding: 24,
+            alignItems: 'center',
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.1,
+            shadowRadius: 8,
+            elevation: 4,
+          }}>
+            <Image
+              source={require('@/assets/icons/error.png')}
+              style={{ width: 64, height: 64, marginBottom: 16 }}
+              tintColor="#F44336"
+              contentFit="contain"
+              cachePolicy="memory-disk"
+            />
+            <Text style={{
+              fontSize: 18,
+              fontFamily: 'Inter-18pt-Bold',
+              color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+              textAlign: 'center',
+              marginBottom: 8,
+            }}>
+              Failed to Load Users
+            </Text>
+            <Text style={{
+              fontSize: 14,
+              fontFamily: 'Inter-18pt-Regular',
+              color: '#F44336',
+              textAlign: 'center',
+              marginBottom: 20,
+            }}>
+              {error}
+            </Text>
+            <TouchableOpacity
+              onPress={refreshUsers}
+              style={{
+                backgroundColor: '#1877F2',
+                borderRadius: 8,
+                paddingVertical: 12,
+                paddingHorizontal: 24,
+              }}
+            >
+              <Text style={{
+                color: '#FFFFFF',
+                fontSize: 16,
+                fontFamily: 'Inter-24pt-SemiBold',
+              }}>
+                Try Again
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+      </View>
     );
   }
 
   if (users.length === 0 && !searchQuery) {
     return (
-      <SafeAreaView className={`flex-1 items-center justify-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} `}>
-        <Image
-          className="w-[150] h-[150]"
-          contentFit="contain"
-          source={require('@/assets/images/admin_background.png')}
-        />
-        <Text 
-          className={`font-inter_regular text-center mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'} `}
-          ellipsizeMode='tail'
-          numberOfLines={2}
-        >
-          {`No user accounts found for the selected role and status.`}
-        </Text>
-        <View className='flex-row items-center mt-2'>
-          <TouchableOpacity
-            className='rounded-md mr-1 justify-center items-center p-2'
-            onPress={handleOpenAddUserModal}
-            activeOpacity={0.7}
-            style={{ backgroundColor:'#60a5fa' }}
-          >
-            <View className='flex-row'>
-              <Image
-                source={require('@/assets/icons/add_user.png')}
-                className='w-[24px] h-[24px] mr-1'
-                contentFit='contain'
-                tintColor={isDarkMode ? '#E0E0E0' : 'white'}
-              />
-              <Text className={`font-psemibold text-lg ${isDarkMode ? 'text-[#E0E0E0]' : 'text-white'}`}>
-                Add User
-              </Text>
+      <View style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' }}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <View style={{
+            backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+            borderRadius: 12,
+            padding: 24,
+            alignItems: 'center',
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.1,
+            shadowRadius: 8,
+            elevation: 4,
+          }}>
+            <Image
+              source={require('@/assets/images/admin_background.png')}
+              style={{ width: 120, height: 120, marginBottom: 20 }}
+              contentFit="contain"
+              cachePolicy="memory-disk"
+            />
+            <Text style={{
+              fontSize: 20,
+              fontFamily: 'Inter-24pt-Bold',
+              color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+              textAlign: 'center',
+              marginBottom: 8,
+            }}>
+              No Users Found
+            </Text>
+            <Text style={{
+              fontSize: 14,
+              fontFamily: 'Inter-18pt-Regular',
+              color: isDarkMode ? '#B0B3B8' : '#65676B',
+              textAlign: 'center',
+              marginBottom: 24,
+              lineHeight: 20,
+            }}>
+              No user accounts found for the selected role and status.{'\n'}
+              Start by adding some users to the system.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <TouchableOpacity
+                onPress={handleOpenAddUserModal}
+                style={{
+                  backgroundColor: '#1877F2',
+                  borderRadius: 8,
+                  paddingVertical: 12,
+                  paddingHorizontal: 20,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                }}
+              >
+                <Image
+                  source={require('@/assets/icons/add_user.png')}
+                  style={{ width: 24, height: 24, marginRight: 8 }}
+                  tintColor="#FFFFFF"
+                  contentFit="contain"
+                  cachePolicy="memory-disk"
+                />
+                <Text style={{
+                  color: '#FFFFFF',
+                  fontSize: 16,
+                  fontFamily: 'Inter-24pt-SemiBold',
+                }}>
+                  Add User
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={refreshUsers}
+                style={{
+                  backgroundColor: isDarkMode ? '#3A3B3C' : '#E4E6EA',
+                  borderRadius: 8,
+                  paddingVertical: 12,
+                  paddingHorizontal: 20,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                }}
+              >
+                <Image
+                  source={require('@/assets/icons/refresh.png')}
+                  style={{ width: 24, height: 24, marginRight: 8 }}
+                  tintColor={isDarkMode ? '#E4E6EA' : '#1C1E21'}
+                  contentFit="contain"
+                  cachePolicy="memory-disk"
+                />
+                <Text style={{
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  fontSize: 16,
+                  fontFamily: 'Inter-24pt-SemiBold',
+                }}>
+                  Refresh
+                </Text>
+              </TouchableOpacity>
             </View>
-          </TouchableOpacity>
-          <TouchableOpacity
-            className={`rounded-md justify-center items-center mr-3 p-2 ${isDarkMode ? 'bg-red-500' : 'bg-red-600'}`}
-            onPress={() => fetchUsers(selectedRole)}
-            activeOpacity={0.7}
-          >
-            <View className='flex-row'>
-              <Image
-                source={require('@/assets/icons/refresh.png')}
-                className='w-[24px] h-[24px] mr-1'
-                contentFit='contain'
-                tintColor={isDarkMode ? '#E0E0E0' : 'white'}
-              />
-              <Text className={`font-psemibold text-lg ${isDarkMode ? 'text-[#E0E0E0]' : 'text-white'}`}>
-                Refresh
-              </Text>
-            </View>
-          </TouchableOpacity>
+          </View>
         </View>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'black' : 'white'}/>
+        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
         <AddUserModal
           isVisible={isAddUserModalVisible}
           onClose={handleCloseAddUserModal}
           onSubmitBulkFile={handleSubmitBulkUsersFile}
           isDarkMode={isDarkMode}
         />
-      </SafeAreaView>
+      </View>
     );
   }
 
-  // If not loading, no error, and admins exist, render the VirtualizedList
+  // Main render
   return (
-    <SafeAreaView className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} `}>
-      {/* Search bar - finds users by name or email */}
-      <View className='flex-row items-center'>
-        <TextInput
-          className={`w-full border rounded-md mx-4 mt-2 px-4 py-2 font-inter_regular text-base ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E] text-white' : 'border-gray-300 text-black'}`}
-          placeholder='Search users by name or email...'
-          placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-          autoCapitalize="none"
-          selectionColor="#22C55E"
-          selectionHandleColor="#22C55E" 
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-        <TouchableOpacity
-          onPress={clearSearch}
-          className={`rounded-md px-4 py-2 mr-3 mt-2 ${isDarkMode ? 'bg-gray-400' : 'bg-gray-300'}`}
-          activeOpacity={0.7}
-        >
-          <Text className={`font-pregular text-base ${isDarkMode ? 'text-[#1E1E1E]' : 'text-black'}`}>
-            Clear
-          </Text>
-        </TouchableOpacity>
+    <View style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' }}>
+      {/* Header */}
+      <View style={{
+        backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+        paddingVertical: 16,
+        paddingHorizontal: 20,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+        elevation: 4,
+      }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{
+              fontSize: 24,
+              fontFamily: 'Inter-24pt-Bold',
+              color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+            }}>
+              User Management
+            </Text>
+            <Text style={{
+              fontSize: 14,
+              fontFamily: 'Inter-18pt-Regular',
+              color: isDarkMode ? '#B0B3B8' : '#65676B',
+              marginTop: 2,
+            }}>
+              {pagination.totalItems} total users • Page {pagination.currentPage} of {pagination.totalPages || 1}
+            </Text>
+          </View>
+          
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity
+              onPress={handleOpenAddUserModal}
+              style={{
+                backgroundColor: '#1877F2',
+                borderRadius: 8,
+                padding: 8,
+                flexDirection: 'row',
+                alignItems: 'center',
+              }}
+            >
+              <Image
+                source={require('@/assets/icons/add_user.png')}
+                style={{ width: 24, height: 24, marginRight: 8 }}
+                tintColor="#FFFFFF"
+                contentFit="contain"
+                cachePolicy="memory-disk"
+              />
+              <Text className={`font-inter_semibold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-white'}`}>
+                Add User
+              </Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              onPress={refreshUsers}
+              disabled={refreshing}
+              className={`p-2 rounded-lg ${isDarkMode ? 'bg-red-500' : 'bg-red-600'}`}
+              style={{
+                borderRadius: 8,
+                padding: 8,
+                opacity: refreshing ? 0.6 : 1,
+              }}
+            >
+              {refreshing ? (
+                <ActivityIndicator size="small" color={isDarkMode ? '#E4E6EA' : '#1C1E21'} />
+              ) : (
+                <Image
+                  source={require('@/assets/icons/refresh.png')}
+                  style={{ width: 24, height: 24 }}
+                  tintColor={isDarkMode ? '#E0E0E0' : 'white'}
+                  contentFit="contain"
+                  cachePolicy="memory-disk"
+                />
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
 
-      {/* Search results indicator */}
-      {searchQuery.length > 0 && (
-        <View className='mx-4 mt-1 mb-2'>
-          <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+      {/* Search and Filters */}
+      <View style={{
+        backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+        paddingBottom: 16,
+        paddingHorizontal: 20,
+        borderBottomWidth: 1,
+        borderBottomColor: isDarkMode ? '#3A3B3C' : '#E4E6EA',
+      }}>
+        {/* Search Bar */}
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+          borderRadius: 20,
+          paddingHorizontal: 16,
+          marginBottom: 12,
+        }}>
+          <Image
+            source={require('@/assets/icons/search.png')}
+            style={{ width: 24, height: 24, marginRight: 8 }}
+            tintColor={isDarkMode ? '#B0B3B8' : '#65676B'}
+            contentFit="contain"
+            cachePolicy="memory-disk"
+          />
+          <TextInput
+            style={{
+              flex: 1,
+              fontSize: 14,
+              fontFamily: 'Inter-18pt-Regular',
+              color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+            }}
+            placeholder="Search users by name, email, or username..."
+            placeholderTextColor={isDarkMode ? '#B0B3B8' : '#65676B'}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity
+              onPress={clearSearch}
+              style={{
+                backgroundColor: isDarkMode ? '#4E4F50' : '#E4E6EA',
+                borderRadius: 12,
+                padding: 8,
+                marginLeft: 8,
+              }}
+            >
+              <Image
+                source={require('@/assets/icons/close.png')}
+                style={{ width: 16, height: 16}}
+                tintColor={isDarkMode ? '#B0B3B8' : '#65676B'}
+                contentFit="contain"
+                cachePolicy="memory-disk"
+              />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Search Results Info */}
+        {searchQuery.length > 0 && (
+          <Text style={{
+            fontSize: 14,
+            fontFamily: 'Inter-18pt-Regular',
+            color: isDarkMode ? '#B0B3B8' : '#65676B',
+            marginBottom: 12,
+          }}>
             {filteredUsers.length === 0 
               ? `No results found for "${searchQuery}"`
               : `Found ${filteredUsers.length} user${filteredUsers.length === 1 ? '' : 's'} matching "${searchQuery}"`
             }
           </Text>
-        </View>
-      )}
+        )}
 
-      <View className='flex-row items-center my-2'>
-        <Text className={`font-inter_bold mx-4 my-2 text-lg mr-auto ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-          Users List
-        </Text>
-        <TouchableOpacity
-          className='mr-1'
-          onPress={handleOpenAddUserModal}
-          activeOpacity={0.7}
-          style={{ 
-            backgroundColor:'#60a5fa',
-            borderRadius: 8,
-            padding: 8,
+        {/* Role Filter */}
+        <DropdownMobile
+          selectedValue={selectedRole || ''}
+          onValueChange={(itemValue) => setSelectedRole(itemValue || null)}
+          items={[
+            { label: 'All Roles', value: '' },
+            { label: 'Admin', value: 'Admin' },
+            { label: 'Teacher', value: 'Teacher' },
+            { label: 'Student', value: 'Student' }
+          ]}
+          buttonStyle={{
+            height: 50,
           }}
-        >
-          <Image
-            className="w-[24] h-[24]"
-            contentFit="contain"
-            source={require('@/assets/icons/add_user.png')}
-            cachePolicy="memory-disk"
-            tintColor={isDarkMode ? '#E0E0E0' : 'white'}
-          />
-        </TouchableOpacity>
-        <TouchableOpacity
-          className={`${isDarkMode ? 'bg-red-500' : 'bg-red-600'}`}
-          onPress={() => fetchUsers(selectedRole)}
-          activeOpacity={0.7}
-          style={{ 
-            borderRadius: 8,
-            marginRight: 12,
-            padding: 8,
+          containerStyle={{
+            alignSelf: 'flex-start',
+            minWidth: 150,
           }}
-        >
-          <Image
-            className="w-[24] h-[24]"
-            contentFit="contain"
-            source={require('@/assets/icons/refresh.png')}
-            cachePolicy="memory-disk"
-            tintColor={isDarkMode ? '#E0E0E0' : 'white'}
-          />
-        </TouchableOpacity>
+          placeholder="All Roles"
+          buttonRightIcon={DownIcon}
+        />
       </View>
 
-      <Picker
-        style={{ 
-          backgroundColor: isDarkMode ? '#1E1E1E' : 'white', 
-          color: isDarkMode ? '#E0E0E0' : 'black', 
-          borderWidth: 1,
-          borderRadius: 8,
-          borderColor: isDarkMode ? '#1E1E1E' : 'gray',
-          height: 55, 
-          width: 150, 
-          fontFamily: 'Inter-18pt-Regular', 
-          fontSize: 16, 
-          padding: 12 ,
-          marginLeft: 12
-        }}
-        dropdownIconColor={isDarkMode ? '#E0E0E0' : 'black'}
-        mode='dropdown'
-        selectedValue={selectedRole}
-        onValueChange={(itemValue) => setSelectedRole(itemValue)}
-      >
-        <Picker.Item label="Show All" value=""/>
-        <Picker.Item label="Admin" value="Admin"/>
-        <Picker.Item label="Student" value="Student"/>
-        <Picker.Item label="Teacher" value="Teacher"/>          
-      </Picker>
+      {/* Pagination Controls */}
+      <PaginationControls />
 
-      {/* Show message when search returns no results */}
+      {/* User List */}
       {searchQuery.length > 0 && filteredUsers.length === 0 ? (
-        <View className='flex-1 items-center justify-center'>
-          <Image
-            className="w-[100] h-[100] opacity-50"
-            contentFit="contain"
-            source={require('@/assets/images/no_results.png')}
-          />
-          <Text className={`font-inter_regular text-center mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-            No users found matching "{searchQuery}"
-          </Text>
-          <Text className={`font-inter_regular text-center mt-2 text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-            Try searching with different keywords
-          </Text>
-          <TouchableOpacity
-            className='bg-blue-500 rounded-xl h-[40px] justify-center items-center mt-4 px-4'
-            onPress={clearSearch}
-            activeOpacity={0.7}
-          >
-            <Text className='text-white font-psemibold text-base'>
-              Clear Search
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <View style={{
+            backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+            borderRadius: 12,
+            padding: 24,
+            alignItems: 'center',
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.1,
+            shadowRadius: 8,
+            elevation: 4,
+          }}>
+            <Image
+              source={require('@/assets/icons/search.png')}
+              style={{ width: 64, height: 64, marginBottom: 16, opacity: 0.5 }}
+              tintColor={isDarkMode ? '#B0B3B8' : '#65676B'}
+              contentFit="contain"
+              cachePolicy="memory-disk"
+            />
+            <Text style={{
+              fontSize: 18,
+              fontFamily: 'Inter-24pt-Bold',
+              color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+              textAlign: 'center',
+              marginBottom: 8,
+            }}>
+              No Results Found
             </Text>
-          </TouchableOpacity>
+            <Text style={{
+              fontSize: 14,
+              fontFamily: 'Inter-18pt-Regular',
+              color: isDarkMode ? '#B0B3B8' : '#65676B',
+              textAlign: 'center',
+              marginBottom: 20,
+            }}>
+              No users found matching "{searchQuery}"{'\n'}
+              Try searching with different keywords
+            </Text>
+            <TouchableOpacity
+              onPress={clearSearch}
+              style={{
+                backgroundColor: '#1877F2',
+                borderRadius: 8,
+                paddingVertical: 12,
+                paddingHorizontal: 24,
+              }}
+            >
+              <Text style={{
+                color: '#FFFFFF',
+                fontSize: 16,
+                fontFamily: 'Inter-24pt-SemiBold',
+              }}>
+                Clear Search
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
       ) : (
-        <FlashList
-          data={filteredUsers}
-          renderItem={({ item }: { item: User }) => {
-            const isCurrentItemDeleting = deletingId === item._id;
-            
-            const highlightText = (text: string, query: string) => {
-              if (!query.trim()) return text;
-              
-              const parts = text.split(new RegExp(`(${query})`, 'gi'));
-              return parts.map((part, index) => 
-                part.toLowerCase() === query.toLowerCase() ? 
-                  <Text key={index} className={`${isDarkMode ? 'bg-yellow-600' : 'bg-yellow-200'} font-inter_bold`}>
-                    {part}
-                  </Text> : part
-              );
-            };
-
-            return (
-              <View className={`flex-row items-center p-3 border-b ${isDarkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-                <Image
-                  source={ item.profilePicture ? { uri: item.profilePicture } : require('@/assets/images/sample_profile_picture.png')}
-                  className="w-12 h-12 rounded-full self-start"
-                  contentFit="cover"
-                  cachePolicy="memory-disk"
-                />
-                <View className='flex-column ml-2 flex-shrink self-start'>
-                  <Text className={`font-inter_semibold text-lg ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                    {searchQuery ? 
-                      highlightText(`${item.lastName}, ${item.firstName} (${item.userId || 'N/A'})`, searchQuery)  :
-                      `${item.lastName}, ${item.firstName} (${item.userId || 'N/A'})`
-                    }
-                  </Text>
-                  <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                    {searchQuery ? 
-                      highlightText(item.email, searchQuery) :
-                      item.email
-                    }
-                  </Text>
-                  <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                    Password: {item.temporaryPassword || 'N/A'}
-                  </Text>
-                  <View className='flex-row'>
-                    <Text className={`font-inter_semibold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                      Status:
-                    </Text>
-                    <Text className={`font-inter_regular text-sm 
-                      ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                      {item.status === 'active'
-                        ? ' Active'
-                        : item.status === 'inactive'
-                        ? ' Inactive'
-                        : item.status === 'pending'
-                        ? ' Pending'
-                        : item.status === 'suspended'
-                        ? ' Suspended'
-                        : ''}
-                    </Text>
-                  </View>
-                </View>
-          
-                <View className='ml-auto flex-row self-start'>
-                  <TouchableOpacity
-                    className={`mr-1 ${isDarkMode ? 'bg-green-500' : 'bg-green-600'}`}
-                    onPress={() => handleEditUser(item._id)}
-                    activeOpacity={0.7}
-                    style={{ 
-                      borderRadius: 8,
-                      padding: 8,
-                    }}
-                  >
-                    <EditIcon width={24} height={24} fill={isDarkMode ? '#E0E0E0' : 'white'}/>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    className={`${isDarkMode ? 'bg-red-500' : 'bg-red-600'}`}
-                    onPress={() => handleDeleteUser(item._id)}
-                    activeOpacity={0.7}
-                    style={{ 
-                      borderRadius: 8,
-                      padding: 8,
-                    }}
-                  >
-                    <DeleteIcon width={24} height={24} fill={isDarkMode ? '#E0E0E0' : 'white'}/>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )
-          }}
-          keyExtractor={(item) => item._id}
-          estimatedItemSize={100}
-          extraData={[isDarkMode, searchQuery]}
-          onRefresh={() => fetchUsers(selectedRole)}
-          refreshing={refreshing}
-          showsVerticalScrollIndicator={false}
-          
-        />
+        <View style={{ flex: 1, paddingHorizontal: 16 }}>
+          <FlashList
+            data={filteredUsers}
+            optimizeItemArrangement={true}
+            renderItem={renderUserItem}
+            keyExtractor={keyExtractor}
+            contentContainerStyle={{ paddingVertical: 16 }}
+            showsVerticalScrollIndicator={false}
+            extraData={[isDarkMode, searchQuery, deletingId]}
+          />
+        </View>
       )}   
-      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'}/>
+      
+      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+      
       <AddUserModal
         isVisible={isAddUserModalVisible}
         onClose={handleCloseAddUserModal}
         onSubmitBulkFile={handleSubmitBulkUsersFile}
         isDarkMode={isDarkMode}
       />
-    </SafeAreaView>
+    </View>
   )
 }
 

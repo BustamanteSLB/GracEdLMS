@@ -6,6 +6,137 @@ const jwt = require("jsonwebtoken");
 const jwtConfig = require("../config/jwt");
 const asyncHandler = require("../utils/asyncHandler");
 const { ErrorResponse } = require("../utils/errorResponse");
+const multer = require("multer");
+const path = require("path");
+const { bucket } = require("../config/firebaseService"); // Add Firebase import
+
+// Configure multer for image uploads
+const storage = multer.memoryStorage(); // Use memory storage for Firebase
+
+const upload = multer({
+  storage: storage,
+  fileFilter: (req, file, cb) => {
+    // Image file validation
+    const allowedImageTypes = [
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/gif",
+      "image/webp",
+    ];
+    if (allowedImageTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(
+        new Error(
+          "Only image files (JPEG, JPG, PNG, GIF, WebP) are allowed for profile pictures!",
+        ),
+        false,
+      );
+    }
+  },
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+  },
+});
+
+// Helper function to upload image to Firebase Storage
+const uploadImageToFirebase = async (file, folder = "profile-pictures") => {
+  try {
+    const fileName = `${folder}/${Date.now()}-${Math.round(
+      Math.random() * 1e9,
+    )}${path.extname(file.originalname)}`;
+    const fileUpload = bucket.file(fileName);
+
+    const stream = fileUpload.createWriteStream({
+      metadata: {
+        contentType: file.mimetype,
+      },
+      public: true, // Make the file publicly accessible
+    });
+
+    return new Promise((resolve, reject) => {
+      stream.on("error", (error) => {
+        console.log("Firebase upload error:", error);
+        reject(error);
+      });
+
+      stream.on("finish", async () => {
+        try {
+          // Make the file public
+          await fileUpload.makePublic();
+
+          // Get the public URL
+          const publicUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
+          resolve(publicUrl);
+        } catch (error) {
+          console.log("Error making file public:", error);
+          reject(error);
+        }
+      });
+
+      stream.end(file.buffer);
+    });
+  } catch (error) {
+    console.log("Error uploading to Firebase:", error);
+    throw error;
+  }
+};
+
+// @desc    Upload profile picture to Firebase Storage (for current user)
+// @route   POST /api/v1/auth/upload-profile-picture
+// @access  Private (All authenticated users)
+const uploadUserProfilePicture = asyncHandler(async (req, res, next) => {
+  upload.single("profileImage")(req, res, async (err) => {
+    if (err) {
+      return next(new ErrorResponse(`File upload error: ${err.message}`, 400));
+    }
+
+    if (!req.file) {
+      return next(new ErrorResponse("Please upload an image file", 400));
+    }
+
+    try {
+      console.log(
+        `User ${req.user.username} uploading profile picture to Firebase Storage...`,
+      );
+
+      // Upload to Firebase Storage
+      const firebaseUrl = await uploadImageToFirebase(
+        req.file,
+        `profile-pictures/${req.user.role.toLowerCase()}s`,
+      );
+
+      console.log("Profile picture uploaded successfully:", firebaseUrl);
+
+      // Optionally update user's profile picture in database immediately
+      await User.findByIdAndUpdate(
+        req.user.id,
+        { profilePicture: firebaseUrl },
+        { runValidators: true },
+      );
+
+      res.status(200).json({
+        success: true,
+        message: "Profile picture uploaded and updated successfully",
+        data: {
+          url: firebaseUrl,
+          originalName: req.file.originalname,
+          size: req.file.size,
+          mimetype: req.file.mimetype,
+        },
+      });
+    } catch (error) {
+      console.log("Error uploading profile picture:", error);
+      return next(
+        new ErrorResponse(
+          `Error uploading profile picture: ${error.message}`,
+          500,
+        ),
+      );
+    }
+  });
+});
 
 // Utility function to sign JWT token
 const signToken = (id) => {
@@ -22,7 +153,7 @@ exports.login = asyncHandler(async (req, res, next) => {
 
   if (!identifier || !password) {
     return next(
-      new ErrorResponse("Please provide username/userId and password", 400)
+      new ErrorResponse("Please provide username/userId and password", 400),
     );
   }
 
@@ -33,7 +164,7 @@ exports.login = asyncHandler(async (req, res, next) => {
 
   if (!user || !(await user.comparePassword(password, user.password))) {
     return next(
-      new ErrorResponse("Incorrect username/userId or password", 401)
+      new ErrorResponse("Incorrect username/userId or password", 401),
     );
   }
 
@@ -41,8 +172,8 @@ exports.login = asyncHandler(async (req, res, next) => {
     return next(
       new ErrorResponse(
         `Account status is '${user.status}'. Access denied.`,
-        403
-      )
+        403,
+      ),
     );
   }
 
@@ -83,6 +214,7 @@ exports.login = asyncHandler(async (req, res, next) => {
 // @access  Private/Admin (or Public if self-registration is enabled with specific logic)
 exports.register = asyncHandler(async (req, res, next) => {
   const {
+    userId, // Now required from admin
     username,
     firstName,
     middleName,
@@ -93,31 +225,27 @@ exports.register = asyncHandler(async (req, res, next) => {
     address,
     sex,
     role,
-    profilePicture, // Optional
-    status, // Allow status to be passed but will be overridden for admin-created users
+    profilePicture,
+    status,
   } = req.body;
 
-  // When admin creates a user, status is automatically set to 'active'
-  // This ensures admin-created accounts are immediately usable
   const userStatus = "active";
 
-  // Basic check for core required fields (Mongoose schema will do more detailed validation)
+  // Updated required field check - removed email, phoneNumber, address
   if (
+    !userId ||
     !username ||
     !firstName ||
     !lastName ||
-    !email ||
     !password ||
-    !phoneNumber ||
-    !address ||
     !role ||
     !sex
   ) {
     return next(
       new ErrorResponse(
-        "Missing required fields: username, firstName, lastName, email, password, phoneNumber, address, role, sex",
-        400
-      )
+        "Missing required fields: userId, username, firstName, lastName, password, role, sex",
+        400,
+      ),
     );
   }
 
@@ -126,26 +254,28 @@ exports.register = asyncHandler(async (req, res, next) => {
     return next(
       new ErrorResponse(
         `Invalid value for sex. Allowed values are: ${validSexValues.join(
-          ", "
+          ", ",
         )}.`,
-        400
-      )
+        400,
+      ),
     );
   }
 
   let newUser;
   const userData = {
+    userId, // Use admin-provided userId
     username,
     firstName,
     middleName,
     lastName,
-    email,
+    email: email && email.trim() !== "" ? email.trim() : undefined, // Only set if provided and not empty
     password,
-    phoneNumber,
-    address,
+    phoneNumber:
+      phoneNumber && phoneNumber.trim() !== "" ? phoneNumber : undefined, // Only set if provided and not empty
+    address: address && address.trim() !== "" ? address.trim() : undefined, // Only set if provided and not empty
     role,
     sex,
-    status: userStatus, // Always set to 'active' for admin-created users
+    status: userStatus,
     profilePicture,
   };
 
@@ -163,8 +293,8 @@ exports.register = asyncHandler(async (req, res, next) => {
       return next(
         new ErrorResponse(
           `Invalid user role '${role}' specified for creation`,
-          400
-        )
+          400,
+        ),
       );
   }
 
@@ -249,16 +379,16 @@ exports.updateMe = asyncHandler(async (req, res, next) => {
     return next(
       new ErrorResponse(
         `Invalid value for sex. Allowed values are: ${validSexValues.join(
-          ", "
+          ", ",
         )}.`,
-        400
-      )
+        400,
+      ),
     );
   }
 
   // Remove undefined fields so they don't overwrite existing data with null
   Object.keys(fieldsToUpdate).forEach(
-    (key) => fieldsToUpdate[key] === undefined && delete fieldsToUpdate[key]
+    (key) => fieldsToUpdate[key] === undefined && delete fieldsToUpdate[key],
   );
 
   if (Object.keys(fieldsToUpdate).length === 0) {
@@ -301,7 +431,7 @@ exports.updatePassword = asyncHandler(async (req, res, next) => {
 
   if (!currentPassword || !newPassword) {
     return next(
-      new ErrorResponse("Please provide current and new password", 400)
+      new ErrorResponse("Please provide current and new password", 400),
     );
   }
 
@@ -356,16 +486,16 @@ exports.updateDetails = asyncHandler(async (req, res, next) => {
     return next(
       new ErrorResponse(
         `Invalid value for sex. Allowed values are: ${validSexValues.join(
-          ", "
+          ", ",
         )}.`,
-        400
-      )
+        400,
+      ),
     );
   }
 
   // Remove undefined fields so they don't overwrite existing data with null
   Object.keys(fieldsToUpdate).forEach(
-    (key) => fieldsToUpdate[key] === undefined && delete fieldsToUpdate[key]
+    (key) => fieldsToUpdate[key] === undefined && delete fieldsToUpdate[key],
   );
 
   if (Object.keys(fieldsToUpdate).length === 0) {
@@ -386,3 +516,69 @@ exports.updateDetails = asyncHandler(async (req, res, next) => {
     data: user,
   });
 });
+
+// @desc    Update current user's password without current password (admin-initiated or special cases)
+// @route   PUT /api/v1/auth/reset-my-password
+// @access  Private
+exports.resetMyPassword = asyncHandler(async (req, res, next) => {
+  const { newPassword } = req.body;
+
+  if (!newPassword) {
+    return next(new ErrorResponse("Please provide new password", 400));
+  }
+
+  if (newPassword.length < 8) {
+    return next(
+      new ErrorResponse("Password must be at least 8 characters", 400),
+    );
+  }
+
+  const user = await User.findById(req.user.id).select("+password");
+
+  if (!user) {
+    return next(new ErrorResponse("User not found", 404));
+  }
+
+  // Update password directly
+  user.password = newPassword;
+  await user.save(); // Pre-save hook in User model will hash it
+
+  res.status(200).json({
+    success: true,
+    message: "Password updated successfully",
+  });
+});
+
+// @desc    Verify if provided password matches current user's password
+// @route   POST /api/v1/auth/verify-password
+// @access  Private
+exports.verifyPassword = asyncHandler(async (req, res, next) => {
+  const { password } = req.body;
+
+  if (!password) {
+    return next(new ErrorResponse("Please provide password to verify", 400));
+  }
+
+  const user = await User.findById(req.user.id).select("+password");
+
+  if (!user) {
+    return next(new ErrorResponse("User not found", 404));
+  }
+
+  // Check if password matches - use comparePassword instead of matchPassword
+  const isMatch = await user.comparePassword(password, user.password);
+
+  if (isMatch) {
+    res.status(200).json({
+      success: true,
+      data: {
+        isMatch: true,
+      },
+    });
+  } else {
+    return next(new ErrorResponse("Password does not match", 401));
+  }
+});
+
+// Export the new function
+exports.uploadUserProfilePicture = uploadUserProfilePicture;

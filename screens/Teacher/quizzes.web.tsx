@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,16 +12,19 @@ import {
   useColorScheme,
   VirtualizedList,
 } from 'react-native';
-import { Picker } from '@react-native-picker/picker';
 import apiClient from '@/app/services/apiClient';
 import { useAuth } from '@/contexts/AuthContext';
-import AddEditQuizModal from '@/components/AddEditQuizModal'
+import { useRouter, useFocusEffect } from 'expo-router'; // Add useFocusEffect
 import ContextMenu from '@/components/ContextMenu';
 import DeleteIcon from '@/assets/icons/delete.svg';
+import MoreVertIcon from '@/assets/icons/more_vert.svg';
 import { useDarkMode } from '@/contexts/DarkModeContext'; 
 import { StatusBar } from 'expo-status-bar';
 import { Image } from 'expo-image';
 import { cssInterop } from 'nativewind';
+import { RadioButton, RadioButtonGroup } from '@/components/RadioButton';
+import Checkbox from 'expo-checkbox';
+import Dropdown, { DropdownItem } from '@/components/Dropdown';
 
 cssInterop(Image, { className: "style" });
 
@@ -32,6 +35,7 @@ interface Subject {
   gradeLevel?: string;
   section?: string;
   schoolYear?: string;
+  subjectImage?: string;
 }
 
 interface User {
@@ -44,7 +48,7 @@ interface User {
 interface Question {
   _id: string;
   text: string;
-  type: 'multiple_choice' | 'multiple_answers' | 'true_false';
+  type: 'multiple_choice' | 'multiple_answers' | 'true_false' | 'short_answer';
   options: Array<{
     text: string;
     isCorrect: boolean;
@@ -53,6 +57,8 @@ interface Question {
   itemPoints: number;
   isRequired: boolean;
   answer: string | string[] | boolean;
+  correctAnswers?: string[];
+  caseSensitive?: boolean;
 }
 
 interface Quiz {
@@ -73,7 +79,9 @@ interface Quiz {
 
 // Teacher's Quizzes Page
 const QuizzesWeb = () => {
+  document.title = 'Quizzes - GracEdLMS';
   const { user } = useAuth();
+  const router = useRouter();
   const colorScheme = useColorScheme();
   const { isDarkMode } = useDarkMode();
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
@@ -98,32 +106,61 @@ const QuizzesWeb = () => {
   const [imagePreviewModal, setImagePreviewModal] = useState(false);
   const [selectedPreviewImage, setSelectedPreviewImage] = useState<string | null>(null);
 
-  // Filter options
-  const statusOptions = [
+  // Memoized dropdown options
+  const subjectFilterOptions: DropdownItem[] = useMemo(() => {
+    const options: DropdownItem[] = [
+      { label: 'All Subjects', value: '' }
+    ];
+    
+    subjects.forEach((subject) => {
+      const label = `${subject.subjectName}${subject.gradeLevel ? ` - ${subject.gradeLevel}` : ''}${subject.section ? ` (${subject.section})` : ''}`;
+      options.push({
+        label,
+        value: subject._id
+      });
+    });
+    
+    return options;
+  }, [subjects]);
+
+  const statusFilterOptions: DropdownItem[] = useMemo(() => [
     { label: 'All Statuses', value: '' },
     { label: 'Draft', value: 'draft' },
     { label: 'Published', value: 'published' },
     { label: 'Archived', value: 'archived' },
     { label: 'Graded', value: 'graded' },
     { label: 'Closed', value: 'closed' },
-  ];
+  ], []);
 
-  const quarterOptions = [
+  const quarterFilterOptions: DropdownItem[] = useMemo(() => [
     { label: 'All Quarters', value: '' },
     { label: 'First Quarter', value: 'First Quarter' },
     { label: 'Second Quarter', value: 'Second Quarter' },
     { label: '3rd Quarter', value: '3rd Quarter' },
     { label: '4th Quarter', value: '4th Quarter' },
-  ];
+  ], []);
 
-  useEffect(() => {
-    fetchQuizzes();
-    fetchSubjects();
-  }, []);
-
+  // Replace the initial useEffect with useFocusEffect
+  useFocusEffect(
+    useCallback(() => {
+      fetchQuizzes();
+      fetchSubjects();
+    }, [selectedSubject, selectedStatus, selectedQuarter, searchQuery])
+  );
+  
+  // A cleaner pattern for both focus and state changes:
   useEffect(() => {
     fetchQuizzes();
   }, [selectedSubject, selectedStatus, selectedQuarter]);
+
+  // This ensures a refresh happens specifically when navigating back to this screen
+  useFocusEffect(
+    useCallback(() => {
+      fetchQuizzes();
+      fetchSubjects();
+      // Optional: Return a cleanup function if needed
+    }, []) 
+  );
 
   const fetchQuizzes = async () => {
     setLoading(true);
@@ -153,13 +190,14 @@ const QuizzesWeb = () => {
   };
 
   const handleCreateQuiz = () => {
-    setSelectedQuiz(null);
-    setAddEditModalVisible(true);
+    router.push('/(teachers)/add-quiz');
   };
 
   const handleEditQuiz = (quiz: Quiz) => {
-    setSelectedQuiz(quiz);
-    setAddEditModalVisible(true);
+    router.push({
+      pathname: '/(teachers)/edit-quiz',
+      params: { id: quiz._id }
+    });
     setContextMenuVisible(false);
   };
 
@@ -252,7 +290,7 @@ const QuizzesWeb = () => {
 
   const openContextMenu = (e: any, quiz: Quiz) => {
     const { pageX, pageY } = e.nativeEvent;
-    setContextMenuCoords({ x: pageX - 150, y: pageY - 50 });
+    setContextMenuCoords({ x: pageX, y: pageY });
     setContextMenuQuiz(quiz);
     setContextMenuVisible(true);
   };
@@ -282,6 +320,14 @@ const QuizzesWeb = () => {
     }
   };
 
+  const handleViewSubmissions = (quiz: Quiz) => {
+    router.push({
+      pathname: '/(teachers)/quiz/submissions/[id]',
+      params: { id: quiz._id }
+    });
+    setContextMenuVisible(false);
+  };
+
   const contextMenuItems = [
     {
       label: 'Edit',
@@ -305,6 +351,17 @@ const QuizzesWeb = () => {
       ),
       onPress: () => contextMenuQuiz && handlePreviewQuiz(contextMenuQuiz),
     },
+    ...(contextMenuQuiz?.status === 'published' || contextMenuQuiz?.status === 'closed' ? [{
+      label: 'View Submissions',
+      icon: (
+        <Image
+          source={require('@/assets/icons/attach.png')}
+          style={{ width: 20, height: 20, marginRight: 8 }}
+          tintColor={isDarkMode ? '#E0E0E0' : '#333'}
+        />
+      ),
+      onPress: () => contextMenuQuiz && handleViewSubmissions(contextMenuQuiz),
+    }] : []),
     {
       label: 'Duplicate',
       icon: (
@@ -341,92 +398,136 @@ const QuizzesWeb = () => {
     },
   ];
 
-  const renderQuizItem = ({ item }: { item: Quiz }) => (
-    <TouchableOpacity
-      style={{
-        backgroundColor: isDarkMode ? '#1F2937' : '#FFFFFF',
-        borderRadius: 12,
-        padding: 16,
-        marginBottom: 12,
-        borderWidth: 1,
-        borderColor: isDarkMode ? '#374151' : '#E5E7EB',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 2,
-      }}
-      onPress={() => handlePreviewQuiz(item)}
-    >
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <View style={{ flex: 1 }}>
-          <Text
-            style={{
-              fontSize: 18,
-              fontFamily: 'Inter-24pt-Bold',
-              color: isDarkMode ? '#F9FAFB' : '#111827',
-              marginBottom: 4,
-            }}
-            numberOfLines={1}
-          >
-            {item.title}
-          </Text>
-          <Text
-            style={{
-              fontSize: 14,
-              fontFamily: 'Inter-18pt-Regular',
-              color: isDarkMode ? '#9CA3AF' : '#6B7280',
-              marginBottom: 8,
-            }}
-          >
-            {item.subject?.subjectName || 'No Subject'} • {item.quarter}
-          </Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-            <View
-              style={{
-                backgroundColor: getStatusColor(item.status),
-                paddingHorizontal: 8,
-                paddingVertical: 4,
-                borderRadius: 12,
-                marginRight: 12,
-              }}
-            >
+  const renderQuizItem = ({ item }: { item: Quiz }) => {
+    // Add these for subject image display
+    const initials = item.subject?.subjectName ? item.subject.subjectName.slice(0, 2).toUpperCase() : 'QZ';
+    const getConsistentColor = (str: string) => {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+      }
+      const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#F97316', '#14B8A6', '#EC4899'];
+      return colors[Math.abs(hash) % colors.length];
+    };
+    const bgColor = getConsistentColor(item.subject?.subjectName || 'Quiz');
+
+    return (
+      <TouchableOpacity
+        style={{
+          backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
+          borderRadius: 12,
+          padding: 16,
+          marginBottom: 12,
+          borderWidth: 1,
+          borderColor: isDarkMode ? '#333333' : '#E5E7EB',
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.1,
+          shadowRadius: 4,
+          elevation: 2,
+        }}
+        onPress={() => handlePreviewQuiz(item)}
+      >
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <View style={{ flexDirection: 'row', flex: 1 }}>
+            {/* Subject Image or Icon */}
+            {item.subject?.subjectImage ? (
+              <Image
+                source={{ uri: item.subject.subjectImage }}
+                style={{ width: 50, height: 50, borderRadius: 8 }}
+                contentFit="cover"
+              />
+            ) : (
+              <View
+                style={{
+                  width: 50,
+                  height: 50,
+                  borderRadius: 8,
+                  backgroundColor: bgColor,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ 
+                  color: 'white', 
+                  fontSize: 18, 
+                  fontFamily: 'Inter-Bold' 
+                }}>
+                  {initials}
+                </Text>
+              </View>
+            )}
+
+            {/* Content */}
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text
+                style={{
+                  fontSize: 18,
+                  fontFamily: 'Inter-Bold',
+                  color: isDarkMode ? '#F9FAFB' : '#111827',
+                  marginBottom: 4,
+                }}
+                numberOfLines={1}
+              >
+                {item.title}
+              </Text>
+              <Text
+                style={{
+                  fontSize: 14,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#9CA3AF' : '#6B7280',
+                  marginBottom: 8,
+                }}
+              >
+                {item.subject?.subjectName || 'No Subject'} • {item.quarter}
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <View
+                  style={{
+                    backgroundColor: getStatusColor(item.status),
+                    paddingHorizontal: 8,
+                    paddingVertical: 4,
+                    borderRadius: 12,
+                    marginRight: 12,
+                  }}
+                >
+                  <Text style={{ 
+                    color: 'white', 
+                    fontSize: 12, 
+                    fontFamily: 'Inter-Medium' 
+                  }}>
+                    {getStatusText(item.status)}
+                  </Text>
+                </View>
+                <Text style={{ 
+                  fontSize: 12, 
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#9CA3AF' : '#6B7280' 
+                }}>
+                  {item.questions.length} questions • {item.quizPoints} points
+                </Text>
+              </View>
               <Text style={{ 
-                color: 'white', 
                 fontSize: 12, 
-                fontFamily: 'Inter-18pt-Medium' 
+                fontFamily: 'Inter-Regular',
+                color: isDarkMode ? '#9CA3AF' : '#6B7280' 
               }}>
-                {getStatusText(item.status)}
+                Created: {new Date(item.createdAt).toLocaleDateString()}
               </Text>
             </View>
-            <Text style={{ 
-              fontSize: 12, 
-              fontFamily: 'Inter-18pt-Regular',
-              color: isDarkMode ? '#9CA3AF' : '#6B7280' 
-            }}>
-              {item.questions.length} questions • {item.quizPoints} points
-            </Text>
           </View>
-          <Text style={{ 
-            fontSize: 12, 
-            fontFamily: 'Inter-18pt-Regular',
-            color: isDarkMode ? '#9CA3AF' : '#6B7280' 
-          }}>
-            Created: {new Date(item.createdAt).toLocaleDateString()}
-          </Text>
+
+          {/* Menu Icon */}
+          <TouchableOpacity
+            onPress={(e) => openContextMenu(e, item)}
+            style={{ padding: 8 }}
+          >
+            <MoreVertIcon width={20} height={20} fill={isDarkMode ? '#E0E0E0' : 'black'} />
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity
-          onPress={(e) => openContextMenu(e, item)}
-          style={{ padding: 8 }}
-        >
-          <Image
-            source={require('@/assets/icons/more_vert.png')}
-            style={{ width: 20, height: 20, tintColor: isDarkMode ? '#9CA3AF' : '#6B7280' }}
-          />
-        </TouchableOpacity>
-      </View>
-    </TouchableOpacity>
-  );
+      </TouchableOpacity>
+    );
+  };
 
   // VirtualizedList required functions
   const getItem = (data: Quiz[], index: number) => data[index];
@@ -434,23 +535,23 @@ const QuizzesWeb = () => {
   const keyExtractor = (item: Quiz, index: number) => item._id;
 
   return (
-    <View style={{ flex: 1, backgroundColor: isDarkMode ? '#111827' : '#F9FAFB' }}>
+    <View style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB' }}>
       {/* Header */}
       <View
         style={{
-          backgroundColor: isDarkMode ? '#1F2937' : '#FFFFFF',
+          backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
           paddingHorizontal: 20,
           paddingTop: 20,
           paddingBottom: 16,
           borderBottomWidth: 1,
-          borderBottomColor: isDarkMode ? '#374151' : '#E5E7EB',
+          borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
         }}
       >
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
           <Text
             style={{
               fontSize: 24,
-              fontFamily: 'Inter-24pt-Bold',
+              fontFamily: 'Inter-Bold',
               color: isDarkMode ? '#F9FAFB' : '#111827',
             }}
           >
@@ -489,12 +590,12 @@ const QuizzesWeb = () => {
                 value={searchQuery}
                 onChangeText={setSearchQuery}
                 style={{
-                  backgroundColor: isDarkMode ? '#374151' : '#F3F4F6',
+                  backgroundColor: isDarkMode ? '#2A2A2A' : '#F3F4F6',
                   borderRadius: 8,
                   paddingHorizontal: 12,
                   paddingVertical: 10,
-                  color: isDarkMode ? '#F9FAFB' : '#111827',
-                  fontFamily: 'Inter-18pt-Regular',
+                  color: isDarkMode ? '#E0E0E0' : '#111827',
+                  fontFamily: 'Inter-Regular',
                 }}
                 placeholderTextColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
               />
@@ -517,119 +618,58 @@ const QuizzesWeb = () => {
           </View>
 
           <View style={{ flexDirection: 'row', gap: 8 }}>
-            {/* Subject Picker */}
+            {/* Subject Dropdown - REPLACED PICKER */}
             <View style={{ flex: 1 }}>
               <Text style={{ 
                 fontSize: 12, 
-                fontFamily: 'Inter-18pt-Medium',
-                color: isDarkMode ? '#9CA3AF' : '#6B7280', 
+                fontFamily: 'Inter-Medium',
+                color: isDarkMode ? '#E0E0E0' : '#6B7280', 
                 marginBottom: 4 
               }}>
                 Subject
               </Text>
-              <View style={{ 
-                backgroundColor: isDarkMode ? '#374151' : '#F3F4F6', 
-                borderRadius: 8,
-                borderWidth: 1,
-                borderColor: isDarkMode ? '#4B5563' : '#D1D5DB',
-              }}>
-                <Picker
-                  selectedValue={selectedSubject}
-                  onValueChange={setSelectedSubject}
-                  style={{
-                    color: isDarkMode ? '#F9FAFB' : '#111827',
-                    backgroundColor: 'transparent',
-                    fontFamily: 'Inter-18pt-Regular',
-                    padding: 8
-                  }}
-                  dropdownIconColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
-                >
-                  <Picker.Item label="All Subjects" value="" />
-                  {subjects.map((subject) => (
-                    <Picker.Item
-                      key={subject._id}
-                      label={`${subject.subjectName}${subject.gradeLevel ? ` - ${subject.gradeLevel}` : ''}${subject.section ? ` (${subject.section})` : ''}`}
-                      value={subject._id}
-                    />
-                  ))}
-                </Picker>
-              </View>
+              <Dropdown
+                data={subjectFilterOptions}
+                selectedValue={selectedSubject}
+                onValueChange={setSelectedSubject}
+                placeholder="All Subjects"
+              />
             </View>
 
-            {/* Status Picker */}
+            {/* Status Dropdown - REPLACED PICKER */}
             <View style={{ flex: 1 }}>
               <Text style={{ 
                 fontSize: 12, 
-                fontFamily: 'Inter-18pt-Medium',
-                color: isDarkMode ? '#9CA3AF' : '#6B7280', 
+                fontFamily: 'Inter-Medium',
+                color: isDarkMode ? '#E0E0E0' : '#6B7280',
                 marginBottom: 4 
               }}>
                 Status
               </Text>
-              <View style={{ 
-                backgroundColor: isDarkMode ? '#374151' : '#F3F4F6', 
-                borderRadius: 8,
-                borderWidth: 1,
-                borderColor: isDarkMode ? '#4B5563' : '#D1D5DB',
-              }}>
-                <Picker
-                  selectedValue={selectedStatus}
-                  onValueChange={setSelectedStatus}
-                  style={{
-                    color: isDarkMode ? '#F9FAFB' : '#111827',
-                    backgroundColor: 'transparent',
-                    fontFamily: 'Inter-18pt-Regular',
-                    padding: 8
-                  }}
-                  dropdownIconColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
-                >
-                  {statusOptions.map((status) => (
-                    <Picker.Item
-                      key={status.value}
-                      label={status.label}
-                      value={status.value}
-                    />
-                  ))}
-                </Picker>
-              </View>
+              <Dropdown
+                data={statusFilterOptions}
+                selectedValue={selectedStatus}
+                onValueChange={setSelectedStatus}
+                placeholder="All Statuses"
+              />
             </View>
 
-            {/* Quarter Picker */}
+            {/* Quarter Dropdown - REPLACED PICKER */}
             <View style={{ flex: 1 }}>
               <Text style={{ 
                 fontSize: 12, 
-                fontFamily: 'Inter-18pt-Medium',
-                color: isDarkMode ? '#9CA3AF' : '#6B7280', 
+                fontFamily: 'Inter-Medium',
+                color: isDarkMode ? '#E0E0E0' : '#6B7280',
                 marginBottom: 4 
               }}>
                 Quarter
               </Text>
-              <View style={{ 
-                backgroundColor: isDarkMode ? '#374151' : '#F3F4F6', 
-                borderRadius: 8,
-                borderWidth: 1,
-                borderColor: isDarkMode ? '#4B5563' : '#D1D5DB',
-              }}>
-                <Picker
-                  selectedValue={selectedQuarter}
-                  onValueChange={setSelectedQuarter}
-                  style={{
-                    color: isDarkMode ? '#F9FAFB' : '#111827',
-                    backgroundColor: 'transparent',
-                    fontFamily: 'Inter-18pt-Regular',
-                    padding: 8
-                  }}
-                  dropdownIconColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
-                >
-                  {quarterOptions.map((quarter) => (
-                    <Picker.Item
-                      key={quarter.value}
-                      label={quarter.label}
-                      value={quarter.value}
-                    />
-                  ))}
-                </Picker>
-              </View>
+              <Dropdown
+                data={quarterFilterOptions}
+                selectedValue={selectedQuarter}
+                onValueChange={setSelectedQuarter}
+                placeholder="All Quarters"
+              />
             </View>
           </View>
         </View>
@@ -642,7 +682,7 @@ const QuizzesWeb = () => {
             <ActivityIndicator size="large" color="#3B82F6" />
             <Text style={{ 
               marginTop: 16, 
-              fontFamily: 'Inter-18pt-Regular',
+              fontFamily: 'Inter-Regular',
               color: isDarkMode ? '#9CA3AF' : '#6B7280' 
             }}>
               Loading quizzes...
@@ -671,7 +711,7 @@ const QuizzesWeb = () => {
             />
             <Text style={{ 
               fontSize: 18, 
-              fontFamily: 'Inter-24pt-SemiBold',
+              fontFamily: 'Inter-SemiBold',
               color: isDarkMode ? '#9CA3AF' : '#6B7280', 
               marginBottom: 8 
             }}>
@@ -679,7 +719,7 @@ const QuizzesWeb = () => {
             </Text>
             <Text style={{ 
               fontSize: 14, 
-              fontFamily: 'Inter-18pt-Regular',
+              fontFamily: 'Inter-Regular',
               color: isDarkMode ? '#6B7280' : '#9CA3AF', 
               textAlign: 'center' 
             }}>
@@ -697,7 +737,7 @@ const QuizzesWeb = () => {
         onClose={() => setContextMenuVisible(false)}
         items={contextMenuItems}
         menuStyle={{ 
-          backgroundColor: isDarkMode ? '#374151' : 'white', 
+          backgroundColor: isDarkMode ? '#333333' : 'white', 
           borderRadius: 8,
           minWidth: 150,
         }}
@@ -705,25 +745,8 @@ const QuizzesWeb = () => {
         labelStyle={{ 
           color: isDarkMode ? '#F9FAFB' : '#111827', 
           fontSize: 14,
-          fontFamily: 'Inter-18pt-Medium',
+          fontFamily: 'Inter-Medium',
         }}
-      />
-
-      {/* Add/Edit Quiz Modal */}
-      <AddEditQuizModal
-        visible={addEditModalVisible}
-        onClose={() => {
-          setAddEditModalVisible(false);
-          setSelectedQuiz(null);
-        }}
-        quiz={selectedQuiz}
-        subjects={subjects}
-        onSave={() => {
-          setAddEditModalVisible(false);
-          setSelectedQuiz(null);
-          fetchQuizzes();
-        }}
-        isDarkMode={isDarkMode}
       />
 
       {/* Preview Modal */}
@@ -733,13 +756,13 @@ const QuizzesWeb = () => {
         transparent={false}
         onRequestClose={() => setPreviewModalVisible(false)}
       >
-        <View style={{ flex: 1, backgroundColor: isDarkMode ? '#111827' : '#F9FAFB' }}>
+        <View style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB' }}>
           <View
             style={{
-              backgroundColor: isDarkMode ? '#1F2937' : '#FFFFFF',
+              backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
               padding: 20,
               borderBottomWidth: 1,
-              borderBottomColor: isDarkMode ? '#374151' : '#E5E7EB',
+              borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
               flexDirection: 'row',
               justifyContent: 'space-between',
               alignItems: 'center',
@@ -748,7 +771,7 @@ const QuizzesWeb = () => {
             <Text
               style={{
                 fontSize: 20,
-                fontFamily: 'Inter-24pt-Bold',
+                fontFamily: 'Inter-Bold',
                 color: isDarkMode ? '#F9FAFB' : '#111827',
               }}
             >
@@ -765,7 +788,7 @@ const QuizzesWeb = () => {
             >
               <Text style={{ 
                 color: 'white', 
-                fontFamily: 'Inter-18pt-Medium' 
+                fontFamily: 'Inter-Medium' 
               }}>
                 Close
               </Text>
@@ -776,18 +799,18 @@ const QuizzesWeb = () => {
             <ScrollView style={{ flex: 1, padding: 20 }}>
               <View
                 style={{
-                  backgroundColor: isDarkMode ? '#1F2937' : '#FFFFFF',
+                  backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
                   borderRadius: 12,
                   padding: 20,
                   marginBottom: 20,
                   borderWidth: 1,
-                  borderColor: isDarkMode ? '#374151' : '#E5E7EB',
+                  borderColor: isDarkMode ? '#333333' : '#E5E7EB',
                 }}
               >
                 <Text
                   style={{
                     fontSize: 24,
-                    fontFamily: 'Inter-24pt-Bold',
+                    fontFamily: 'Inter-Bold',
                     color: isDarkMode ? '#F9FAFB' : '#111827',
                     marginBottom: 8,
                   }}
@@ -798,7 +821,7 @@ const QuizzesWeb = () => {
                   <Text
                     style={{
                       fontSize: 18,
-                      fontFamily: 'Inter-24pt-SemiBold',
+                      fontFamily: 'Inter-SemiBold',
                       color: isDarkMode ? '#E5E7EB' : '#374151',
                       marginBottom: 8,
                     }}
@@ -810,7 +833,7 @@ const QuizzesWeb = () => {
                   <Text
                     style={{
                       fontSize: 14,
-                      fontFamily: 'Inter-18pt-Regular',
+                      fontFamily: 'Inter-Regular',
                       color: isDarkMode ? '#9CA3AF' : '#6B7280',
                       marginBottom: 16,
                     }}
@@ -821,21 +844,21 @@ const QuizzesWeb = () => {
                 <View style={{ flexDirection: 'row', gap: 16 }}>
                   <Text style={{ 
                     fontSize: 14, 
-                    fontFamily: 'Inter-18pt-Regular',
+                    fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280' 
                   }}>
                     Subject: {selectedQuiz.subject?.subjectName || 'No Subject'}
                   </Text>
                   <Text style={{ 
                     fontSize: 14, 
-                    fontFamily: 'Inter-18pt-Regular',
+                    fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280' 
                   }}>
                     Quarter: {selectedQuiz.quarter}
                   </Text>
                   <Text style={{ 
                     fontSize: 14, 
-                    fontFamily: 'Inter-18pt-Regular',
+                    fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280' 
                   }}>
                     Points: {selectedQuiz.quizPoints}
@@ -843,7 +866,7 @@ const QuizzesWeb = () => {
                   {selectedQuiz.timeLimit && (
                     <Text style={{ 
                       fontSize: 14, 
-                      fontFamily: 'Inter-18pt-Regular',
+                      fontFamily: 'Inter-Regular',
                       color: isDarkMode ? '#9CA3AF' : '#6B7280' 
                     }}>
                       Time: {selectedQuiz.timeLimit} minutes
@@ -856,18 +879,18 @@ const QuizzesWeb = () => {
                 <View
                   key={question._id}
                   style={{
-                    backgroundColor: isDarkMode ? '#1F2937' : '#FFFFFF',
+                    backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
                     borderRadius: 12,
                     padding: 20,
                     marginBottom: 16,
                     borderWidth: 1,
-                    borderColor: isDarkMode ? '#374151' : '#E5E7EB',
+                    borderColor: isDarkMode ? '#333333' : '#E5E7EB',
                   }}
                 >
                   <Text
                     style={{
                       fontSize: 16,
-                      fontFamily: 'Inter-24pt-SemiBold',
+                      fontFamily: 'Inter-SemiBold',
                       color: isDarkMode ? '#F9FAFB' : '#111827',
                       marginBottom: 12,
                     }}
@@ -880,11 +903,11 @@ const QuizzesWeb = () => {
                       {question.images.map((image, imgIndex) => (
                         <TouchableOpacity
                           key={imgIndex}
-                          onPress={() => handleImagePress(`http://192.168.100.5:5000${image}`)}
+                          onPress={() => handleImagePress(image)}
                           activeOpacity={0.8}
                         >
                           <Image
-                            source={{ uri: `http://192.168.100.5:5000${image}` }}
+                            source={{ uri: image }}
                             style={{
                               width: '100%',
                               height: 200,
@@ -899,63 +922,142 @@ const QuizzesWeb = () => {
                   )}
 
                   <View style={{ marginLeft: 8 }}>
-                    {question.options.map((option, optionIndex) => (
-                      <View
-                        key={optionIndex}
-                        style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          marginBottom: 8,
-                        }}
-                      >
-                        <View
+                    {question.type === 'short_answer' ? (
+                      <View>
+                        <TextInput
+                          placeholder="Your answer"
+                          editable={false}
                           style={{
-                            width: 20,
-                            height: 20,
-                            borderRadius: question.type === 'multiple_choice' || question.type === 'true_false' ? 10 : 4,
-                            borderWidth: 2,
-                            borderColor: option.isCorrect ? '#10B981' : '#9CA3AF',
-                            backgroundColor: option.isCorrect ? '#10B981' : 'transparent',
-                            marginRight: 12,
-                            justifyContent: 'center',
-                            alignItems: 'center',
+                            backgroundColor: isDarkMode ? '#2A2A2A' : '#F9FAFB',
+                            borderRadius: 8,
+                            padding: 12,
+                            color: isDarkMode ? '#E0E0E0' : '#111827',
+                            fontFamily: 'Inter-Regular',
+                            marginBottom: 12,
                           }}
-                        >
-                          {option.isCorrect && (
-                            <View
-                              style={{
-                                width: 8,
-                                height: 8,
-                                borderRadius: question.type === 'multiple_choice' || question.type === 'true_false' ? 4 : 2,
-                                backgroundColor: 'white',
-                              }}
-                            />
-                          )}
-                        </View>
-                        <Text
-                          style={{
-                            fontSize: 14,
-                            fontFamily: option.isCorrect ? 'Inter-24pt-SemiBold' : 'Inter-18pt-Regular',
-                            color: isDarkMode ? '#E5E7EB' : '#374151',
-                          }}
-                        >
-                          {option.text}
-                        </Text>
+                          placeholderTextColor={isDarkMode ? '#9ca3af' : '#6B7280'}
+                        />
+                        {question.correctAnswers && question.correctAnswers.length > 0 && (
+                          <View style={{
+                            backgroundColor: isDarkMode ? '#065F46' : '#ECFDF5',
+                            borderRadius: 8,
+                            padding: 12,
+                          }}>
+                            <Text style={{
+                              fontSize: 14,
+                              fontFamily: 'Inter-SemiBold',
+                              color: isDarkMode ? '#34D399' : '#059669',
+                              marginBottom: 8,
+                            }}>
+                              Correct answer(s):
+                            </Text>
+                            {question.correctAnswers.map((ans, idx) => (
+                              <Text key={idx} style={{
+                                fontSize: 14,
+                                fontFamily: 'Inter-Regular',
+                                color: isDarkMode ? '#6EE7B7' : '#047857',
+                                marginBottom: 4,
+                              }}>
+                                • {ans}
+                              </Text>
+                            ))}
+                            {question.caseSensitive && (
+                              <Text style={{
+                                fontSize: 12,
+                                fontFamily: 'Inter-Regular',
+                                color: isDarkMode ? '#34D399' : '#059669',
+                                marginTop: 8,
+                                fontStyle: 'italic',
+                              }}>
+                                (Case sensitive)
+                              </Text>
+                            )}
+                          </View>
+                        )}
                       </View>
-                    ))}
+                    ) : question.type === 'multiple_answers' ? (
+                      // For multiple answers, use Expo Checkbox
+                      <View>
+                        {question.options.map((option, optionIndex) => (
+                          <View
+                            key={optionIndex}
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              marginBottom: 12,
+                              padding: 8,
+                              borderRadius: 8,
+                              backgroundColor: option.isCorrect ? (isDarkMode ? '#065F46' : '#ECFDF5') : 'transparent',
+                            }}
+                          >
+                            <Checkbox
+                              value={option.isCorrect}
+                              disabled={true}
+                              style={{
+                                marginRight: 12,
+                                borderRadius: 4,
+                                width: 20,
+                                height: 20,
+                              }}
+                              color={option.isCorrect ? '#10B981' : undefined}
+                            />
+                            <Text
+                              style={{
+                                fontSize: 14,
+                                fontFamily: option.isCorrect ? 'Inter-SemiBold' : 'Inter-Regular',
+                                color: isDarkMode ? '#E5E7EB' : '#374151',
+                                flex: 1,
+                              }}
+                            >
+                              {option.text}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    ) : (
+                      // For single choice questions (multiple_choice, true_false), use RadioButton
+                      <View>
+                        {question.options.map((option, optionIndex) => (
+                          <RadioButton
+                            key={optionIndex}
+                            value={option.text}
+                            label={option.text}
+                            selected={option.isCorrect}
+                            disabled={true}
+                            activeColor="#10B981"
+                            inactiveColor={isDarkMode ? '#6B7280' : '#D1D5DB'}
+                            width={20}
+                            height={20}
+                            style={{
+                              marginBottom: 12,
+                              padding: 8,
+                              borderRadius: 8,
+                              backgroundColor: option.isCorrect ? (isDarkMode ? '#065F46' : '#ECFDF5') : 'transparent',
+                            }}
+                            labelStyle={{
+                              fontSize: 14,
+                              fontFamily: option.isCorrect ? 'Inter-SemiBold' : 'Inter-Regular',
+                              color: isDarkMode ? '#E5E7EB' : '#374151',
+                              flex: 1,
+                            }}
+                            labelClassName={isDarkMode ? 'text-gray-200' : 'text-gray-700'}
+                          />
+                        ))}
+                      </View>
+                    )}
                   </View>
 
                   <View style={{ marginTop: 12, flexDirection: 'row', justifyContent: 'space-between' }}>
                     <Text style={{ 
                       fontSize: 12, 
-                      fontFamily: 'Inter-18pt-Regular',
+                      fontFamily: 'Inter-Regular',
                       color: isDarkMode ? '#9CA3AF' : '#6B7280' 
                     }}>
                       Type: {question.type.replace('_', ' ')}
                     </Text>
                     <Text style={{ 
                       fontSize: 12, 
-                      fontFamily: 'Inter-18pt-Regular',
+                      fontFamily: 'Inter-Regular',
                       color: isDarkMode ? '#9CA3AF' : '#6B7280' 
                     }}>
                       Points: {question.itemPoints}

@@ -27,6 +27,7 @@ const CustomDrawerContent = (props:any) => {
   const handleLogout = useCallback(async () => {
     if (isLoading) { // Prevent multiple logout attempts while one is in progress
       console.log('Logout already in progress.');
+
       return;
     }
 
@@ -70,7 +71,7 @@ const CustomDrawerContent = (props:any) => {
   }, [logout, isLoading]); // Depend on logout and isLoading from AuthContext
 
   return (
-    <SafeAreaView
+    <View
       className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}
     >
       <DrawerContentScrollView {...props}>
@@ -80,17 +81,20 @@ const CustomDrawerContent = (props:any) => {
             contentFit="contain"
             source={require('../assets/images/GCCS-logo.png')}
             transition={200}
+            cachePolicy="memory-disk"
+            priority="high"
+            alt="GCCS Logo"
           />
           <Text className={`font-pbold text-xl text-center flex-shrink ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>Grace Community Christian School</Text>
         </View>
         <Divider />
-        <View className="flex-row items-center ios:p-1 android:p-1 web:p-4">
+        <View className="flex-row items-center px-4 py-1 web:py-4 my-1">
           <DarkModeIcon
-            className="ios:ml-3 android:ml-3 web:ml-0"
+            className="ml-0 mr-4 web:mr-3"
             width={24} height={24}
             fill={isDarkMode ? '#E0E0E0' : 'black'}
           />
-          <Text className={`font-inter_semibold mr-auto ios:ml-4 android:ml-4 web:ml-3 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>Dark Mode</Text>
+          <Text className={`font-inter_semibold mr-auto ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>Dark Mode</Text>
           <Switch
             {...Platform.select({
               web:{
@@ -125,7 +129,7 @@ const CustomDrawerContent = (props:any) => {
           onPress={handleLogout}
         />
       </DrawerContentScrollView>
-    </SafeAreaView>
+    </View>
   )
 }
 

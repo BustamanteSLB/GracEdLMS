@@ -49,8 +49,16 @@ const SignInAndroid = () => {
       Alert.alert('Success', 'Login successful!');
     } catch (error: any) {
       const backendErrorMessage = error.response?.data?.message || error.message || 'An unknown login error occurred';
-      if (backendErrorMessage === 'Incorrect username/userId or password') {
-        Alert.alert('Login Failed', 'The username/userId you entered is incorrect.');
+      
+      // Show specific error for admin login attempts on mobile
+      if (backendErrorMessage.includes('Admin access is not available on mobile devices')) {
+        Alert.alert(
+          'Access Restricted', 
+          'Admin access is only available through a web browser. Please use a desktop or laptop computer to access the admin panel.',
+          [{ text: 'OK' }]
+        );
+      } else if (backendErrorMessage === 'Incorrect username/userId or password') {
+        Alert.alert('Login Failed', 'The username/userId or password you entered is incorrect.');
       } else {
         Alert.alert('Login Failed', backendErrorMessage);
       }
@@ -60,7 +68,12 @@ const SignInAndroid = () => {
   };
 
   return (
-    <SafeAreaView className="flex-1 h-full bg-primary-android">
+    <SafeAreaView 
+      style={{ 
+        flex: 1, 
+        backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' 
+      }}
+    >
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
@@ -71,58 +84,171 @@ const SignInAndroid = () => {
             flexGrow: 1, 
             alignItems: 'center', 
             justifyContent: 'center', 
-            padding: 16 
+            paddingHorizontal: 24,
+            paddingVertical: 40,
           }}
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          <View className={`w-full rounded-xl p-4 ${isDarkMode ? 'bg-[#121212] shadow-none' : 'bg-white shadow-lg'}`}>
+          {/* Logo Section */}
+          <View style={{ 
+            alignItems: 'center', 
+            marginBottom: 32 
+          }}>
             <Image
-              className="w-72 h-72 self-center"
+              style={{ 
+                width: 180, 
+                height: 180,
+              }}
               source={require('@/assets/images/GCCS-logo.png')}
               contentFit="contain"
               placeholder={require('@/assets/images/GCCS-logo.png')}
               placeholderContentFit='contain'
-              cachePolicy="memory-disk" // Optimize image caching
+              cachePolicy="memory-disk"
             />
-            <Text className={`font-inter_black mt-4 text-center text-2xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'} `}>
-              Welcome to GracEdLMS!
+            <Text 
+              style={{
+                fontSize: 32,
+                fontFamily: 'Inter-Bold',
+                color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                marginTop: 16,
+                textAlign: 'center',
+              }}
+            >
+              GracEdLMS
             </Text>
-            <Text className={`font-inter_bold mt-2 text-center ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Please login to continue.
+            <Text 
+              style={{
+                fontSize: 16,
+                fontFamily: 'Inter-Regular',
+                color: isDarkMode ? '#B0B3B8' : '#606770',
+                marginTop: 8,
+                textAlign: 'center',
+              }}
+            >
+              Excellence in Christian Education Since 1994
             </Text>
-            
+          </View>
+
+          {/* Login Card */}
+          <View 
+            style={{
+              width: '100%',
+              maxWidth: 400,
+              backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+              borderRadius: 12,
+              padding: 20,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: isDarkMode ? 0 : 0.1,
+              shadowRadius: 8,
+              elevation: isDarkMode ? 0 : 4,
+            }}
+          >
+            {/* Mobile Admin Notice */}
+            <View 
+              style={{
+                backgroundColor: isDarkMode ? 'rgba(46, 137, 255, 0.1)' : 'rgba(24, 119, 242, 0.1)',
+                borderRadius: 8,
+                padding: 12,
+                marginBottom: 16,
+                borderLeftWidth: 4,
+                borderLeftColor: isDarkMode ? '#2E89FF' : '#1877F2',
+              }}
+            >
+              <Text 
+                style={{
+                  fontSize: 13,
+                  fontFamily: 'Inter-Medium',
+                  color: isDarkMode ? '#2E89FF' : '#1877F2',
+                  marginBottom: 4,
+                }}
+              >
+                Note for Administrators
+              </Text>
+              <Text 
+                style={{
+                  fontSize: 12,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#B0B3B8' : '#606770',
+                  lineHeight: 18,
+                }}
+              >
+                Admin access is only available on web browsers. Please use a desktop or laptop computer to access the admin panel.
+              </Text>
+            </View>
+
             {/* Username/UserID Input */}
-            <View className={`flex-row items-center border rounded-xl mt-2 mb-4 px-3 py-2 
-              ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>
-              <MemoizedAccountIcon height={24} width={24} className="mr-2" fill={isDarkMode ? '#E0E0E0' : 'black'}/>
+            <View 
+              style={{
+                backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                borderRadius: 8,
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                marginBottom: 12,
+                flexDirection: 'row',
+                alignItems: 'center',
+              }}
+            >
+              <MemoizedAccountIcon 
+                height={20} 
+                width={20} 
+                fill={isDarkMode ? '#B0B3B8' : '#65676B'}
+                style={{ marginRight: 12 }}
+              />
               <TextInput
-                className={`flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
-                placeholder="Enter your username/user ID"
-                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-                selectionColor="#22C55E"
-                onChangeText={setIdentifier} // Directly pass setter (already memoized)
+                style={{
+                  flex: 1,
+                  fontSize: 16,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                }}
+                placeholder="Username or User ID"
+                placeholderTextColor={isDarkMode ? '#B0B3B8' : '#8A8D91'}
+                selectionColor={isDarkMode ? '#2E89FF' : '#1877F2'}
+                onChangeText={setIdentifier}
                 value={identifier}
+                autoCapitalize="none"
               />
             </View>
             
             {/* Password Input */}
-            <View className={`flex-row items-center border rounded-xl mb-2 px-3 py-2 
-              ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E]' : 'border-gray-300'}`}>
-              <MemoizedPasswordIcon width={24} height={24} className="mr-2" fill={isDarkMode ? '#E0E0E0' : 'black'}/>
+            <View 
+              style={{
+                backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                borderRadius: 8,
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                marginBottom: 16,
+                flexDirection: 'row',
+                alignItems: 'center',
+              }}
+            >
+              <MemoizedPasswordIcon 
+                width={20} 
+                height={20} 
+                fill={isDarkMode ? '#B0B3B8' : '#65676B'}
+                style={{ marginRight: 12 }}
+              />
               <TextInput
-                className={`flex-1 font-inter_regular text-base ${isDarkMode ? 'text-white' : 'text-black'}`}
-                placeholder="Enter password here"
-                placeholderTextColor={isDarkMode ? '#E0E0E0' : 'black'}
+                style={{
+                  flex: 1,
+                  fontSize: 16,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                }}
+                placeholder="Password"
+                placeholderTextColor={isDarkMode ? '#B0B3B8' : '#8A8D91'}
                 secureTextEntry={isSecure}
-                selectionColor="#22C55E"
-                onChangeText={setPassword} // Directly pass setter
+                selectionColor={isDarkMode ? '#2E89FF' : '#1877F2'}
+                onChangeText={setPassword}
                 value={password}
               />
-              <TouchableOpacity onPress={toggleSecure}>
+              <TouchableOpacity onPress={toggleSecure} style={{ padding: 4 }}>
                 <Image
-                  tintColor={isDarkMode ? '#E0E0E0' : 'black'}
-                  style={{width: 24, height: 24}}
+                  tintColor={isDarkMode ? '#B0B3B8' : '#65676B'}
+                  style={{ width: 20, height: 20 }}
                   source={
                     isSecure 
                       ? require('@/assets/icons/show_password.png') 
@@ -133,25 +259,56 @@ const SignInAndroid = () => {
                 />
               </TouchableOpacity>
             </View>
-            <TouchableOpacity className='mb-2 justify-center items-end'>
-              <Text className={`font-inter_regular ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                Forgot Password?
+
+            {/* Login Button */}
+            <TouchableOpacity
+              onPress={handleLogin}
+              disabled={isLoggingIn || isLoading}
+              style={{
+                backgroundColor: isDarkMode ? '#2E89FF' : '#1877F2',
+                borderRadius: 8,
+                paddingVertical: 14,
+                alignItems: 'center',
+                justifyContent: 'center',
+                opacity: (isLoggingIn || isLoading) ? 0.6 : 1,
+              }}
+              activeOpacity={0.8}
+            >
+              <Text 
+                style={{
+                  fontSize: 16,
+                  fontFamily: 'Inter-SemiBold',
+                  color: '#FFFFFF',
+                }}
+              >
+                {isLoggingIn || isLoading ? 'Logging In...' : 'Log In'}
               </Text>
             </TouchableOpacity>
-            <CustomButton
-              containerStyles='bg-secondary-android h-[55px] mb-4'
-              handlePress={handleLogin}
-              iconVector={<MemoizedLoginIcon height={24} width={24}/>}
-              title={isLoggingIn || isLoading ? 'Logging In...' : 'Login'}
-              tintColor='black'
-              isLoading={isLoggingIn || isLoading}
-            />
+          </View>
+
+          {/* Footer */}
+          <View 
+            style={{
+              marginTop: 32,
+              alignItems: 'center',
+            }}
+          >
+            <Text 
+              style={{
+                fontSize: 12,
+                fontFamily: 'Inter-Regular',
+                color: isDarkMode ? '#B0B3B8' : '#8A8D91',
+                textAlign: 'center',
+              }}
+            >
+              Made by TeamZ © 2024-2025
+            </Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
-      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+      <StatusBar style={isDarkMode ? 'light' : 'dark'} />
     </SafeAreaView>
   )
 }
 
-export default React.memo(SignInAndroid); // Memoize the entire component
+export default React.memo(SignInAndroid);

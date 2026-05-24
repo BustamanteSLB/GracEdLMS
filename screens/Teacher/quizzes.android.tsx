@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, memo } from 'react';
 import {
   View,
   Text,
@@ -7,21 +7,29 @@ import {
   ActivityIndicator,
   Alert,
   TextInput,
-  Image,
   Platform,
   Modal,
   useColorScheme,
   useWindowDimensions,
+  Pressable,
 } from 'react-native';
-import { Picker } from '@react-native-picker/picker';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import apiClient from '@/app/services/apiClient';
 import { useAuth } from '@/contexts/AuthContext';
-import AddEditQuizModal from '@/components/AddEditQuizModal'
-import ContextMenu from '@/components/ContextMenu';
+import { useRouter, useFocusEffect } from 'expo-router';
 import DeleteIcon from '@/assets/icons/delete.svg';
 import { useDarkMode } from '@/contexts/DarkModeContext'; 
 import { StatusBar } from 'expo-status-bar';
 import { FlashList } from "@shopify/flash-list";
+import { Image as ExpoImage } from 'expo-image';
+import { cssInterop } from 'nativewind';
+import { RadioButton } from '@/components/RadioButton';
+import Checkbox from 'expo-checkbox';
+import DropdownMobile from '@/components/DropdownMobile';
+import DownIcon from '@/assets/icons/down.svg';
+import MoreVertIcon from '@/assets/icons/more_vert.svg';
+
+cssInterop(ExpoImage, { className: "style" });
 
 interface Subject {
   _id: string;
@@ -30,6 +38,7 @@ interface Subject {
   gradeLevel?: string;
   section?: string;
   schoolYear?: string;
+  subjectImage?: string;
 }
 
 interface User {
@@ -42,7 +51,7 @@ interface User {
 interface Question {
   _id: string;
   text: string;
-  type: 'multiple_choice' | 'multiple_answers' | 'true_false';
+  type: 'multiple_choice' | 'multiple_answers' | 'true_false' | 'short_answer' | 'essay';
   options: Array<{
     text: string;
     isCorrect: boolean;
@@ -51,6 +60,8 @@ interface Question {
   itemPoints: number;
   isRequired: boolean;
   answer: string | string[] | boolean;
+  correctAnswers?: string[];
+  caseSensitive?: boolean;
 }
 
 interface Quiz {
@@ -69,12 +80,387 @@ interface Quiz {
   updatedAt: string;
 }
 
-// Teacher's Quizzes Page
+// Memoized Quiz Item Component
+const QuizItem = memo<{
+  item: Quiz;
+  isDarkMode: boolean;
+  onPress: (quiz: Quiz) => void;
+  onMenuPress: (quiz: Quiz) => void;
+  getStatusColor: (status: string) => string;
+  getStatusText: (status: string) => string;
+  getConsistentColor: (str: string) => string;
+}>(({ item, isDarkMode, onPress, onMenuPress, getStatusColor, getStatusText, getConsistentColor }) => {
+  const handlePress = useCallback(() => {
+    onPress(item);
+  }, [item, onPress]);
+
+  const handleMenuPress = useCallback(() => {
+    onMenuPress(item);
+  }, [item, onMenuPress]);
+
+  const initials = item.subject?.subjectName ? item.subject.subjectName.slice(0, 2).toUpperCase() : 'QZ';
+  const bgColor = getConsistentColor(item.subject?.subjectName || 'Quiz');
+
+  return (
+    <TouchableOpacity
+      style={{
+        backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 12,
+        borderWidth: 1,
+        borderColor: isDarkMode ? '#333333' : '#E5E7EB',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 2,
+      }}
+      onPress={handlePress}
+      activeOpacity={0.8}
+    >
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <View style={{ flexDirection: 'row', flex: 1 }}>
+          {/* Subject Image or Icon */}
+          {item.subject?.subjectImage ? (
+            <ExpoImage
+              source={{ uri: item.subject.subjectImage }}
+              style={{ width: 50, height: 50, borderRadius: 8 }}
+              contentFit="cover"
+            />
+          ) : (
+            <View
+              style={{
+                width: 50,
+                height: 50,
+                borderRadius: 8,
+                backgroundColor: bgColor,
+                justifyContent: 'center',
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ 
+                color: 'white', 
+                fontSize: 18, 
+                fontFamily: 'Inter-Bold' 
+              }}>
+                {initials}
+              </Text>
+            </View>
+          )}
+
+          {/* Content */}
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text
+              style={{
+                fontSize: 18,
+                fontFamily: 'Inter-Bold',
+                color: isDarkMode ? '#F9FAFB' : '#111827',
+                marginBottom: 4,
+              }}
+              numberOfLines={1}
+            >
+              {item.title}
+            </Text>
+            <Text
+              style={{
+                fontSize: 14,
+                fontFamily: 'Inter-Regular',
+                color: isDarkMode ? '#9CA3AF' : '#6B7280',
+                marginBottom: 8,
+              }}
+            >
+              {item.subject?.subjectName || 'No Subject'} • {item.quarter}
+            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+              <View
+                style={{
+                  backgroundColor: getStatusColor(item.status),
+                  paddingHorizontal: 8,
+                  paddingVertical: 4,
+                  borderRadius: 12,
+                  marginRight: 12,
+                }}
+              >
+                <Text style={{ 
+                  color: 'white', 
+                  fontSize: 12, 
+                  fontFamily: 'Inter-Medium' 
+                }}>
+                  {getStatusText(item.status)}
+                </Text>
+              </View>
+              <Text style={{ 
+                fontSize: 12, 
+                fontFamily: 'Inter-Regular',
+                color: isDarkMode ? '#9CA3AF' : '#6B7280' 
+              }}>
+                {item.questions.length} questions • {item.quizPoints} points
+              </Text>
+            </View>
+            <Text style={{ 
+              fontSize: 12, 
+              fontFamily: 'Inter-Regular',
+              color: isDarkMode ? '#9CA3AF' : '#6B7280' 
+            }}>
+              Created: {new Date(item.createdAt).toLocaleDateString()}
+            </Text>
+          </View>
+        </View>
+
+        {/* Menu Icon */}
+        <Pressable
+          onPress={handleMenuPress}
+          style={{ padding: 8 }}
+        >
+          <MoreVertIcon width={20} height={20} fill={isDarkMode ? '#E0E0E0' : 'black'} />
+        </Pressable>
+      </View>
+    </TouchableOpacity>
+  );
+});
+
+QuizItem.displayName = 'QuizItem';
+
+// Memoized Question Preview Component
+const QuestionPreview = memo<{
+  question: Question;
+  index: number;
+  isDarkMode: boolean;
+  width: number;
+  onImagePress: (image: string) => void;
+}>(({ question, index, isDarkMode, width, onImagePress }) => {
+  const handleImagePress = useCallback((image: string) => {
+    onImagePress(image);
+  }, [onImagePress]);
+
+  return (
+    <View
+      style={{
+        backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
+        borderRadius: 12,
+        padding: 20,
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: isDarkMode ? '#333333' : '#E5E7EB',
+      }}
+    >
+      <Text
+        style={{
+          fontSize: 16,
+          fontFamily: 'Inter-SemiBold',
+          color: isDarkMode ? '#F9FAFB' : '#111827',
+          marginBottom: 12,
+        }}
+      >
+        {index + 1}. {question.text}
+      </Text>
+
+      {question.images && question.images.length > 0 && (
+        <View style={{ marginBottom: 12 }}>
+          {question.images.map((image, imgIndex) => (
+            <TouchableOpacity
+              key={imgIndex}
+              onPress={() => handleImagePress(image)}
+              activeOpacity={0.8}
+            >
+              <ExpoImage
+                source={{ uri: image }}
+                style={{
+                  width: '100%',
+                  height: 200,
+                  borderRadius: 8,
+                  marginBottom: 8,
+                }}
+                contentFit="contain"
+              />
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      <View style={{ marginLeft: 8 }}>
+        {question.type === 'essay' ? (
+          <View>
+            <TextInput
+              placeholder="Essay answer (will be graded manually)"
+              editable={false}
+              multiline
+              numberOfLines={6}
+              style={{
+                backgroundColor: isDarkMode ? '#2A2A2A' : '#F9FAFB',
+                borderRadius: 8,
+                padding: 12,
+                color: isDarkMode ? '#E0E0E0' : '#111827',
+                fontFamily: 'Inter-Regular',
+                minHeight: 150,
+                textAlignVertical: 'top',
+              }}
+              placeholderTextColor={isDarkMode ? '#9ca3af' : '#6B7280'}
+            />
+            <Text style={{
+              fontSize: 12,
+              fontFamily: 'Inter-Regular',
+              color: isDarkMode ? '#9CA3AF' : '#6B7280',
+              marginTop: 8,
+              fontStyle: 'italic',
+            }}>
+              This question will be graded manually by the teacher
+            </Text>
+          </View>
+        ) : question.type === 'short_answer' ? (
+          <View>
+            <TextInput
+              placeholder="Your answer"
+              editable={false}
+              style={{
+                backgroundColor: isDarkMode ? '#2A2A2A' : '#F9FAFB',
+                borderRadius: 8,
+                padding: 12,
+                color: isDarkMode ? '#E0E0E0' : '#111827',
+                fontFamily: 'Inter-Regular',
+                marginBottom: 12,
+              }}
+              placeholderTextColor={isDarkMode ? '#9ca3af' : '#6B7280'}
+            />
+            {question.correctAnswers && question.correctAnswers.length > 0 && (
+              <View style={{
+                backgroundColor: isDarkMode ? '#065F46' : '#ECFDF5',
+                borderRadius: 8,
+                padding: 12,
+              }}>
+                <Text style={{
+                  fontSize: 14,
+                  fontFamily: 'Inter-SemiBold',
+                  color: isDarkMode ? '#34D399' : '#059669',
+                  marginBottom: 8,
+                }}>
+                  Correct answer(s):
+                </Text>
+                {question.correctAnswers.map((ans, idx) => (
+                  <Text key={idx} style={{
+                    fontSize: 14,
+                    fontFamily: 'Inter-Regular',
+                    color: isDarkMode ? '#6EE7B7' : '#047857',
+                    marginBottom: 4,
+                  }}>
+                    • {ans}
+                  </Text>
+                ))}
+                {question.caseSensitive && (
+                  <Text style={{
+                    fontSize: 12,
+                    fontFamily: 'Inter-Regular',
+                    color: isDarkMode ? '#34D399' : '#059669',
+                    marginTop: 8,
+                    fontStyle: 'italic',
+                  }}>
+                    (Case sensitive)
+                  </Text>
+                )}
+              </View>
+            )}
+          </View>
+        ) : question.type === 'multiple_answers' ? (
+          <View>
+            {question.options.map((option, optionIndex) => (
+              <View
+                key={optionIndex}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  marginBottom: 12,
+                  padding: 12,
+                  borderRadius: 8,
+                  backgroundColor: option.isCorrect ? (isDarkMode ? '#065F46' : '#ECFDF5') : (isDarkMode ? '#333333' : '#F3F4F6'),
+                }}
+              >
+                <Checkbox
+                  value={option.isCorrect}
+                  disabled={true}
+                  style={{
+                    marginRight: 12,
+                    borderRadius: 4,
+                    width: 20,
+                    height: 20,
+                  }}
+                  color={option.isCorrect ? '#10B981' : undefined}
+                />
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontFamily: option.isCorrect ? 'Inter-SemiBold' : 'Inter-Regular',
+                    color: isDarkMode ? '#E5E7EB' : '#374151',
+                    flex: 1,
+                  }}
+                >
+                  {option.text}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <View>
+            {question.options.map((option, optionIndex) => (
+              <RadioButton
+                key={optionIndex}
+                value={option.text}
+                label={option.text}
+                selected={option.isCorrect}
+                disabled={true}
+                activeColor="#10B981"
+                inactiveColor={isDarkMode ? '#6B7280' : '#D1D5DB'}
+                width={20}
+                height={20}
+                style={{
+                  marginBottom: 12,
+                  padding: 12,
+                  borderRadius: 8,
+                  backgroundColor: option.isCorrect ? (isDarkMode ? '#065F46' : '#ECFDF5') : (isDarkMode ? '#333333' : '#F3F4F6'),
+                }}
+                labelStyle={{
+                  fontSize: 14,
+                  fontFamily: option.isCorrect ? 'Inter-SemiBold' : 'Inter-Regular',
+                  color: isDarkMode ? '#E5E7EB' : '#374151',
+                  flex: 1,
+                }}
+                labelClassName={isDarkMode ? 'text-gray-200' : 'text-gray-700'}
+              />
+            ))}
+          </View>
+        )}
+      </View>
+
+      <View style={{ marginTop: 12, flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Text style={{ 
+          fontSize: 12, 
+          fontFamily: 'Inter-Regular',
+          color: isDarkMode ? '#9CA3AF' : '#6B7280' 
+        }}>
+          Type: {question.type.replace('_', ' ')}
+        </Text>
+        <Text style={{ 
+          fontSize: 12, 
+          fontFamily: 'Inter-Regular',
+          color: isDarkMode ? '#9CA3AF' : '#6B7280' 
+        }}>
+          Points: {question.itemPoints}
+        </Text>
+      </View>
+    </View>
+  );
+});
+
+QuestionPreview.displayName = 'QuestionPreview';
+
+// Main Component
 const QuizzesAndroid = () => {
   const { user } = useAuth();
+  const router = useRouter();
   const colorScheme = useColorScheme();
   const { width } = useWindowDimensions();
   const { isDarkMode } = useDarkMode();
+  
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,43 +470,45 @@ const QuizzesAndroid = () => {
   const [selectedQuarter, setSelectedQuarter] = useState<string>('');
   
   // Modal states
-  const [addEditModalVisible, setAddEditModalVisible] = useState(false);
   const [selectedQuiz, setSelectedQuiz] = useState<Quiz | null>(null);
   const [previewModalVisible, setPreviewModalVisible] = useState(false);
   
-  // Context menu states
-  const [contextMenuVisible, setContextMenuVisible] = useState(false);
-  const [contextMenuCoords, setContextMenuCoords] = useState({ x: 0, y: 0 });
-  const [contextMenuQuiz, setContextMenuQuiz] = useState<Quiz | null>(null);
+  // Actions modal states
+  const [actionsModalVisible, setActionsModalVisible] = useState(false);
+  const [actionsModalQuiz, setActionsModalQuiz] = useState<Quiz | null>(null);
+  
+  const [imagePreviewModal, setImagePreviewModal] = useState(false);
+  const [selectedPreviewImage, setSelectedPreviewImage] = useState<string | null>(null);
 
-  // Filter options
-  const statusOptions = [
+  // Memoized filter options
+  const statusOptions = useMemo(() => [
     { label: 'All Statuses', value: '' },
     { label: 'Draft', value: 'draft' },
     { label: 'Published', value: 'published' },
     { label: 'Archived', value: 'archived' },
     { label: 'Graded', value: 'graded' },
     { label: 'Closed', value: 'closed' },
-  ];
+  ], []);
 
-  const quarterOptions = [
+  const quarterOptions = useMemo(() => [
     { label: 'All Quarters', value: '' },
     { label: 'First Quarter', value: 'First Quarter' },
     { label: 'Second Quarter', value: 'Second Quarter' },
     { label: '3rd Quarter', value: '3rd Quarter' },
     { label: '4th Quarter', value: '4th Quarter' },
-  ];
+  ], []);
 
-  useEffect(() => {
-    fetchQuizzes();
-    fetchSubjects();
-  }, []);
+  // Memoized subject options
+  const subjectOptions = useMemo(() => [
+    { label: 'All Subjects', value: '' },
+    ...subjects.map((subject) => ({
+      label: `${subject.subjectName}${subject.gradeLevel ? ` - ${subject.gradeLevel}` : ''}${subject.section ? ` (${subject.section})` : ''}`,
+      value: subject._id,
+    })),
+  ], [subjects]);
 
-  useEffect(() => {
-    fetchQuizzes();
-  }, [selectedSubject, selectedStatus, selectedQuarter]);
-
-  const fetchQuizzes = async () => {
+  // Fetch functions
+  const fetchQuizzes = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -130,129 +518,142 @@ const QuizzesAndroid = () => {
       if (searchQuery) params.append('search', searchQuery);
 
       const response = await apiClient.get(`/quizzes?${params.toString()}`);
-      setQuizzes(response.data.data || []);
+      let quizzesData = response.data.data || [];
+      
+      // Filter to only show quizzes created by the current teacher
+      if (user) {
+        quizzesData = quizzesData.filter((quiz: Quiz) => 
+          quiz.createdBy._id === user._id || 
+          quiz.createdBy.email === user.email ||
+          quiz.createdBy.username === user.username
+        );
+      }
+      
+      setQuizzes(quizzesData);
     } catch (error) {
       console.log('Error fetching quizzes:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedSubject, selectedStatus, selectedQuarter, searchQuery, user]);
 
-  const fetchSubjects = async () => {
+  const fetchSubjects = useCallback(async () => {
     try {
       const response = await apiClient.get('/subjects');
       setSubjects(response.data.data || []);
     } catch (error) {
       console.error('Error fetching subjects:', error);
     }
-  };
+  }, []);
 
-  const handleCreateQuiz = () => {
-    setSelectedQuiz(null);
-    setAddEditModalVisible(true);
-  };
+  // Refresh on screen focus
+  useFocusEffect(
+    useCallback(() => {
+      fetchQuizzes();
+      fetchSubjects();
+    }, [fetchQuizzes, fetchSubjects])
+  );
 
-  const handleEditQuiz = (quiz: Quiz) => {
-    setSelectedQuiz(quiz);
-    setAddEditModalVisible(true);
-    setContextMenuVisible(false);
-  };
+  useEffect(() => {
+    fetchQuizzes();
+  }, [selectedSubject, selectedStatus, selectedQuarter]);
 
-  const handleDeleteQuiz = async (quizId: string) => {
-    const confirmDelete = Platform.OS === 'web' 
-      ? window.confirm('Are you sure you want to delete this quiz? This action cannot be undone.')
-      : await new Promise(resolve => {
-          Alert.alert(
-            'Delete Quiz',
-            'Are you sure you want to delete this quiz? This action cannot be undone.',
-            [
-              { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-              { text: 'Delete', style: 'destructive', onPress: () => resolve(true) }
-            ]
-          );
-        });
+  // Memoized handlers
+  const handleCreateQuiz = useCallback(() => {
+    router.push('/(teachers)/add-quiz');
+  }, [router]);
 
-    if (confirmDelete) {
-      try {
-        await apiClient.delete(`/quizzes/${quizId}`);
-        fetchQuizzes();
-        const message = 'Quiz deleted successfully';
-        if (Platform.OS === 'web') {
-          window.alert(message);
-        } else {
-          Alert.alert('Success', message);
+  const handleEditQuiz = useCallback((quiz: Quiz) => {
+    setActionsModalVisible(false);
+    router.push({
+      pathname: '/(teachers)/edit-quiz',
+      params: { id: quiz._id }
+    });
+  }, [router]);
+
+  const handleDeleteQuiz = useCallback(async (quizId: string) => {
+    setActionsModalVisible(false);
+    Alert.alert(
+      'Delete Quiz',
+      'Are you sure you want to delete this quiz? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Delete', 
+          style: 'destructive', 
+          onPress: async () => {
+            try {
+              await apiClient.delete(`/quizzes/${quizId}`);
+              await fetchQuizzes();
+              Alert.alert('Success', 'Quiz deleted successfully');
+            } catch (error) {
+              console.error('Error deleting quiz:', error);
+              Alert.alert('Error', 'Failed to delete quiz');
+            }
+          }
         }
-      } catch (error) {
-        console.error('Error deleting quiz:', error);
-        const message = 'Failed to delete quiz';
-        if (Platform.OS === 'web') {
-          window.alert(message);
-        } else {
-          Alert.alert('Error', message);
-        }
-      }
-    }
-    setContextMenuVisible(false);
-  };
+      ]
+    );
+  }, [fetchQuizzes]);
 
-  const handlePublishQuiz = async (quizId: string) => {
+  const handlePublishQuiz = useCallback(async (quizId: string) => {
+    setActionsModalVisible(false);
     try {
       await apiClient.put(`/quizzes/${quizId}/publish`);
-      fetchQuizzes();
-      const message = 'Quiz published successfully';
-      if (Platform.OS === 'web') {
-        window.alert(message);
-      } else {
-        Alert.alert('Success', message);
-      }
+      await fetchQuizzes();
+      Alert.alert('Success', 'Quiz published successfully');
     } catch (error) {
       console.error('Error publishing quiz:', error);
-      const message = 'Failed to publish quiz';
-      if (Platform.OS === 'web') {
-        window.alert(message);
-      } else {
-        Alert.alert('Error', message);
-      }
+      Alert.alert('Error', 'Failed to publish quiz');
     }
-    setContextMenuVisible(false);
-  };
+  }, [fetchQuizzes]);
 
-  const handleDuplicateQuiz = async (quizId: string) => {
+  const handleDuplicateQuiz = useCallback(async (quizId: string) => {
+    setActionsModalVisible(false);
     try {
       await apiClient.post(`/quizzes/${quizId}/duplicate`);
-      fetchQuizzes();
-      const message = 'Quiz duplicated successfully';
-      if (Platform.OS === 'web') {
-        window.alert(message);
-      } else {
-        Alert.alert('Success', message);
-      }
+      await fetchQuizzes();
+      Alert.alert('Success', 'Quiz duplicated successfully');
     } catch (error) {
       console.error('Error duplicating quiz:', error);
-      const message = 'Failed to duplicate quiz';
-      if (Platform.OS === 'web') {
-        window.alert(message);
-      } else {
-        Alert.alert('Error', message);
-      }
+      Alert.alert('Error', 'Failed to duplicate quiz');
     }
-    setContextMenuVisible(false);
-  };
+  }, [fetchQuizzes]);
 
-  const handlePreviewQuiz = (quiz: Quiz) => {
+  const handlePreviewQuiz = useCallback((quiz: Quiz) => {
     setSelectedQuiz(quiz);
     setPreviewModalVisible(true);
-    setContextMenuVisible(false);
-  };
+    setActionsModalVisible(false);
+  }, []);
 
-  const openContextMenu = (e: any, quiz: Quiz) => {
-    const { pageX, pageY } = e.nativeEvent;
-    setContextMenuCoords({ x: pageX - 125, y: pageY - 75 });
-    setContextMenuQuiz(quiz);
-    setContextMenuVisible(true);
-  };
+  const handleViewSubmissions = useCallback((quiz: Quiz) => {
+    router.push({
+      pathname: '/(teachers)/quiz/submissions/[id]',
+      params: { id: quiz._id }
+    });
+    setActionsModalVisible(false);
+  }, [router]);
 
-  const getStatusColor = (status: string) => {
+  const openActionsModal = useCallback((quiz: Quiz) => {
+    setActionsModalQuiz(quiz);
+    setActionsModalVisible(true);
+  }, []);
+
+  const handleImagePress = useCallback((image: string) => {
+    setSelectedPreviewImage(image);
+    setImagePreviewModal(true);
+  }, []);
+
+  const handleClosePreviewModal = useCallback(() => {
+    setPreviewModalVisible(false);
+  }, []);
+
+  const handleCloseImagePreview = useCallback(() => {
+    setImagePreviewModal(false);
+  }, []);
+
+  // Memoized utility functions
+  const getStatusColor = useCallback((status: string) => {
     switch (status) {
       case 'draft': return '#6B7280';
       case 'published': return '#10B981';
@@ -260,9 +661,9 @@ const QuizzesAndroid = () => {
       case 'closed': return '#EF4444';
       default: return '#6B7280';
     }
-  };
+  }, []);
 
-  const getStatusText = (status: string) => {
+  const getStatusText = useCallback((status: string) => {
     switch (status) {
       case 'draft': return 'Draft';
       case 'published': return 'Published';
@@ -270,175 +671,52 @@ const QuizzesAndroid = () => {
       case 'closed': return 'Closed';
       default: return status;
     }
-  };
+  }, []);
 
-  const contextMenuItems = [
-    {
-      label: 'Edit',
-      icon: (
-        <Image
-          source={require('@/assets/icons/edit.png')}
-          style={{ width: 20, height: 20, marginRight: 8 }}
-          tintColor={isDarkMode ? '#E0E0E0' : '#333'}
-        />
-      ),
-      onPress: () => contextMenuQuiz && handleEditQuiz(contextMenuQuiz),
-    },
-    {
-      label: 'Preview',
-      icon: (
-        <Image
-          source={require('@/assets/icons/show_password.png')}
-          style={{ width: 20, height: 20, marginRight: 8 }}
-          tintColor={isDarkMode ? '#E0E0E0' : '#333'}
-        />
-      ),
-      onPress: () => contextMenuQuiz && handlePreviewQuiz(contextMenuQuiz),
-    },
-    {
-      label: 'Duplicate',
-      icon: (
-        <Image
-          source={require('@/assets/icons/copy.png')}
-          style={{ width: 20, height: 20, marginRight: 8 }}
-          tintColor={isDarkMode ? '#E0E0E0' : '#333'}
-        />
-      ),
-      onPress: () => contextMenuQuiz && handleDuplicateQuiz(contextMenuQuiz._id),
-    },
-    ...(contextMenuQuiz?.status === 'draft' ? [{
-      label: 'Publish',
-      icon: (
-        <Image
-          source={require('@/assets/icons/plus.png')}
-          style={{ width: 20, height: 20, marginRight: 8 }}
-          tintColor='#10B981'
-        />
-      ),
-      onPress: () => contextMenuQuiz && handlePublishQuiz(contextMenuQuiz._id),
-    }] : []),
-    {
-      label: 'Delete',
-      icon: (
-        <DeleteIcon
-          width={20}
-          height={20}
-          style={{ marginRight: 8 }}
-          fill="#EF4444"
-        />
-      ),
-      onPress: () => contextMenuQuiz && handleDeleteQuiz(contextMenuQuiz._id),
-    },
-  ];
+  const getConsistentColor = useCallback((str: string) => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#F97316', '#14B8A6', '#EC4899'];
+    return colors[Math.abs(hash) % colors.length];
+  }, []);
 
-  const renderQuizItem = ({ item }: { item: Quiz }) => (
-    <TouchableOpacity
-      style={{
-        backgroundColor: isDarkMode ? '#1F2937' : '#FFFFFF',
-        borderRadius: 12,
-        padding: 16,
-        marginBottom: 12,
-        borderWidth: 1,
-        borderColor: isDarkMode ? '#374151' : '#E5E7EB',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 2,
-      }}
-      onPress={() => handlePreviewQuiz(item)}
-    >
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <View style={{ flex: 1 }}>
-          <Text
-            style={{
-              fontSize: 18,
-              fontFamily: 'Inter-24pt-Bold',
-              color: isDarkMode ? '#F9FAFB' : '#111827',
-              marginBottom: 4,
-            }}
-            numberOfLines={1}
-          >
-            {item.title}
-          </Text>
-          <Text
-            style={{
-              fontSize: 14,
-              fontFamily: 'Inter-18pt-Regular',
-              color: isDarkMode ? '#9CA3AF' : '#6B7280',
-              marginBottom: 8,
-            }}
-          >
-            {item.subject?.subjectName || 'No Subject'} • {item.quarter}
-          </Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-            <View
-              style={{
-                backgroundColor: getStatusColor(item.status),
-                paddingHorizontal: 8,
-                paddingVertical: 4,
-                borderRadius: 12,
-                marginRight: 12,
-              }}
-            >
-              <Text style={{ 
-                color: 'white', 
-                fontSize: 12, 
-                fontFamily: 'Inter-18pt-Medium' 
-              }}>
-                {getStatusText(item.status)}
-              </Text>
-            </View>
-            <Text style={{ 
-              fontSize: 12, 
-              fontFamily: 'Inter-18pt-Regular',
-              color: isDarkMode ? '#9CA3AF' : '#6B7280' 
-            }}>
-              {item.questions.length} questions • {item.quizPoints} points
-            </Text>
-          </View>
-          <Text style={{ 
-            fontSize: 12, 
-            fontFamily: 'Inter-18pt-Regular',
-            color: isDarkMode ? '#9CA3AF' : '#6B7280' 
-          }}>
-            Created: {new Date(item.createdAt).toLocaleDateString()}
-          </Text>
-        </View>
-        <TouchableOpacity
-          onPress={(e) => openContextMenu(e, item)}
-          style={{ padding: 8 }}
-        >
-          <Image
-            source={require('@/assets/icons/more_vert.png')}
-            style={{ width: 20, height: 20, tintColor: isDarkMode ? '#9CA3AF' : '#6B7280' }}
-          />
-        </TouchableOpacity>
-      </View>
-    </TouchableOpacity>
-  );
+  // Memoized render functions
+  const renderQuizItem = useCallback(({ item }: { item: Quiz }) => (
+    <QuizItem
+      item={item}
+      isDarkMode={isDarkMode}
+      onPress={handlePreviewQuiz}
+      onMenuPress={openActionsModal}
+      getStatusColor={getStatusColor}
+      getStatusText={getStatusText}
+      getConsistentColor={getConsistentColor}
+    />
+  ), [isDarkMode, handlePreviewQuiz, openActionsModal, getStatusColor, getStatusText, getConsistentColor]);
 
-  // VirtualizedList required functions
-  const keyExtractor = (item: Quiz, index: number) => item._id;
+  const keyExtractor = useCallback((item: Quiz) => item._id, []);
 
   return (
-    <View style={{ flex: 1, backgroundColor: isDarkMode ? '#111827' : '#F9FAFB' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB' }} edges={['left', 'right']}>
+      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+      
       {/* Header */}
       <View
         style={{
-          backgroundColor: isDarkMode ? '#1F2937' : '#FFFFFF',
+          backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
           paddingHorizontal: 20,
-          paddingTop: 20,
+          paddingTop: 16,
           paddingBottom: 16,
           borderBottomWidth: 1,
-          borderBottomColor: isDarkMode ? '#374151' : '#E5E7EB',
+          borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
         }}
       >
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
           <Text
             style={{
               fontSize: 24,
-              fontFamily: 'Inter-24pt-Bold',
+              fontFamily: 'Inter-Bold',
               color: isDarkMode ? '#F9FAFB' : '#111827',
             }}
           >
@@ -448,23 +726,18 @@ const QuizzesAndroid = () => {
             onPress={handleCreateQuiz}
             style={{
               backgroundColor: '#3B82F6',
-              paddingHorizontal: 16,
-              paddingVertical: 8,
+              padding: 8,
               borderRadius: 8,
               flexDirection: 'row',
               alignItems: 'center',
+              justifyContent: 'center',
             }}
           >
-            <Image
+            <ExpoImage
               source={require('@/assets/icons/plus.png')}
-              style={{ width: 20, height: 20, marginRight: 8 }}
+              style={{ width: 24, height: 24 }}
               tintColor="white"
             />
-            <Text 
-              className={`font-psemibold ${isDarkMode ? 'text-[#E0E0E0]' : 'text-white'}`}
-            >
-              Create Quiz
-            </Text>
           </TouchableOpacity>
         </View>
 
@@ -477,12 +750,12 @@ const QuizzesAndroid = () => {
                 value={searchQuery}
                 onChangeText={setSearchQuery}
                 style={{
-                  backgroundColor: isDarkMode ? '#374151' : '#F3F4F6',
+                  backgroundColor: isDarkMode ? '#2A2A2A' : '#F3F4F6',
                   borderRadius: 8,
                   paddingHorizontal: 12,
                   paddingVertical: 10,
-                  color: isDarkMode ? '#F9FAFB' : '#111827',
-                  fontFamily: 'Inter-18pt-Regular',
+                  color: isDarkMode ? '#E0E0E0' : '#111827',
+                  fontFamily: 'Inter-Regular',
                 }}
                 placeholderTextColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
               />
@@ -505,119 +778,64 @@ const QuizzesAndroid = () => {
           </View>
 
           <View style={{ flexDirection: 'row', gap: 8 }}>
-            {/* Subject Picker */}
+            {/* Subject DropdownMobile */}
             <View style={{ flex: 1 }}>
               <Text style={{ 
                 fontSize: 12, 
-                fontFamily: 'Inter-18pt-Medium',
-                color: isDarkMode ? '#9CA3AF' : '#6B7280', 
+                fontFamily: 'Inter-Medium',
+                color: isDarkMode ? '#E0E0E0' : '#6B7280', 
                 marginBottom: 4 
               }}>
                 Subject
               </Text>
-              <View style={{ 
-                backgroundColor: isDarkMode ? '#374151' : '#F3F4F6', 
-                borderRadius: 8,
-                borderWidth: 1,
-                borderColor: isDarkMode ? '#4B5563' : '#D1D5DB',
-              }}>
-                <Picker
-                  selectedValue={selectedSubject}
-                  onValueChange={setSelectedSubject}
-                  style={{
-                    color: isDarkMode ? '#F9FAFB' : '#111827',
-                    backgroundColor: 'transparent',
-                    fontFamily: 'Inter-18pt-Regular',
-                    padding: 8
-                  }}
-                  dropdownIconColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
-                >
-                  <Picker.Item label="All Subjects" value="" />
-                  {subjects.map((subject) => (
-                    <Picker.Item
-                      key={subject._id}
-                      label={`${subject.subjectName}${subject.gradeLevel ? ` - ${subject.gradeLevel}` : ''}${subject.section ? ` (${subject.section})` : ''}`}
-                      value={subject._id}
-                    />
-                  ))}
-                </Picker>
-              </View>
+              <DropdownMobile
+                label="Subject"
+                selectedValue={selectedSubject}
+                onValueChange={setSelectedSubject}
+                items={subjectOptions}
+                placeholder="All Subjects"
+                buttonRightIcon={DownIcon}
+              />
             </View>
 
-            {/* Status Picker */}
+            {/* Status DropdownMobile */}
             <View style={{ flex: 1 }}>
               <Text style={{ 
                 fontSize: 12, 
-                fontFamily: 'Inter-18pt-Medium',
-                color: isDarkMode ? '#9CA3AF' : '#6B7280', 
+                fontFamily: 'Inter-Medium',
+                color: isDarkMode ? '#E0E0E0' : '#6B7280', 
                 marginBottom: 4 
               }}>
                 Status
               </Text>
-              <View style={{ 
-                backgroundColor: isDarkMode ? '#374151' : '#F3F4F6', 
-                borderRadius: 8,
-                borderWidth: 1,
-                borderColor: isDarkMode ? '#4B5563' : '#D1D5DB',
-              }}>
-                <Picker
-                  selectedValue={selectedStatus}
-                  onValueChange={setSelectedStatus}
-                  style={{
-                    color: isDarkMode ? '#F9FAFB' : '#111827',
-                    backgroundColor: 'transparent',
-                    fontFamily: 'Inter-18pt-Regular',
-                    padding: 8
-                  }}
-                  dropdownIconColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
-                >
-                  {statusOptions.map((status) => (
-                    <Picker.Item
-                      key={status.value}
-                      label={status.label}
-                      value={status.value}
-                    />
-                  ))}
-                </Picker>
-              </View>
+              <DropdownMobile
+                label="Status"
+                selectedValue={selectedStatus}
+                onValueChange={setSelectedStatus}
+                items={statusOptions}
+                placeholder="All Statuses"
+                buttonRightIcon={DownIcon}
+              />
             </View>
 
-            {/* Quarter Picker */}
+            {/* Quarter DropdownMobile */}
             <View style={{ flex: 1 }}>
               <Text style={{ 
                 fontSize: 12, 
-                fontFamily: 'Inter-18pt-Medium',
-                color: isDarkMode ? '#9CA3AF' : '#6B7280', 
+                fontFamily: 'Inter-Medium',
+                color: isDarkMode ? '#E0E0E0' : '#6B7280', 
                 marginBottom: 4 
               }}>
                 Quarter
               </Text>
-              <View style={{ 
-                backgroundColor: isDarkMode ? '#374151' : '#F3F4F6', 
-                borderRadius: 8,
-                borderWidth: 1,
-                borderColor: isDarkMode ? '#4B5563' : '#D1D5DB',
-              }}>
-                <Picker
-                  selectedValue={selectedQuarter}
-                  onValueChange={setSelectedQuarter}
-                  style={{
-                    color: isDarkMode ? '#F9FAFB' : '#111827',
-                    backgroundColor: 'transparent',
-                    fontFamily: 'Inter-18pt-Regular',
-                    padding: 8
-                  }}
-                  dropdownIconColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
-                >
-                  {quarterOptions.map((quarter) => (
-                    <Picker.Item
-                      key={quarter.value}
-                      label={quarter.label}
-                      value={quarter.value}
-                    />
-                  ))}
-                </Picker>
-              </View>
+              <DropdownMobile
+                label="Quarter"
+                selectedValue={selectedQuarter}
+                onValueChange={setSelectedQuarter}
+                items={quarterOptions}
+                placeholder="All Quarters"
+                buttonRightIcon={DownIcon}
+              />
             </View>
           </View>
         </View>
@@ -630,7 +848,7 @@ const QuizzesAndroid = () => {
             <ActivityIndicator size="large" color="#3B82F6" />
             <Text style={{ 
               marginTop: 16, 
-              fontFamily: 'Inter-18pt-Regular',
+              fontFamily: 'Inter-Regular',
               color: isDarkMode ? '#9CA3AF' : '#6B7280' 
             }}>
               Loading quizzes...
@@ -641,20 +859,20 @@ const QuizzesAndroid = () => {
             data={quizzes}
             renderItem={renderQuizItem}
             keyExtractor={keyExtractor}
+            estimatedItemSize={150}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 20 }}
-            estimatedItemSize={150}
             extraData={isDarkMode}
           />
         ) : (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <Image
+            <ExpoImage
               source={require('@/assets/images/quiz.png')}
               style={{ width: 64, height: 64, marginBottom: 16 }}
             />
             <Text style={{ 
               fontSize: 18, 
-              fontFamily: 'Inter-24pt-SemiBold',
+              fontFamily: 'Inter-SemiBold',
               color: isDarkMode ? '#9CA3AF' : '#6B7280', 
               marginBottom: 8 
             }}>
@@ -662,7 +880,7 @@ const QuizzesAndroid = () => {
             </Text>
             <Text style={{ 
               fontSize: 14, 
-              fontFamily: 'Inter-18pt-Regular',
+              fontFamily: 'Inter-Regular',
               color: isDarkMode ? '#6B7280' : '#9CA3AF', 
               textAlign: 'center' 
             }}>
@@ -671,58 +889,266 @@ const QuizzesAndroid = () => {
           </View>
         )}
       </View>
-      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
-      {/* Context Menu */}
-      <ContextMenu
-        visible={contextMenuVisible}
-        x={contextMenuCoords.x}
-        y={contextMenuCoords.y}
-        onClose={() => setContextMenuVisible(false)}
-        items={contextMenuItems}
-        menuStyle={{ 
-          backgroundColor: isDarkMode ? '#374151' : 'white', 
-          borderRadius: 8,
-          minWidth: 150,
-        }}
-        itemStyle={{ paddingVertical: 12, paddingHorizontal: 16 }}
-        labelStyle={{ 
-          color: isDarkMode ? '#F9FAFB' : '#111827', 
-          fontSize: 14,
-          fontFamily: 'Inter-18pt-Medium',
-        }}
-      />
 
-      {/* Add/Edit Quiz Modal */}
-      <AddEditQuizModal
-        visible={addEditModalVisible}
-        onClose={() => {
-          setAddEditModalVisible(false);
-          setSelectedQuiz(null);
-        }}
-        quiz={selectedQuiz}
-        subjects={subjects}
-        onSave={() => {
-          setAddEditModalVisible(false);
-          setSelectedQuiz(null);
-          fetchQuizzes();
-        }}
-        isDarkMode={isDarkMode}
-      />
+      {/* Actions Modal */}
+      <Modal
+        visible={actionsModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setActionsModalVisible(false)}
+      >
+        <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+          <Pressable
+            style={{ 
+              flex: 1, 
+              backgroundColor: 'rgba(0, 0, 0, 0.5)', 
+              justifyContent: 'center', 
+              alignItems: 'center' 
+            }}
+            onPress={() => setActionsModalVisible(false)}
+          >
+            <Pressable
+              style={{
+                backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+                borderRadius: 12,
+                padding: 16,
+                width: '80%',
+                maxWidth: 400,
+              }}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <Text
+                style={{
+                  fontSize: 18,
+                  fontFamily: 'Inter-Bold',
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  marginBottom: 16,
+                }}
+              >
+                Quiz Actions
+              </Text>
+
+              {/* Edit Button */}
+              <TouchableOpacity
+                onPress={() => actionsModalQuiz && handleEditQuiz(actionsModalQuiz)}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingVertical: 12,
+                  paddingHorizontal: 16,
+                  borderRadius: 8,
+                  backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                  marginBottom: 8,
+                }}
+              >
+                <ExpoImage
+                  style={{ width: 24, height: 24, marginRight: 12 }}
+                  source={require('@/assets/icons/edit.png')}
+                  tintColor={isDarkMode ? '#E0E0E0' : '#333'}
+                />
+                <Text
+                  style={{
+                    fontSize: 16,
+                    fontFamily: 'Inter-Regular',
+                    color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  }}
+                >
+                  Edit
+                </Text>
+              </TouchableOpacity>
+
+              {/* Preview Button */}
+              <TouchableOpacity
+                onPress={() => actionsModalQuiz && handlePreviewQuiz(actionsModalQuiz)}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingVertical: 12,
+                  paddingHorizontal: 16,
+                  borderRadius: 8,
+                  backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                  marginBottom: 8,
+                }}
+              >
+                <ExpoImage
+                  style={{ width: 24, height: 24, marginRight: 12 }}
+                  source={require('@/assets/icons/show_password.png')}
+                  tintColor={isDarkMode ? '#E0E0E0' : '#333'}
+                />
+                <Text
+                  style={{
+                    fontSize: 16,
+                    fontFamily: 'Inter-Regular',
+                    color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  }}
+                >
+                  Preview
+                </Text>
+              </TouchableOpacity>
+
+              {/* View Submissions Button */}
+              {actionsModalQuiz && (actionsModalQuiz.status === 'published' || actionsModalQuiz.status === 'closed') && (
+                <TouchableOpacity
+                  onPress={() => actionsModalQuiz && handleViewSubmissions(actionsModalQuiz)}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    paddingVertical: 12,
+                    paddingHorizontal: 16,
+                    borderRadius: 8,
+                    backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                    marginBottom: 8,
+                  }}
+                >
+                  <ExpoImage
+                    style={{ width: 24, height: 24, marginRight: 12 }}
+                    source={require('@/assets/icons/attach.png')}
+                    tintColor={isDarkMode ? '#E0E0E0' : '#333'}
+                  />
+                  <Text
+                    style={{
+                      fontSize: 16,
+                      fontFamily: 'Inter-Regular',
+                      color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                    }}
+                  >
+                    View Submissions
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Duplicate Button */}
+              <TouchableOpacity
+                onPress={() => actionsModalQuiz && handleDuplicateQuiz(actionsModalQuiz._id)}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingVertical: 12,
+                  paddingHorizontal: 16,
+                  borderRadius: 8,
+                  backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                  marginBottom: 8,
+                }}
+              >
+                <ExpoImage
+                  style={{ width: 24, height: 24, marginRight: 12 }}
+                  source={require('@/assets/icons/copy.png')}
+                  tintColor={isDarkMode ? '#E0E0E0' : '#333'}
+                />
+                <Text
+                  style={{
+                    fontSize: 16,
+                    fontFamily: 'Inter-Regular',
+                    color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  }}
+                >
+                  Duplicate
+                </Text>
+              </TouchableOpacity>
+
+              {/* Publish Button (only for draft quizzes) */}
+              {actionsModalQuiz?.status === 'draft' && (
+                <TouchableOpacity
+                  onPress={() => actionsModalQuiz && handlePublishQuiz(actionsModalQuiz._id)}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    paddingVertical: 12,
+                    paddingHorizontal: 16,
+                    borderRadius: 8,
+                    backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                    marginBottom: 8,
+                  }}
+                >
+                  <ExpoImage
+                    style={{ width: 24, height: 24, marginRight: 12 }}
+                    source={require('@/assets/icons/plus.png')}
+                    tintColor="#10B981"
+                  />
+                  <Text
+                    style={{
+                      fontSize: 16,
+                      fontFamily: 'Inter-Regular',
+                      color: '#10B981',
+                    }}
+                  >
+                    Publish
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Delete Button */}
+              <TouchableOpacity
+                onPress={() => actionsModalQuiz && handleDeleteQuiz(actionsModalQuiz._id)}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingVertical: 12,
+                  paddingHorizontal: 16,
+                  borderRadius: 8,
+                  backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                  marginBottom: 8,
+                }}
+              >
+                <DeleteIcon
+                  width={24}
+                  height={24}
+                  style={{ marginRight: 12 }}
+                  fill="#EF4444"
+                />
+                <Text
+                  style={{
+                    fontSize: 16,
+                    fontFamily: 'Inter-Regular',
+                    color: '#EF4444',
+                  }}
+                >
+                  Delete
+                </Text>
+              </TouchableOpacity>
+
+              {/* Cancel Button */}
+              <TouchableOpacity
+                onPress={() => setActionsModalVisible(false)}
+                style={{
+                  paddingVertical: 12,
+                  paddingHorizontal: 16,
+                  borderRadius: 8,
+                  backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                  alignItems: 'center',
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 16,
+                    fontFamily: 'Inter-Semibold',
+                    color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  }}
+                >
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+            </Pressable>
+          </Pressable>
+        </SafeAreaView>
+      </Modal>
 
       {/* Preview Modal */}
       <Modal
         visible={previewModalVisible}
         animationType="slide"
         transparent={false}
-        onRequestClose={() => setPreviewModalVisible(false)}
+        onRequestClose={handleClosePreviewModal}
+        statusBarTranslucent={false}
       >
-        <View style={{ flex: 1, backgroundColor: isDarkMode ? '#111827' : '#F9FAFB' }}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB' }} edges={['top', 'bottom']}>
+          <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
           <View
             style={{
-              backgroundColor: isDarkMode ? '#1F2937' : '#FFFFFF',
+              backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
               padding: 20,
               borderBottomWidth: 1,
-              borderBottomColor: isDarkMode ? '#374151' : '#E5E7EB',
+              borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
               flexDirection: 'row',
               justifyContent: 'space-between',
               alignItems: 'center',
@@ -731,14 +1157,14 @@ const QuizzesAndroid = () => {
             <Text
               style={{
                 fontSize: 20,
-                fontFamily: 'Inter-24pt-Bold',
+                fontFamily: 'Inter-Bold',
                 color: isDarkMode ? '#F9FAFB' : '#111827',
               }}
             >
               Quiz Preview
             </Text>
             <TouchableOpacity
-              onPress={() => setPreviewModalVisible(false)}
+              onPress={handleClosePreviewModal}
               style={{
                 backgroundColor: '#EF4444',
                 paddingHorizontal: 12,
@@ -748,7 +1174,7 @@ const QuizzesAndroid = () => {
             >
               <Text style={{ 
                 color: 'white', 
-                fontFamily: 'Inter-18pt-Medium' 
+                fontFamily: 'Inter-Medium' 
               }}>
                 Close
               </Text>
@@ -759,19 +1185,18 @@ const QuizzesAndroid = () => {
             <ScrollView style={{ flex: 1, padding: 20 }}>
               <View
                 style={{
-                  backgroundColor: isDarkMode ? '#1F2937' : '#FFFFFF',
+                  backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
                   borderRadius: 12,
                   padding: 20,
                   marginBottom: 20,
                   borderWidth: 1,
-                  borderColor: isDarkMode ? '#374151' : '#E5E7EB',
-                  flexShrink: 1,
+                  borderColor: isDarkMode ? '#333333' : '#E5E7EB',
                 }}
               >
                 <Text
                   style={{
                     fontSize: 24,
-                    fontFamily: 'Inter-24pt-Bold',
+                    fontFamily: 'Inter-Bold',
                     color: isDarkMode ? '#F9FAFB' : '#111827',
                     marginBottom: 8,
                   }}
@@ -782,7 +1207,7 @@ const QuizzesAndroid = () => {
                   <Text
                     style={{
                       fontSize: 18,
-                      fontFamily: 'Inter-24pt-SemiBold',
+                      fontFamily: 'Inter-SemiBold',
                       color: isDarkMode ? '#E5E7EB' : '#374151',
                       marginBottom: 8,
                     }}
@@ -794,7 +1219,7 @@ const QuizzesAndroid = () => {
                   <Text
                     style={{
                       fontSize: 14,
-                      fontFamily: 'Inter-18pt-Regular',
+                      fontFamily: 'Inter-Regular',
                       color: isDarkMode ? '#9CA3AF' : '#6B7280',
                       marginBottom: 16,
                     }}
@@ -805,21 +1230,21 @@ const QuizzesAndroid = () => {
                 <View style={{ flexDirection: width > 768 ? 'row' : 'column', gap: width > 768 ? 16 : 4 }}>
                   <Text style={{ 
                     fontSize: 14, 
-                    fontFamily: 'Inter-18pt-Regular',
+                    fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280', 
                   }}>
                     Subject: {selectedQuiz.subject?.subjectName || 'No Subject'}
                   </Text>
                   <Text style={{ 
                     fontSize: 14, 
-                    fontFamily: 'Inter-18pt-Regular',
+                    fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280' 
                   }}>
                     Quarter: {selectedQuiz.quarter}
                   </Text>
                   <Text style={{ 
                     fontSize: 14, 
-                    fontFamily: 'Inter-18pt-Regular',
+                    fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280' 
                   }}>
                     Points: {selectedQuiz.quizPoints}
@@ -827,7 +1252,7 @@ const QuizzesAndroid = () => {
                   {selectedQuiz.timeLimit && (
                     <Text style={{ 
                       fontSize: 14, 
-                      fontFamily: 'Inter-18pt-Regular',
+                      fontFamily: 'Inter-Regular',
                       color: isDarkMode ? '#9CA3AF' : '#6B7280' 
                     }}>
                       Time: {selectedQuiz.timeLimit} minutes
@@ -837,117 +1262,72 @@ const QuizzesAndroid = () => {
               </View>
 
               {selectedQuiz.questions.map((question, index) => (
-                <View
+                <QuestionPreview
                   key={question._id}
-                  style={{
-                    backgroundColor: isDarkMode ? '#1F2937' : '#FFFFFF',
-                    borderRadius: 12,
-                    padding: 20,
-                    marginBottom: 16,
-                    borderWidth: 1,
-                    borderColor: isDarkMode ? '#374151' : '#E5E7EB',
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 16,
-                      fontFamily: 'Inter-24pt-SemiBold',
-                      color: isDarkMode ? '#F9FAFB' : '#111827',
-                      marginBottom: 12,
-                    }}
-                  >
-                    {index + 1}. {question.text}
-                  </Text>
-
-                  {question.images && question.images.length > 0 && (
-                    <View style={{ marginBottom: 12 }}>
-                      {question.images.map((image, imgIndex) => (
-                        <Image
-                          key={imgIndex}
-                          source={{ uri: `http://192.168.100.5:5000${image}` }}
-                          style={{
-                            width: '100%',
-                            height: 200,
-                            borderRadius: 8,
-                            marginBottom: 8,
-                          }}
-                          resizeMode="contain"
-                        />
-                      ))}
-                    </View>
-                  )}
-
-                  <View style={{ marginLeft: 8 }}>
-                    {question.options.map((option, optionIndex) => (
-                      <View
-                        key={optionIndex}
-                        style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          marginBottom: 8,
-                        }}
-                      >
-                        <View
-                          style={{
-                            width: 20,
-                            height: 20,
-                            borderRadius: question.type === 'multiple_choice' || question.type === 'true_false' ? 10 : 4,
-                            borderWidth: 2,
-                            borderColor: option.isCorrect ? '#10B981' : '#9CA3AF',
-                            backgroundColor: option.isCorrect ? '#10B981' : 'transparent',
-                            marginRight: 12,
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                          }}
-                        >
-                          {option.isCorrect && (
-                            <View
-                              style={{
-                                width: 8,
-                                height: 8,
-                                borderRadius: question.type === 'multiple_choice' || question.type === 'true_false' ? 4 : 2,
-                                backgroundColor: 'white',
-                              }}
-                            />
-                          )}
-                        </View>
-                        <Text
-                          style={{
-                            fontSize: 14,
-                            fontFamily: option.isCorrect ? 'Inter-24pt-SemiBold' : 'Inter-18pt-Regular',
-                            color: isDarkMode ? '#E5E7EB' : '#374151',
-                          }}
-                        >
-                          {option.text}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-
-                  <View style={{ marginTop: 12, flexDirection: 'row', justifyContent: 'space-between' }}>
-                    <Text style={{ 
-                      fontSize: 12, 
-                      fontFamily: 'Inter-18pt-Regular',
-                      color: isDarkMode ? '#9CA3AF' : '#6B7280' 
-                    }}>
-                      Type: {question.type.replace('_', ' ')}
-                    </Text>
-                    <Text style={{ 
-                      fontSize: 12, 
-                      fontFamily: 'Inter-18pt-Regular',
-                      color: isDarkMode ? '#9CA3AF' : '#6B7280' 
-                    }}>
-                      Points: {question.itemPoints}
-                    </Text>
-                  </View>
-                </View>
+                  question={question}
+                  index={index}
+                  isDarkMode={isDarkMode}
+                  width={width}
+                  onImagePress={handleImagePress}
+                />
               ))}
             </ScrollView>
           )}
-        </View>
+        </SafeAreaView>
       </Modal>
-    </View>
+
+      {/* Image Preview Modal */}
+      <Modal
+        visible={imagePreviewModal}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={handleCloseImagePreview}
+        statusBarTranslucent={true}
+      >
+        <SafeAreaView style={{
+          flex: 1,
+          backgroundColor: 'rgba(0, 0, 0, 0.9)',
+        }} edges={['top']}>
+          <TouchableOpacity
+            style={{
+              position: 'absolute',
+              top: 65,
+              right: 20,
+              zIndex: 1,
+              backgroundColor: 'rgba(0, 0, 0, 0.5)',
+              borderRadius: 20,
+              padding: 8,
+            }}
+            onPress={handleCloseImagePreview}
+          >
+            <ExpoImage
+              source={require('@/assets/icons/close.png')}
+              style={{ width: 24, height: 24 }}
+              tintColor="white"
+            />
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={{ flex: 1, justifyContent: 'center', alignItems: 'center', width: '100%' }}
+            onPress={handleCloseImagePreview}
+            activeOpacity={1}
+          >
+            {selectedPreviewImage && (
+              <ExpoImage
+                source={{ uri: selectedPreviewImage }}
+                style={{
+                  width: '90%',
+                  height: '80%',
+                  borderRadius: 12,
+                }}
+                contentFit="contain"
+              />
+            )}
+          </TouchableOpacity>
+        </SafeAreaView>
+      </Modal>
+    </SafeAreaView>
   );
 };
 
-export default QuizzesAndroid;
+export default memo(QuizzesAndroid);

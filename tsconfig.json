@@ -14,5 +14,10 @@
     ".expo/types/**/*.ts",
     "expo-env.d.ts",
     "nativewind-env.d.ts"
+  ],
+  "exclude": [
+    "node_modules", // <--- 👈 ADD THIS LINE
+    "dist",         // Good practice to exclude build output
+    "build"         // Good practice to exclude build output
   ]
 }

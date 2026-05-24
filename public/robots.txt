@@ -1,0 +1,25 @@
+# robots.txt for GracEdLMS3
+# Allow search engines to index public pages
+
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /auth/login
+Disallow: /auth/register
+Disallow: /student
+Disallow: /teacher
+Disallow: /dashboard
+Disallow: /*?*
+Disallow: /*.json$
+Disallow: /api/
+
+# Specific rules for Google
+User-agent: Googlebot
+Allow: /
+
+# Specific rules for Bing
+User-agent: Bingbot
+Allow: /
+
+# Crawl delay (optional)
+Crawl-delay: 1

@@ -11,6 +11,7 @@ import { cssInterop } from 'nativewind';
 import { Image } from 'expo-image';
 import ActivityIcon from '@/assets/icons/activity.svg';
 import GradesIcon from '@/assets/icons/grades.svg'
+import InstitutionIcon from '@/assets/icons/institution.svg'
 import DrawerIcon from '@/assets/icons/drawer_menu.svg'
 
 export default function DrawerLayout() {
@@ -32,9 +33,9 @@ export default function DrawerLayout() {
           drawerHideStatusBarOnOpen: false,
           drawerInactiveTintColor: isDarkMode ? '#E0E0E0' : 'black',
           headerLeft: () => (
-            <Pressable className="ml-2 mr-2" onPress={() => navigation.toggleDrawer()}>
+            <TouchableOpacity className="ml-3 mr-2" onPress={() => navigation.toggleDrawer()}>
               <DrawerIcon width={24} height={24} fill="white"/>
-            </Pressable>
+            </TouchableOpacity>
           )
         })}
       >
@@ -49,7 +50,7 @@ export default function DrawerLayout() {
             ),
             drawerLabel: "Dashboard", 
             drawerLabelStyle:{
-              fontFamily: 'Inter-24pt-SemiBold'
+              fontFamily: 'Inter-SemiBold'
             },           
             headerStyle: {
               backgroundColor: Platform.select({
@@ -71,6 +72,38 @@ export default function DrawerLayout() {
           }}
         />
         <Drawer.Screen
+          name="school-page"
+          options={{
+            drawerIcon:({focused})=>(
+              <InstitutionIcon
+                width={24} height={24}
+                fill={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
+              />
+            ),
+            drawerLabel: "School Page",
+            drawerLabelStyle:{
+              fontFamily: 'Inter-SemiBold'
+            },            
+            headerStyle: {
+              backgroundColor: Platform.select({
+                android: '#22C55E',
+                ios: '#3B82F6',
+                web: '#6D28D9',
+              }),
+            },
+            headerTintColor: 'white', 
+            headerTitleAlign: 'left',             
+            headerTitleStyle: {
+            fontFamily: 'Poppins-Bold',
+            marginTop: Platform.select({
+                web: 0,
+                default: 5
+              })
+            },
+            title:"School Page",
+          }}
+        />
+        <Drawer.Screen
           name="user-management"
           options={{
             drawerIcon:({focused})=>(
@@ -82,7 +115,7 @@ export default function DrawerLayout() {
             ),
             drawerLabel: "User Management", 
             drawerLabelStyle:{
-              fontFamily: 'Inter-24pt-SemiBold'
+              fontFamily: 'Inter-SemiBold'
             },           
             headerStyle: {
               backgroundColor: Platform.select({
@@ -116,7 +149,7 @@ export default function DrawerLayout() {
             drawerItemStyle: { display: 'none' }, // Hide this item from the drawer
             drawerLabel: "Edit User", 
             drawerLabelStyle:{
-              fontFamily: 'Inter-24pt-SemiBold'
+              fontFamily: 'Inter-SemiBold'
             },
             headerShown: false,           
             headerStyle: {
@@ -151,7 +184,7 @@ export default function DrawerLayout() {
             drawerItemStyle: { display: 'none' }, // Hide this item from the drawer
             drawerLabel: "Add User", 
             drawerLabelStyle:{
-              fontFamily: 'Inter-24pt-SemiBold'
+              fontFamily: 'Inter-SemiBold'
             },
             headerShown: false,           
             headerStyle: {
@@ -185,7 +218,7 @@ export default function DrawerLayout() {
             ),
             drawerLabel: "Archives", 
             drawerLabelStyle:{
-              fontFamily: 'Inter-24pt-SemiBold'
+              fontFamily: 'Inter-SemiBold'
             },        
             headerStyle: {
               backgroundColor: Platform.select({
@@ -217,7 +250,7 @@ export default function DrawerLayout() {
             ),
             drawerLabel: "Subjects",
             drawerLabelStyle:{
-              fontFamily: 'Inter-24pt-SemiBold'
+              fontFamily: 'Inter-SemiBold'
             },            
             headerStyle: {
               backgroundColor: Platform.select({
@@ -239,6 +272,40 @@ export default function DrawerLayout() {
           }}
         />
         <Drawer.Screen
+          name="subjects/[id]"
+          options={{
+            drawerIcon:({focused})=>(
+              <CoursesIcon
+                width={24} height={24}
+                fill={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
+              />
+            ),
+            headerShown: false,
+            drawerLabel: "Subject Details",
+            drawerLabelStyle:{
+              fontFamily: 'Inter-SemiBold'
+            },            
+            drawerItemStyle: { display: 'none' },
+            headerStyle: {
+              backgroundColor: Platform.select({
+                android: '#22C55E',
+                ios: '#3B82F6',
+                web: '#6D28D9',
+              }),
+            },
+            headerTintColor: 'white', 
+            headerTitleAlign: 'left',             
+            headerTitleStyle: {
+              fontFamily: 'Poppins-Bold',
+              marginTop: Platform.select({
+                web: 0,
+                default: 5
+              })
+            },
+            title:"Subject Details",
+          }}
+        />
+        <Drawer.Screen
           name="subject-archives"
           options={{
             drawerIcon:({focused})=>(
@@ -250,7 +317,7 @@ export default function DrawerLayout() {
             ),
             drawerLabel: "Subjects Archives",
             drawerLabelStyle:{
-              fontFamily: 'Inter-24pt-SemiBold'
+              fontFamily: 'Inter-SemiBold'
             },            
             headerStyle: {
               backgroundColor: Platform.select({
@@ -282,7 +349,7 @@ export default function DrawerLayout() {
             ),
             drawerLabel: "Calendar",
             drawerLabelStyle:{
-              fontFamily: 'Inter-24pt-SemiBold'
+              fontFamily: 'Inter-SemiBold'
             },            
             headerStyle: {
               backgroundColor: Platform.select({

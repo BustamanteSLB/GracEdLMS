@@ -1,4 +1,4 @@
-import { Text, View, useColorScheme, ActivityIndicator, ScrollView, TouchableOpacity, TextInput, Modal, Alert, Platform, VirtualizedList } from 'react-native'
+import { Text, View, useColorScheme, ActivityIndicator, ScrollView, TouchableOpacity, TextInput, Modal, Alert, Platform, Linking } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { StatusBar } from 'expo-status-bar'
@@ -7,8 +7,9 @@ import { Image } from 'expo-image'
 import { cssInterop } from 'nativewind'
 import apiClient from '@/app/services/apiClient'
 import { useAuth } from '@/contexts/AuthContext'
-import { Picker } from '@react-native-picker/picker'
 import { FlashList } from '@shopify/flash-list'
+import DropdownMobile, { DropdownMobileItem } from '@/components/DropdownMobile';
+import DownIcon from '@/assets/icons/down.svg';
 
 cssInterop(Image, { className: "style" });
 
@@ -110,6 +111,9 @@ const GradesAndroid: React.FC = () => {
   const [viewSubmissionModalVisible, setViewSubmissionModalVisible] = useState(false);
   const [selectedItemForView, setSelectedItemForView] = useState<StudentActivityOverviewItem | null>(null);
 
+  // Add file error state at the top with other state variables
+  const [fileLoadError, setFileLoadError] = useState<{[key: string]: boolean}>({});
+
 
   // Derived data for filters (subjects student is enrolled in)
   const subjects = useMemo(() => {
@@ -121,6 +125,24 @@ const GradesAndroid: React.FC = () => {
     }, [] as Subject[]);
     return uniqueSubjects.sort((a, b) => a.subjectName.localeCompare(b.subjectName));
   }, [studentGradesOverview]);
+
+  // Memoized dropdown options
+  const subjectOptions = useMemo(() => [
+    { label: 'All My Subjects', value: '' },
+    ...subjects.map(subject => ({
+      label: subject.subjectName,
+      value: subject._id,
+    })),
+  ], [subjects]);
+
+  const statusOptions = useMemo(() => [
+    { label: 'All Status', value: '' },
+    { label: 'GRADED', value: 'GRADED' },
+    { label: 'PENDING', value: 'PENDING' },
+    { label: 'UNSUBMITTED', value: 'UNSUBMITTED' },
+    { label: 'OVERDUE', value: 'OVERDUE' },
+    { label: 'ACTIVE', value: 'ACTIVE' },
+  ], []);
 
   // Filtered grading data
   const filteredStudentGradesOverview = useMemo(() => {
@@ -179,6 +201,29 @@ const GradesAndroid: React.FC = () => {
   const getItem = useCallback((_data: StudentActivityOverviewItem[] | null | undefined, index: number): StudentActivityOverviewItem => {
     return (_data as StudentActivityOverviewItem[])[index];
   }, []);
+
+  // Helper function to validate and get file URL
+  const getFileUrl = (fileUrl: string) => {
+    // If it's already a full Firebase URL, return as is
+    if (fileUrl.startsWith('https://storage.googleapis.com/') || 
+        fileUrl.startsWith('https://firebasestorage.googleapis.com/')) {
+      return fileUrl;
+    }
+    
+    // If it's a legacy local path, handle backward compatibility
+    if (fileUrl.startsWith('/uploads/') || fileUrl.startsWith('uploads/')) {
+      console.warn('Legacy file path detected:', fileUrl);
+      // For backward compatibility, you might want to handle this case differently
+      return null; // or return a placeholder/migration notice
+    }
+    
+    // If it's already a relative path that might be a Firebase URL
+    return fileUrl;
+  };
+
+  const handleFileError = (fileUrl: string) => {
+    console.warn('Failed to load file:', fileUrl);
+  };
 
   // Fetch student's activity overview
   const fetchStudentActivityOverview = async () => {
@@ -453,7 +498,7 @@ const GradesAndroid: React.FC = () => {
                 <Image
                     className="w-[16] h-[16]"
                     contentFit="contain"
-                    source={require('@/assets/icons/import_file.png')}
+                    source={require('@/assets/icons/show_password.png')}
                     tintColor="white"
                 />
             </TouchableOpacity>
@@ -533,7 +578,7 @@ const GradesAndroid: React.FC = () => {
             <Image
               className="w-[14] h-[14] mr-1"
               contentFit="contain"
-              source={require('@/assets/icons/import_file.png')}
+              source={require('@/assets/icons/attach.png')}
               tintColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
             />
             <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
@@ -544,7 +589,7 @@ const GradesAndroid: React.FC = () => {
         {submission && submission.attachmentPaths && submission.attachmentPaths.length === 0 && (
             <View className='flex-row items-center'>
                 <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                    Submitted (No files attached) on {formatDate(submission.submissionDate)}
+                    No files attached - {formatDate(submission.submissionDate)}
                 </Text>
             </View>
         )}
@@ -576,7 +621,7 @@ const GradesAndroid: React.FC = () => {
   if (loading) {
     return (
       <SafeAreaView className={`flex-1 items-center justify-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-        <ActivityIndicator size="large" color={isDarkMode ? '#E0E0E0' : '#000000'} />
+        <ActivityIndicator size="large" color="#3B82F6" />
         <Text className={`font-inter_regular mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
           Loading your grades...
         </Text>
@@ -677,72 +722,29 @@ const GradesAndroid: React.FC = () => {
       {/* Filters */}
       <View className='mx-4 mb-1'>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 16 }}>
-          <View className='flex-row my-1'>
+          <View className='flex-row my-1 gap-2'>
             {/* Subject Filter */}
-            <View
-              style={{
-                backgroundColor: isDarkMode ? '#1E1E1E' : 'white',
-                borderWidth: 1,
-                borderColor: isDarkMode ? '#1E1E1E' : '#d1d5db', 
-                borderRadius: 6,
-                marginRight: 8,
-              }}
-            >
-              <Picker
+            <View style={{ width: 200 }}>
+              <DropdownMobile
+                label="Subject"
                 selectedValue={subjectFilter}
                 onValueChange={setSubjectFilter}
-                style={{ 
-                  color: isDarkMode ? '#E0E0E0' : 'black',
-                  fontFamily: 'Inter-18pt-Regular',
-                  fontSize: 14, 
-                  padding: 12,
-                  width: 200, 
-                  height: 55
-                }}
-                dropdownIconColor={isDarkMode ? '#E0E0E0' : 'black'}
-                mode="dropdown"
-              >
-                <Picker.Item label="All My Subjects" value="" />
-                {subjects.map(subject => (
-                  <Picker.Item 
-                    key={subject._id} 
-                    label={subject.subjectName} 
-                    value={subject._id} 
-                  />
-                ))}
-              </Picker>
+                items={subjectOptions}
+                placeholder="All My Subjects"
+                buttonRightIcon={DownIcon}
+              />
             </View>
             
             {/* Status Filter */}
-            <View
-              style={{
-                backgroundColor: isDarkMode ? '#1E1E1E' : 'white',
-                borderWidth: 1,
-                borderColor: isDarkMode ? '#1E1E1E' : '#d1d5db', 
-                borderRadius: 6,
-              }}
-            >
-              <Picker
+            <View style={{ width: 200 }}>
+              <DropdownMobile
+                label="Status"
                 selectedValue={statusFilter}
                 onValueChange={setStatusFilter}
-                style={{ 
-                  color: isDarkMode ? '#E0E0E0' : 'black',
-                  fontFamily: 'Inter-18pt-Regular',
-                  fontSize: 14, 
-                  padding: 12,
-                  width: 200, 
-                  height: 55
-                }}
-                dropdownIconColor={isDarkMode ? '#E0E0E0' : 'black'}
-                mode="dropdown"
-              >
-                <Picker.Item label="All Status" value="" />
-                <Picker.Item label="GRADED" value="GRADED" />
-                <Picker.Item label="PENDING" value="PENDING" />
-                <Picker.Item label="UNSUBMITTED" value="UNSUBMITTED" />
-                <Picker.Item label="OVERDUE" value="OVERDUE" />
-                <Picker.Item label="ACTIVE" value="ACTIVE" />
-              </Picker>
+                items={statusOptions}
+                placeholder="All Status"
+                buttonRightIcon={DownIcon}
+              />
             </View>
           </View>
         </ScrollView>
@@ -775,7 +777,6 @@ const GradesAndroid: React.FC = () => {
           showsVerticalScrollIndicator={false}
           extraData={[isDarkMode, searchQuery, subjectFilter, statusFilter]}
           contentContainerStyle={{ paddingBottom: 20 }}
-          estimatedItemSize={200}
         />
       )}
 
@@ -845,38 +846,79 @@ const GradesAndroid: React.FC = () => {
                           <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
                             Attached Files:
                           </Text>
-                          {selectedItemForView.submission.attachmentPaths.map((path, idx) => (
-                            <TouchableOpacity
-                              key={idx}
-                              onPress={() => {
-                                const url = `http://192.168.100.5:5000/${path}`; // Assuming backend serves files from here
-                                if (Platform.OS === 'web') {
-                                  window.open(url, '_blank');
-                                } else {
-                                  // For native, you'd typically use Linking.openURL or a file viewer
-                                  Alert.alert("File Download", `Attempting to open: ${url}`);
-                                }
-                              }}
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                marginBottom: 8,
-                                padding: 12,
-                                backgroundColor: isDarkMode ? '#2A2A2A' : '#E8E8E8',
-                                borderRadius: 8,
-                              }}
-                            >
-                              <Image
-                                className="w-[20] h-[20] mr-3"
-                                contentFit="contain"
-                                source={require('@/assets/icons/import_file.png')}
-                                tintColor={isDarkMode ? '#A78BFA' : '#6D28D9'}
-                              />
-                              <Text className={`font-inter_regular text-sm underline flex-1 ${isDarkMode ? 'text-blue-400' : 'text-blue-700'}`}>
-                                {path.split('/').pop()}
-                              </Text>
-                            </TouchableOpacity>
-                          ))}
+                          {selectedItemForView.submission.attachmentPaths.map((path, idx) => {
+                            const fileUrl = getFileUrl(path);
+                            
+                            if (!fileUrl || fileLoadError[fileUrl]) {
+                              return (
+                                <View
+                                  key={idx}
+                                  style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    marginBottom: 8,
+                                    padding: 12,
+                                    backgroundColor: isDarkMode ? '#2A2A2A' : '#E8E8E8',
+                                    borderRadius: 8,
+                                  }}
+                                >
+                                  <Image
+                                    className="w-[20] h-[20] mr-3"
+                                    contentFit="contain"
+                                    source={require('@/assets/icons/attach.png')}
+                                    tintColor={isDarkMode ? '#6B7280' : '#9CA3AF'}
+                                  />
+                                  <Text className={`font-inter_regular text-sm flex-1 ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>
+                                    File unavailable
+                                  </Text>
+                                </View>
+                              );
+                            }
+
+                            return (
+                              <TouchableOpacity
+                                key={idx}
+                                onPress={async () => {
+                                  try {
+                                    if (Platform.OS === 'web') {
+                                      window.open(fileUrl, '_blank');
+                                    } else {
+                                      // For mobile, use Linking API
+                                      const { Linking } = require('react-native');
+                                      const canOpen = await Linking.canOpenURL(fileUrl);
+                                      if (canOpen) {
+                                        await Linking.openURL(fileUrl);
+                                      } else {
+                                        Alert.alert('Error', 'Cannot open this file type');
+                                      }
+                                    }
+                                  } catch (error) {
+                                    console.error('Failed to open file:', error);
+                                    setFileLoadError(prev => ({ ...prev, [fileUrl]: true }));
+                                    Alert.alert('Error', 'Failed to open file');
+                                  }
+                                }}
+                                style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  marginBottom: 8,
+                                  padding: 12,
+                                  backgroundColor: isDarkMode ? '#2A2A2A' : '#E8E8E8',
+                                  borderRadius: 8,
+                                }}
+                              >
+                                <Image
+                                  className="w-[20] h-[20] mr-3"
+                                  contentFit="contain"
+                                  source={require('@/assets/icons/attach.png')}
+                                  tintColor={isDarkMode ? '#A78BFA' : '#6D28D9'}
+                                />
+                                <Text className={`font-inter_regular text-sm underline flex-1 ${isDarkMode ? 'text-blue-400' : 'text-blue-700'}`}>
+                                  {fileUrl.split('/').pop() || 'Download file'}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
                         </View>
                       )}
                        {selectedItemForView.submission.attachmentPaths && selectedItemForView.submission.attachmentPaths.length === 0 && (
@@ -939,7 +981,7 @@ const GradesAndroid: React.FC = () => {
         </View>
       </Modal>
 
-      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+      <StatusBar style={isDarkMode ? 'light' : 'dark'} />
     </View>
   );
 };

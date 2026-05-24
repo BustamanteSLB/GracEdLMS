@@ -7,7 +7,9 @@ import { Image } from 'expo-image'
 import { cssInterop } from 'nativewind'
 import apiClient from '@/app/services/apiClient'
 import { useAuth } from '@/contexts/AuthContext'
-import { Picker } from '@react-native-picker/picker'
+import Dropdown, { DropdownItem } from '@/components/Dropdown';
+import AttachIcon from '@/assets/icons/attach.svg'
+import FileIcon from '@/assets/icons/file.svg'
 
 cssInterop(Image, { className: "style" });
 
@@ -89,8 +91,32 @@ interface StudentActivityOverviewItem {
   subject: Subject; // Subject is directly included now
 }
 
+// Helper function to validate and get file URL
+const getFileUrl = (fileUrl: string) => {
+  // If it's already a full Firebase URL, return as is
+  if (fileUrl.startsWith('https://storage.googleapis.com/') || 
+      fileUrl.startsWith('https://firebasestorage.googleapis.com/')) {
+    return fileUrl;
+  }
+  
+  // If it's a legacy local path, handle backward compatibility
+  if (fileUrl.startsWith('/uploads/') || fileUrl.startsWith('uploads/')) {
+    console.warn('Legacy file path detected:', fileUrl);
+    // For backward compatibility, you might want to handle this case differently
+    return null; // or return a placeholder/migration notice
+  }
+  
+  // If it's already a relative path that might be a Firebase URL
+  return fileUrl;
+};
+
+const handleFileError = (fileUrl: string) => {
+  console.warn('Failed to load file:', fileUrl);
+};
+
 // Student's grades page
 const GradesWeb: React.FC = () => {
+  document.title = 'My Grades - GracEdLMS';
   const colorScheme = useColorScheme();
   const { isDarkMode } = useDarkMode();
   const { user } = useAuth(); // Current logged-in user (student)
@@ -109,6 +135,8 @@ const GradesWeb: React.FC = () => {
   const [viewSubmissionModalVisible, setViewSubmissionModalVisible] = useState(false);
   const [selectedItemForView, setSelectedItemForView] = useState<StudentActivityOverviewItem | null>(null);
 
+  // File error state
+  const [fileLoadError, setFileLoadError] = useState<{[key: string]: boolean}>({});
 
   // Derived data for filters (subjects student is enrolled in)
   const subjects = useMemo(() => {
@@ -121,56 +149,81 @@ const GradesWeb: React.FC = () => {
     return uniqueSubjects.sort((a, b) => a.subjectName.localeCompare(b.subjectName));
   }, [studentGradesOverview]);
 
+  // Memoized dropdown options (BEFORE any conditional returns)
+  const subjectFilterOptions: DropdownItem[] = useMemo(() => {
+    const options: DropdownItem[] = [
+      { label: 'All My Subjects', value: '' }
+    ];
+    
+    subjects.forEach((subject) => {
+      options.push({
+        label: `${subject.subjectName}`,
+        value: subject._id
+      });
+    });
+    
+    return options;
+  }, [subjects]);
+
+  const statusFilterOptions: DropdownItem[] = useMemo(() => [
+    { label: 'All Status', value: '' },
+    { label: 'Graded', value: 'GRADED' },
+    { label: 'Pending', value: 'PENDING' },
+    { label: 'Unsubmitted', value: 'UNSUBMITTED' },
+    { label: 'Overdue', value: 'OVERDUE' },
+    { label: 'Active', value: 'ACTIVE' },
+  ], []);
+
   // Filtered grading data
   const filteredStudentGradesOverview = useMemo(() => {
-  let filtered = studentGradesOverview;
+    let filtered = studentGradesOverview;
 
-  // Search filter
-  if (searchQuery.trim()) {
-    const query = searchQuery.toLowerCase().trim();
-    filtered = filtered.filter((item) => {
-      const activityTitle = item.activity.title.toLowerCase();
-      const subjectName = item.subject.subjectName.toLowerCase();
-      const teacherName = `${item.activity.createdBy.firstName} ${item.activity.createdBy.lastName}`.toLowerCase();
-      
-      return activityTitle.includes(query) || 
-             subjectName.includes(query) ||
-             teacherName.includes(query);
-    });
-  }
+    // Search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      filtered = filtered.filter((item) => {
+        const activityTitle = item.activity.title.toLowerCase();
+        const subjectName = item.subject.subjectName.toLowerCase();
+        const teacherName = `${item.activity.createdBy.firstName} ${item.activity.createdBy.lastName}`.toLowerCase();
+        
+        return activityTitle.includes(query) || 
+               subjectName.includes(query) ||
+               teacherName.includes(query);
+      });
+    }
 
-  // Subject filter
-  if (subjectFilter) {
-    filtered = filtered.filter((item) => item.subject._id === subjectFilter);
-  }
+    // Subject filter
+    if (subjectFilter) {
+      filtered = filtered.filter((item) => item.subject._id === subjectFilter);
+    }
 
-  // Status filter
-  if (statusFilter) {
-    filtered = filtered.filter((item) => {
-      const now = new Date();
-      const deadline = new Date(item.activity.deadline);
-      const isOverdue = deadline < now && item.status !== 'GRADED';
-      const isActive = deadline >= now && item.status !== 'GRADED';
+    // Status filter
+    if (statusFilter) {
+      filtered = filtered.filter((item) => {
+        const now = new Date();
+        const deadline = new Date(item.activity.deadline);
+        const isOverdue = deadline < now && item.status !== 'GRADED';
+        const isActive = deadline >= now && item.status !== 'GRADED';
 
-      switch (statusFilter) {
-        case 'GRADED':
-          return item.status === 'GRADED';
-        case 'PENDING':
-          return item.status === 'PENDING';
-        case 'UNSUBMITTED':
-          return item.status === 'UNSUBMITTED' && !isOverdue;
-        case 'OVERDUE':
-          return isOverdue;
-        case 'ACTIVE':
-          return isActive;
-        default:
-          return true;
-      }
-    });
-  }
+        switch (statusFilter) {
+          case 'GRADED':
+            return item.status === 'GRADED';
+          case 'PENDING':
+            return item.status === 'PENDING';
+          case 'UNSUBMITTED':
+            return item.status === 'UNSUBMITTED' && !isOverdue;
+          case 'OVERDUE':
+            return isOverdue;
+          case 'ACTIVE':
+            return isActive;
+          default:
+            return true;
+        }
+      });
+    }
 
-  return filtered;
-}, [studentGradesOverview, searchQuery, subjectFilter, statusFilter]);
+    return filtered;
+  }, [studentGradesOverview, searchQuery, subjectFilter, statusFilter]);
 
   // VirtualizedList helper functions
   const getItemCount = useCallback((_data: StudentActivityOverviewItem[] | null | undefined) => _data ? _data.length : 0, []);
@@ -452,7 +505,7 @@ const GradesWeb: React.FC = () => {
                 <Image
                     className="w-[16] h-[16]"
                     contentFit="contain"
-                    source={require('@/assets/icons/import_file.png')}
+                    source={require('@/assets/icons/show_password.png')}
                     tintColor="white"
                 />
             </TouchableOpacity>
@@ -529,12 +582,7 @@ const GradesWeb: React.FC = () => {
         {/* Submitted Files Count (if submitted) */}
         {submission && submission.attachmentPaths && submission.attachmentPaths.length > 0 && (
           <View className='flex-row items-center'>
-            <Image
-              className="w-[14] h-[14] mr-1"
-              contentFit="contain"
-              source={require('@/assets/icons/import_file.png')}
-              tintColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
-            />
+            <FileIcon width={14} height={14} fill={isDarkMode ? '#9CA3AF' : '#6B7280'} style={{ marginRight: 4 }} />
             <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
               Submitted {submission.attachmentPaths.length} file{submission.attachmentPaths.length !== 1 ? 's' : ''} on {formatDate(submission.submissionDate)}
             </Text>
@@ -575,7 +623,7 @@ const GradesWeb: React.FC = () => {
   if (loading) {
     return (
       <SafeAreaView className={`flex-1 items-center justify-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-        <ActivityIndicator size="large" color={isDarkMode ? '#E0E0E0' : '#000000'} />
+        <ActivityIndicator size="large" color="#3B82F6" />
         <Text className={`font-inter_regular mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
           Loading your grades...
         </Text>
@@ -673,61 +721,29 @@ const GradesWeb: React.FC = () => {
         />
       </View>
 
-      {/* Filters */}
+      {/* Filters - REPLACED WITH DROPDOWNS */}
       <View className='mx-4 mb-4'>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 16 }}>
-          <View className='flex-row space-x-3'>
-            {/* Subject Filter */}
-            <Picker
+        <View style={{ flexDirection: 'row', gap: 12 }}>
+          {/* Subject Filter - REPLACED PICKER */}
+          <View style={{ flex: 1 }}>
+            <Dropdown
+              data={subjectFilterOptions}
               selectedValue={subjectFilter}
               onValueChange={setSubjectFilter}
-              style={{ 
-                backgroundColor: isDarkMode ? '#1E1E1E' : 'white',
-                borderWidth: 1,
-                borderColor: isDarkMode ? '#1E1E1E' : '#d1d5db', 
-                borderRadius: 6,
-                color: isDarkMode ? '#E0E0E0' : 'black',
-                fontFamily: 'Inter-18pt-Regular',
-                fontSize: 16, 
-                padding: 12,
-                width: 200, 
-              }}
-            >
-              <Picker.Item label="All My Subjects" value="" />
-              {subjects.map(subject => (
-                <Picker.Item 
-                  key={subject._id} 
-                  label={subject.subjectName} 
-                  value={subject._id} 
-                />
-              ))}
-            </Picker>
-            
-            {/* Status Filter */}
-            <Picker
+              placeholder="📚 All My Subjects"
+            />
+          </View>
+          
+          {/* Status Filter - REPLACED PICKER */}
+          <View style={{ flex: 1 }}>
+            <Dropdown
+              data={statusFilterOptions}
               selectedValue={statusFilter}
               onValueChange={setStatusFilter}
-              style={{ 
-                backgroundColor: isDarkMode ? '#1E1E1E' : 'white',
-                borderWidth: 1,
-                borderColor: isDarkMode ? '#1E1E1E' : '#d1d5db', 
-                borderRadius: 6,
-                color: isDarkMode ? '#E0E0E0' : 'black',
-                fontFamily: 'Inter-18pt-Regular',
-                fontSize: 16, 
-                padding: 12,
-                width: 150, 
-              }}
-            >
-              <Picker.Item label="All Status" value="" />
-              <Picker.Item label="GRADED" value="GRADED" />
-              <Picker.Item label="PENDING" value="PENDING" />
-              <Picker.Item label="UNSUBMITTED" value="UNSUBMITTED" />
-              <Picker.Item label="OVERDUE" value="OVERDUE" />
-              <Picker.Item label="ACTIVE" value="ACTIVE" />
-            </Picker>
+              placeholder="All Status"
+            />
           </View>
-        </ScrollView>
+        </View>
       </View>
 
       {/* Results Count */}
@@ -828,38 +844,62 @@ const GradesWeb: React.FC = () => {
                           <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
                             Attached Files:
                           </Text>
-                          {selectedItemForView.submission.attachmentPaths.map((path, idx) => (
-                            <TouchableOpacity
-                              key={idx}
-                              onPress={() => {
-                                const url = `http://192.168.100.5:5000/${path}`; // Assuming backend serves files from here
-                                if (Platform.OS === 'web') {
-                                  window.open(url, '_blank');
-                                } else {
-                                  // For native, you'd typically use Linking.openURL or a file viewer
-                                  Alert.alert("File Download", `Attempting to open: ${url}`);
-                                }
-                              }}
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                marginBottom: 8,
-                                padding: 12,
-                                backgroundColor: isDarkMode ? '#2A2A2A' : '#E8E8E8',
-                                borderRadius: 8,
-                              }}
-                            >
-                              <Image
-                                className="w-[20] h-[20] mr-3"
-                                contentFit="contain"
-                                source={require('@/assets/icons/import_file.png')}
-                                tintColor={isDarkMode ? '#A78BFA' : '#6D28D9'}
-                              />
-                              <Text className={`font-inter_regular text-sm underline flex-1 ${isDarkMode ? 'text-blue-400' : 'text-blue-700'}`}>
-                                {path.split('/').pop()}
-                              </Text>
-                            </TouchableOpacity>
-                          ))}
+                          {selectedItemForView.submission.attachmentPaths.map((path, idx) => {
+                            const fileUrl = getFileUrl(path);
+                            
+                            if (!fileUrl || fileLoadError[fileUrl]) {
+                              return (
+                                <View
+                                  key={idx}
+                                  style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    marginBottom: 8,
+                                    padding: 12,
+                                    backgroundColor: isDarkMode ? '#2A2A2A' : '#E8E8E8',
+                                    borderRadius: 8,
+                                  }}
+                                >
+                                  <FileIcon width={20} height={20} fill={isDarkMode ? '#6B7280' : '#9CA3AF'} style={{ marginRight: 12 }} />
+                                  <Text className={`font-inter_regular text-sm flex-1 ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>
+                                    File unavailable
+                                  </Text>
+                                </View>
+                              );
+                            }
+
+                            return (
+                              <TouchableOpacity
+                                key={idx}
+                                onPress={() => {
+                                  try {
+                                    if (Platform.OS === 'web') {
+                                      window.open(fileUrl, '_blank');
+                                    } else {
+                                      // For native, you'd typically use Linking.openURL
+                                      Alert.alert("File Download", `Attempting to open: ${fileUrl}`);
+                                    }
+                                  } catch (error) {
+                                    console.error('Failed to open file:', error);
+                                    setFileLoadError(prev => ({ ...prev, [fileUrl]: true }));
+                                  }
+                                }}
+                                style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  marginBottom: 8,
+                                  padding: 12,
+                                  backgroundColor: isDarkMode ? '#2A2A2A' : '#E8E8E8',
+                                  borderRadius: 8,
+                                }}
+                              >
+                                <AttachIcon width={20} height={20} fill={isDarkMode ? '#A78BFA' : '#6D28D9'} style={{ marginRight: 4 }} />
+                                <Text className={`font-inter_regular text-sm underline flex-1 ${isDarkMode ? 'text-blue-400' : 'text-blue-700'}`}>
+                                  {fileUrl.split('/').pop() || 'Download file'}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
                         </View>
                       )}
                        {selectedItemForView.submission.attachmentPaths && selectedItemForView.submission.attachmentPaths.length === 0 && (

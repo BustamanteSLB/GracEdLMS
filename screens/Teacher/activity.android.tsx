@@ -1,4 +1,4 @@
-import { Text, View, useColorScheme, ActivityIndicator, ScrollView, TouchableOpacity, TextInput, Alert, Platform, VirtualizedList, useWindowDimensions } from 'react-native'
+import { Text, View, useColorScheme, ActivityIndicator, ScrollView, TouchableOpacity, TextInput, Alert, Platform, useWindowDimensions, Modal, Pressable } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { StatusBar } from 'expo-status-bar'
@@ -7,11 +7,10 @@ import { Image } from 'expo-image'
 import { cssInterop } from 'nativewind'
 import apiClient from '@/app/services/apiClient'
 import { useAuth } from '@/contexts/AuthContext'
-import { Picker } from '@react-native-picker/picker'
-import ViewActivityModalWeb from '@/components/ViewActivityModalWeb'
-import ViewSubmissionsModalWeb from '@/components/ViewSubmissionsModalWeb'
-import UpdateGradeModal from '@/components/UpdateGradeModal'
-import AttachIcon  from '@/assets/icons/attach.svg'
+import MoreVertIcon from '@/assets/icons/more_vert.svg'
+import DeleteIcon from '@/assets/icons/delete.svg'
+import DropdownMobile from '@/components/DropdownMobile'
+import DownIcon from '@/assets/icons/down.svg'
 import { FlashList } from '@shopify/flash-list'
 
 cssInterop(Image, { className: "style" });
@@ -37,11 +36,21 @@ interface Subject {
   subjectId: string;
   subjectName: string;
   subjectDescription?: string;
-  teacher: User;
+  teachers: Array<{
+    teacher: User;
+    quarters: {
+      firstQuarter: boolean;
+      secondQuarter: boolean;
+      thirdQuarter: boolean;
+      fourthQuarter: boolean;
+    };
+    isAssignedToAllQuarters: boolean;
+  }>;
   section: string;
   gradeLevel: string;
   schoolYear: string;
   status: 'active' | 'inactive' | 'archived';
+  subjectImage?: string;
 }
 
 interface Submission {
@@ -59,7 +68,7 @@ interface Grade {
   student: User;
   activity: string;
   subject: string;
-  quarter: string; // Add the required quarter field
+  quarter: string;
   score: number;
   bonusPoints?: number;
   gradedBy: User;
@@ -75,10 +84,11 @@ interface Activity {
   visibleDate: string;
   deadline: string;
   points: number | null;
-  quarter: string; // Add the required quarter field
+  quarter: string;
   createdBy: User;
   subject: Subject;
   attachmentPath?: string | null;
+  allowLateSubmissions: boolean;
   submissions?: Submission[];
   grades?: Grade[];
   createdAt: string;
@@ -91,33 +101,6 @@ interface ActivityResponse {
   data: Activity[];
 }
 
-// VirtualizedList item types
-type SidebarItemType = 'loading' | 'empty' | 'activity';
-type MainItemType = 'loading' | 'empty' | 'activity' | 'submissions';
-
-interface SidebarListItem {
-  id: string;
-  type: SidebarItemType;
-  data?: Activity;
-}
-
-interface MainListItem {
-  id: string;
-  type: MainItemType;
-  data?: Activity;
-  submissions?: Submission[];
-}
-
-// Grading state interface
-interface GradingState {
-  [submissionId: string]: {
-    score: string;
-    comments: string;
-    isSubmitting: boolean;
-  };
-}
-
-// Teacher's activity page
 const ActivityAndroid: React.FC = () => {
   const colorScheme = useColorScheme();
   const { isDarkMode } = useDarkMode();
@@ -130,24 +113,28 @@ const ActivityAndroid: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
-  const [viewModalVisible, setViewModalVisible] = useState(false);
   
   // Filter states
   const [subjectFilter, setSubjectFilter] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('');
+  const [quarterFilter, setQuarterFilter] = useState<string>('');
 
-  // New states for activity selection and submissions
+  // Modal states
+  const [viewDetailModalVisible, setViewDetailModalVisible] = useState(false);
   const [viewSubmissionsModalVisible, setViewSubmissionsModalVisible] = useState(false);
   const [activitySubmissions, setActivitySubmissions] = useState<Submission[]>([]);
   const [submissionsLoading, setSubmissionsLoading] = useState(false);
-
-  // Add new state for update grade modal
-  const [updateGradeModalVisible, setUpdateGradeModalVisible] = useState(false);
-  const [selectedGrade, setSelectedGrade] = useState<Grade | null>(null);
-  const [selectedSubmissionForUpdate, setSelectedSubmissionForUpdate] = useState<Submission | null>(null);
+  const [contextMenuVisible, setContextMenuVisible] = useState(false);
+  const [contextMenuActivity, setContextMenuActivity] = useState<Activity | null>(null);
+  const [expandedSubmission, setExpandedSubmission] = useState<string | null>(null);
 
   // Grading state
-  const [gradingState, setGradingState] = useState<GradingState>({});
+  const [gradingStates, setGradingStates] = useState<{[submissionId: string]: {
+    score: string;
+    bonusPoints: string;
+    comments: string;
+    isSubmitting: boolean;
+  }}>({});
 
   // Derived data for filters
   const subjects = useMemo(() => {
@@ -183,6 +170,11 @@ const ActivityAndroid: React.FC = () => {
       filtered = filtered.filter(activity => activity.subject._id === subjectFilter);
     }
 
+    // Quarter filter
+    if (quarterFilter) {
+      filtered = filtered.filter(activity => activity.quarter === quarterFilter);
+    }
+
     // Status filter (based on deadline and grades)
     if (statusFilter) {
       const now = new Date();
@@ -208,7 +200,34 @@ const ActivityAndroid: React.FC = () => {
 
     // Sort by deadline (soonest first)
     return filtered.sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime());
-  }, [activities, searchQuery, subjectFilter, statusFilter]);
+  }, [activities, searchQuery, subjectFilter, statusFilter, quarterFilter]);
+
+  const subjectFilterOptions = useMemo(() => {
+    const options = [{ label: 'All Subjects', value: '' }];
+    subjects.forEach((subject) => {
+      options.push({
+        label: subject.subjectName,
+        value: subject._id
+      });
+    });
+    return options;
+  }, [subjects]);
+
+  const statusFilterOptions = useMemo(() => [
+    { label: 'All Status', value: '' },
+    { label: 'Active', value: 'active' },
+    { label: 'Upcoming', value: 'upcoming' },
+    { label: 'Overdue', value: 'overdue' },
+    { label: 'Graded', value: 'graded' },
+  ], []);
+
+  const quarterFilterOptions = useMemo(() => [
+    { label: 'All Quarters', value: '' },
+    { label: 'First Quarter', value: 'First Quarter' },
+    { label: 'Second Quarter', value: 'Second Quarter' },
+    { label: '3rd Quarter', value: '3rd Quarter' },
+    { label: '4th Quarter', value: '4th Quarter' },
+  ], []);
 
   // Fetch activities from teacher's assigned subjects
   const fetchTeacherActivities = async () => {
@@ -222,14 +241,19 @@ const ActivityAndroid: React.FC = () => {
       setLoading(true);
       setError(null);
 
-      // First, get subjects assigned to this teacher
       const subjectsResponse = await apiClient.get('/subjects');
       const allSubjects = subjectsResponse.data.data || [];
       
-      // Filter subjects where this teacher is assigned
-      const teacherSubjects = allSubjects.filter((subject: Subject) => 
-        subject.teacher._id === user._id
-      );
+      const teacherSubjects = allSubjects.filter((subject: Subject) => {
+        if (!subject.teachers || !Array.isArray(subject.teachers)) {
+          return false;
+        }
+        return subject.teachers.some((ta: any) => 
+          ta.teacher?._id === user._id || 
+          ta.teacher?.email === user.email ||
+          ta.teacher?.username === user.username
+        );
+      });
 
       if (teacherSubjects.length === 0) {
         setActivities([]);
@@ -237,53 +261,56 @@ const ActivityAndroid: React.FC = () => {
         return;
       }
 
-      // Then, fetch activities for each assigned subject
       const allActivities: Activity[] = [];
       
       for (const subject of teacherSubjects) {
         try {
           const activitiesResponse = await apiClient.get<ActivityResponse>(`/subjects/${subject._id}/activities`);
           if (activitiesResponse.data.success && activitiesResponse.data.data) {
-            // Add subject info to each activity and fetch grades
-            const activitiesWithSubject = await Promise.all(
-              activitiesResponse.data.data.map(async (activity) => {
-                // Fetch grades for this activity
-                let grades: Grade[] = [];
-                try {
-                  const gradesResponse = await apiClient.get(`/activities/${activity._id}/grades`);
-                  if (gradesResponse.data.success && gradesResponse.data.data) {
-                    grades = gradesResponse.data.data;
+            // Filter activities created by the current teacher and add subject info
+            const teacherActivities = await Promise.all(
+              activitiesResponse.data.data
+                .filter((activity) => {
+                  // Only include activities created by the current teacher
+                  return activity.createdBy._id === user._id || 
+                         activity.createdBy.email === user.email ||
+                         activity.createdBy.username === user.username;
+                })
+                .map(async (activity) => {
+                  let grades: Grade[] = [];
+                  try {
+                    const gradesResponse = await apiClient.get(`/activities/${activity._id}/grades`);
+                    if (gradesResponse.data.success && gradesResponse.data.data) {
+                      grades = gradesResponse.data.data;
+                    }
+                  } catch (gradeError) {
+                    console.warn(`Failed to fetch grades for activity ${activity.title}:`, gradeError);
                   }
-                } catch (gradeError) {
-                  console.warn(`Failed to fetch grades for activity ${activity.title}:`, gradeError);
-                }
 
-                // Ensure quarter field is present and valid
-                const activityWithQuarter: Activity = {
-                  ...activity,
-                  subject: subject,
-                  grades: grades,
-                  quarter: activity.quarter || 'First Quarter', // Provide default quarter if not set
-                  // Ensure all required fields are present
-                  title: activity.title || 'Untitled Activity',
-                  description: activity.description || undefined,
-                  visibleDate: activity.visibleDate || new Date().toISOString(),
-                  deadline: activity.deadline || new Date().toISOString(),
-                  points: activity.points !== undefined ? activity.points : null,
-                  createdBy: activity.createdBy || user, // Use current user as fallback
-                  attachmentPath: activity.attachmentPath || null,
-                  createdAt: activity.createdAt || new Date().toISOString(),
-                  updatedAt: activity.updatedAt || new Date().toISOString()
-                };
+                  const activityWithQuarter: Activity = {
+                    ...activity,
+                    subject: subject,
+                    grades: grades,
+                    quarter: activity.quarter || 'First Quarter',
+                    title: activity.title || 'Untitled Activity',
+                    description: activity.description || undefined,
+                    visibleDate: activity.visibleDate || new Date().toISOString(),
+                    deadline: activity.deadline || new Date().toISOString(),
+                    points: activity.points !== undefined ? activity.points : null,
+                    createdBy: activity.createdBy || user,
+                    attachmentPath: activity.attachmentPath || null,
+                    allowLateSubmissions: activity.allowLateSubmissions || false,
+                    createdAt: activity.createdAt || new Date().toISOString(),
+                    updatedAt: activity.updatedAt || new Date().toISOString()
+                  };
 
-                return activityWithQuarter;
-              })
+                  return activityWithQuarter;
+                })
             );
-            allActivities.push(...activitiesWithSubject);
+            allActivities.push(...teacherActivities);
           }
         } catch (subjectError: any) {
           console.warn(`Failed to fetch activities for subject ${subject.subjectName}:`, subjectError);
-          // Continue with other subjects even if one fails
         }
       }
 
@@ -306,12 +333,19 @@ const ActivityAndroid: React.FC = () => {
     const deadline = new Date(activity.deadline);
     const visible = new Date(activity.visibleDate);
 
-    // Check if any student has been graded for this activity
     const hasGrades = activity.grades && activity.grades.length > 0;
 
     if (hasGrades) return { status: 'graded', color: '#8B5CF6', text: 'Graded' };
     if (visible > now) return { status: 'upcoming', color: '#3B82F6', text: 'Upcoming' };
-    if (deadline < now) return { status: 'overdue', color: '#EF4444', text: 'Overdue' };
+    
+    if (deadline < now && activity.allowLateSubmissions) {
+      return { status: 'late-allowed', color: '#F59E0B', text: 'Late Submissions Accepted' };
+    }
+    
+    if (deadline < now && !activity.allowLateSubmissions) {
+      return { status: 'overdue', color: '#EF4444', text: 'Overdue' };
+    }
+    
     return { status: 'active', color: '#10B981', text: 'Active' };
   };
 
@@ -327,1212 +361,1058 @@ const ActivityAndroid: React.FC = () => {
     });
   };
 
-  const formatShortDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-    });
-  };
-
   const getUserFullName = (user: User) => {
     return user.middleName 
       ? `${user.firstName} ${user.middleName} ${user.lastName}`
       : `${user.firstName} ${user.lastName}`;
   };
 
-  const clearFilters = () => {
-    setSearchQuery('');
-    setSubjectFilter('');
-    setStatusFilter('');
+  const canModifyActivity = (activity: Activity) => {
+    return user ? activity.createdBy._id === user._id : false;
   };
 
   const handleViewActivity = (activity: Activity) => {
     setSelectedActivity(activity);
-    setViewModalVisible(true);
+    setViewDetailModalVisible(true);
+    setContextMenuVisible(false);
   };
 
-  // Generate subject initials and color
-  const getSubjectInitials = (subjectName: string) => {
-    const words = subjectName.split(' ');
-    if (words.length >= 2) {
-      return `${words[0][0]}${words[1][0]}`.toUpperCase();
-    }
-    return subjectName.substring(0, 2).toUpperCase();
-  };
-
-  const getSubjectColor = (subjectId: string) => {
-    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#F97316', '#14B8A6', '#EC4899'];
-    let hash = 0;
-    for (let i = 0; i < subjectId.length; i++) {
-      hash = subjectId.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return colors[Math.abs(hash) % colors.length];
-  };
-
-  // Function to handle activity selection from sidebar
-  const handleActivitySelect = async (activity: Activity) => {
-    // Ensure the activity has the quarter field
-    const activityWithQuarter = {
-      ...activity,
-      quarter: activity.quarter || 'First Quarter'
-    };
-    
-    setSelectedActivity(activityWithQuarter);
-    setSubmissionsLoading(true);
-    
-    try {
-      const res = await apiClient.get(`/activities/${activity._id}/submissions`);
-      const submissions = res.data.data || [];
-      setActivitySubmissions(submissions);
-      
-      // Initialize grading state for each submission
-      const newGradingState: GradingState = {};
-      submissions.forEach((submission: Submission) => {
-        // Find existing grade for this submission
-        const existingGrade = activity.grades?.find(grade => 
-          grade.student._id === submission.student._id
-        );
-        
-        newGradingState[submission._id] = {
-          score: existingGrade ? existingGrade.score.toString() : '',
-          comments: existingGrade ? existingGrade.comments || '' : '',
-          isSubmitting: false
-        };
-      });
-      setGradingState(newGradingState);
-    } catch (error: any) {
-      console.error('Error fetching submissions:', error);
-      setActivitySubmissions([]);
-    } finally {
-      setSubmissionsLoading(false);
-    }
-  };
-
-  // New function to handle viewing submissions modal
   const handleViewSubmissions = async (activity: Activity) => {
     if (!user || user.role !== 'Teacher') {
-      if (Platform.OS === 'web') {
-        window.alert('Not authorized to view submissions.');
-      } else {
-        Alert.alert('Error', 'Not authorized to view submissions.');
-      }
+      Alert.alert('Error', 'Not authorized to view submissions.');
       return;
     }
 
     try {
       setSubmissionsLoading(true);
-      console.log(`➡️ Sending GET /activities/${activity._id}/submissions`);
-      
       const res = await apiClient.get(`/activities/${activity._id}/submissions`);
-      console.log('✅ Get All Submissions response:', res.data);
-      
       setActivitySubmissions(res.data.data || []);
       setSelectedActivity(activity);
       setViewSubmissionsModalVisible(true);
+      setContextMenuVisible(false);
     } catch (error: any) {
-      console.error('🚨 Get All Submissions error:', error);
-      console.error('🚨 Error response:', error.response?.data);
-      
       const msg = error.response?.data?.message || error.message || 'Failed to fetch submissions.';
-      if (Platform.OS === 'web') {
-        window.alert('Error: ' + msg);
-      } else {
-        Alert.alert('Error', msg);
-      }
+      Alert.alert('Error', msg);
     } finally {
       setSubmissionsLoading(false);
     }
   };
 
-  // Delete activity function (only for activities created by this teacher)
   const handleDeleteActivity = async (activityId: string) => {
-    if (Platform.OS === 'web') {
-      const confirmDelete = window.confirm('Are you sure you want to delete this activity? This action cannot be undone.');
-      if (!confirmDelete) return;
-    } else {
-      Alert.alert(
-        'Delete Activity',
-        'Are you sure you want to delete this activity? This action cannot be undone.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Delete', style: 'destructive', onPress: () => performDelete(activityId) }
-        ]
-      );
-      return;
-    }
-
-    await performDelete(activityId);
+    Alert.alert(
+      'Delete Activity',
+      'Are you sure you want to delete this activity? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Delete', 
+          style: 'destructive', 
+          onPress: async () => {
+            try {
+              await apiClient.delete(`/activities/${activityId}`);
+              Alert.alert('Success', 'Activity deleted successfully');
+              fetchTeacherActivities();
+            } catch (error: any) {
+              Alert.alert('Error', error.response?.data?.message || 'Failed to delete activity');
+            }
+          }
+        }
+      ]
+    );
+    setContextMenuVisible(false);
   };
 
-  const performDelete = async (activityId: string) => {
-    try {
-      await apiClient.delete(`/activities/${activityId}`);
-      
-      if (Platform.OS === 'web') {
-        window.alert('Activity deleted successfully');
-      } else {
-        Alert.alert('Success', 'Activity deleted successfully');
-      }
-      
-      // Refresh activities and clear selection if deleted activity was selected
-      if (selectedActivity && selectedActivity._id === activityId) {
-        setSelectedActivity(null);
-        setActivitySubmissions([]);
-      }
-      fetchTeacherActivities();
-    } catch (error: any) {
-      const errorMessage = error.response?.data?.message || 'Failed to delete activity';
-      
-      if (Platform.OS === 'web') {
-        window.alert('Error: ' + errorMessage);
-      } else {
-        Alert.alert('Error', errorMessage);
-      }
+  const initializeGradingState = (submissionId: string, existingGrade?: Grade) => {
+    if (!gradingStates[submissionId]) {
+      setGradingStates(prev => ({
+        ...prev,
+        [submissionId]: {
+          score: existingGrade ? existingGrade.score.toString() : '',
+          bonusPoints: existingGrade?.bonusPoints ? existingGrade.bonusPoints.toString() : '',
+          comments: existingGrade?.comments || '',
+          isSubmitting: false,
+        }
+      }));
     }
   };
 
-  // Check if the teacher can delete/edit the activity (only activities they created)
-  const canModifyActivity = (activity: Activity) => {
-    return user ? activity.createdBy._id === user._id : false;
-  };
-
-  // Get submission count for activity
-  const getSubmissionCount = (activity: Activity) => {
-    return activity.submissions ? activity.submissions.length : 0;
-  };
-
-  // Grading functions
-  const updateGradingState = (submissionId: string, field: 'score' | 'comments', value: string) => {
-    setGradingState(prev => ({
+  const updateGradingField = (submissionId: string, field: 'score' | 'bonusPoints' | 'comments', value: string) => {
+    setGradingStates(prev => ({
       ...prev,
       [submissionId]: {
         ...prev[submissionId],
-        [field]: value
+        [field]: value,
       }
     }));
   };
 
-  // Add function to handle opening update grade modal
-  const handleUpdateGrade = (grade: Grade, submission: Submission) => {
-    // Ensure the activity has the quarter field
-    const activityWithQuarter = selectedActivity ? {
-      ...selectedActivity,
-      quarter: selectedActivity.quarter || 'First Quarter' // Provide default if missing
-    } : null;
-
-    setSelectedGrade(grade);
-    setSelectedSubmissionForUpdate(submission);
-    setSelectedActivity(activityWithQuarter); // Update the selected activity
-    setUpdateGradeModalVisible(true);
-  };
-
-  // Add function to handle grade updated callback
-  const handleGradeUpdated = async () => {
-    // Refresh activities to get updated grades
-    await fetchTeacherActivities();
-    
-    // Re-select the activity to refresh submissions
-    if (selectedActivity) {
-      await handleActivitySelect(selectedActivity);
-    }
-  };
-
-  // Update the validation function for whole numbers
-  const validateScore = (score: string, maxPoints: number | null): boolean => {
-    if (!score.trim()) return false;
-    const numScore = parseInt(score, 10);
-    if (isNaN(numScore)) return false;
-    if (numScore < 0) return false;
-    if (maxPoints !== null && numScore > maxPoints) return false;
-    return true;
-  };
-
-  // Update the handleSubmitGrade function with better logging
-  const handleSubmitGrade = async (submission: Submission, activity: Activity) => {
+  const handleGradeSubmission = async (submission: Submission) => {
     if (!selectedActivity) return;
 
-    const gradeData = gradingState[submission._id];
-    if (!gradeData) return;
-
-    const score = gradeData.score.trim();
-    const comments = gradeData.comments.trim();
-
-    console.log('🔍 Frontend grading:', {
-      originalScore: score,
-      parsedScore: parseInt(score, 10),
-      submissionId: submission._id,
-      studentId: submission.student._id
-    });
-
-    // Validation
-    if (!validateScore(score, activity.points)) {
-      const errorMsg = activity.points 
-        ? `Score must be a whole number between 0 and ${activity.points}`
-        : 'Score must be a whole number greater than or equal to 0';
-      
-      if (Platform.OS === 'web') {
-        window.alert(errorMsg);
-      } else {
-        Alert.alert('Invalid Score', errorMsg);
-      }
+    const state = gradingStates[submission._id];
+    if (!state || !state.score.trim()) {
+      Alert.alert('Error', 'Please enter a score');
       return;
     }
 
-    // Set submitting state
-    setGradingState(prev => ({
-      ...prev,
-      [submission._id]: {
-        ...prev[submission._id],
-        isSubmitting: true
-      }
-    }));
+    const score = parseInt(state.score, 10);
+    if (isNaN(score) || score < 0) {
+      Alert.alert('Error', 'Score must be a positive number');
+      return;
+    }
+
+    if (selectedActivity.points !== null && score > selectedActivity.points) {
+      Alert.alert('Error', `Score cannot exceed ${selectedActivity.points} points`);
+      return;
+    }
+
+    const bonusPoints = state.bonusPoints ? parseInt(state.bonusPoints, 10) : undefined;
+    if (state.bonusPoints && (isNaN(bonusPoints!) || bonusPoints! < 0)) {
+      Alert.alert('Error', 'Bonus points must be a positive number');
+      return;
+    }
+
+    const existingGrade = selectedActivity.grades?.find(g => g.student._id === submission.student._id);
 
     try {
-      const submitData = {
-        studentId: submission.student._id,
-        score: parseInt(score, 10),
-        comments: comments || undefined
-      };
+      setGradingStates(prev => ({
+        ...prev,
+        [submission._id]: { ...prev[submission._id], isSubmitting: true }
+      }));
 
-      console.log('➡️ Submitting grade:', submitData);
-
-      const response = await apiClient.post(`/activities/${activity._id}/grades`, submitData);
-
-      console.log('✅ Grade submitted successfully:', response.data);
-
-      // Show success message
-      if (Platform.OS === 'web') {
-        window.alert('Grade submitted successfully!');
+      let gradeResponse;
+      if (existingGrade) {
+        gradeResponse = await apiClient.put(`/grades/${existingGrade._id}`, {
+          score,
+          bonusPoints,
+          comments: state.comments || undefined,
+        });
       } else {
-        Alert.alert('Success', 'Grade submitted successfully!');
+        gradeResponse = await apiClient.post(`/activities/${selectedActivity._id}/grades`, {
+          studentId: submission.student._id,
+          score,
+          bonusPoints,
+          comments: state.comments || undefined,
+        });
       }
 
-      // Refresh activities to get updated grades
-      await fetchTeacherActivities();
+      Alert.alert('Success', 'Grade submitted successfully!');
+
+      // Fetch updated grades immediately
+      const gradesData = await apiClient.get(`/activities/${selectedActivity._id}/grades`);
       
-      // Re-select the activity to refresh submissions
-      if (selectedActivity) {
-        await handleActivitySelect(selectedActivity);
+      // Update selected activity with new grades IMMEDIATELY
+      if (gradesData.data.success && gradesData.data.data) {
+        const updatedGrades = gradesData.data.data;
+        
+        setSelectedActivity(prev => prev ? {
+          ...prev,
+          grades: updatedGrades
+        } : null);
+
+        // Also update the activities list
+        setActivities(prevActivities => 
+          prevActivities.map(act => 
+            act._id === selectedActivity._id 
+              ? { ...act, grades: updatedGrades }
+              : act
+          )
+        );
+      }
+
+      // Reset grading state for this submission
+      setGradingStates(prev => {
+        const newState = { ...prev };
+        delete newState[submission._id];
+        return newState;
+      });
+
+      // Also refresh submissions
+      const submissionsData = await apiClient.get(`/activities/${selectedActivity._id}/submissions`);
+      if (submissionsData.data.data) {
+        setActivitySubmissions(submissionsData.data.data);
       }
 
     } catch (error: any) {
-      console.error('🚨 Error submitting grade:', error);
-      console.error('🚨 Error response:', error.response?.data);
-      
+      console.error('Grade submission error:', error);
       const errorMessage = error.response?.data?.message || error.message || 'Failed to submit grade';
-      
-      if (Platform.OS === 'web') {
-        window.alert('Error: ' + errorMessage);
-      } else {
-        Alert.alert('Error', errorMessage);
-      }
+      Alert.alert('Error', errorMessage);
     } finally {
-      // Reset submitting state
-      setGradingState(prev => ({
+      setGradingStates(prev => ({
         ...prev,
-        [submission._id]: {
-          ...prev[submission._id],
+        [submission._id]: prev[submission._id] ? { ...prev[submission._id], isSubmitting: false } : {
+          score: '',
+          bonusPoints: '',
+          comments: '',
           isSubmitting: false
         }
       }));
     }
   };
 
-  // Get existing grade for a submission
-  const getExistingGrade = (submission: Submission): Grade | undefined => {
-    if (!selectedActivity?.grades) return undefined;
-    return selectedActivity.grades.find(grade => 
-      grade.student._id === submission.student._id
+  const handleDeleteGrade = async (gradeId: string, submissionId: string) => {
+    Alert.alert(
+      'Delete Grade',
+      'Are you sure you want to delete this grade?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              console.log('Deleting grade:', gradeId);
+              await apiClient.delete(`/grades/${gradeId}`);
+              
+              Alert.alert('Success', 'Grade deleted successfully!');
+
+              // Reset grading state
+              setGradingStates(prev => {
+                const newState = { ...prev };
+                delete newState[submissionId];
+                return newState;
+              });
+
+              // Fetch updated grades immediately
+              if (selectedActivity) {
+                const gradesData = await apiClient.get(`/activities/${selectedActivity._id}/grades`);
+                
+                if (gradesData.data.success && gradesData.data.data) {
+                  const updatedGrades = gradesData.data.data;
+                  
+                  // Update selected activity
+                  setSelectedActivity(prev => prev ? {
+                    ...prev,
+                    grades: updatedGrades
+                  } : null);
+
+                  // Update activities list
+                  setActivities(prevActivities => 
+                    prevActivities.map(act => 
+                      act._id === selectedActivity._id 
+                        ? { ...act, grades: updatedGrades }
+                        : act
+                    )
+                  );
+                }
+
+                // Refresh submissions
+                const submissionsData = await apiClient.get(`/activities/${selectedActivity._id}/submissions`);
+                if (submissionsData.data.data) {
+                  setActivitySubmissions(submissionsData.data.data);
+                }
+              }
+
+            } catch (error: any) {
+              console.error('Delete grade error:', error);
+              console.error('Error response:', error.response?.data);
+              const errorMessage = error.response?.data?.message || error.message || 'Failed to delete grade';
+              Alert.alert('Error', `Failed to delete grade: ${errorMessage}`);
+            }
+          }
+        }
+      ]
     );
   };
 
-  // Prepare sidebar virtualized list data
-  const sidebarListData = useMemo((): SidebarListItem[] => {
-    if (loading) {
-      return [{ id: 'loading', type: 'loading' }];
-    }
-    
-    if (filteredActivities.length === 0) {
-      return [{ id: 'empty', type: 'empty' }];
-    }
-    
-    return filteredActivities.map(activity => ({
-      id: activity._id,
-      type: 'activity' as SidebarItemType,
-      data: activity
-    }));
-  }, [loading, filteredActivities]);
+  const getStudentGrade = (studentId: string): Grade | undefined => {
+    return selectedActivity?.grades?.find(g => g.student._id === studentId);
+  };
 
-  // Prepare main virtualized list data
-  const mainListData = useMemo((): MainListItem[] => {
-    if (error) {
-      return [{ id: 'error', type: 'empty' }];
+  const openContextMenu = (activity: Activity) => {
+    setContextMenuActivity(activity);
+    setContextMenuVisible(true);
+  };
+
+  const getConsistentColor = (str: string) => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = str.charCodeAt(i) + ((hash << 5) - hash);
     }
+    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#F97316', '#14B8A6', '#EC4899'];
+    return colors[Math.abs(hash) % colors.length];
+  };
+
+  const renderActivityItem = useCallback(({ item }: { item: Activity }) => {
+    const statusInfo = getActivityStatus(item);
+    const initials = item.subject.subjectName.slice(0, 2).toUpperCase();
+    const bgColor = getConsistentColor(item.subject.subjectName);
     
-    if (!selectedActivity) {
-      return [{ id: 'empty', type: 'empty' }];
-    }
-    
-    return [
-      { 
-        id: selectedActivity._id, 
-        type: 'activity' as MainItemType, 
-        data: selectedActivity 
-      },
-      { 
-        id: `${selectedActivity._id}-submissions`, 
-        type: 'submissions' as MainItemType, 
-        data: selectedActivity,
-        submissions: activitySubmissions 
-      }
-    ];
-  }, [error, selectedActivity, activitySubmissions]);
-
-  // VirtualizedList helper functions
-  const getSidebarItem = useCallback((data: SidebarListItem[], index: number) => data[index], []);
-  const getMainItem = useCallback((data: MainListItem[], index: number) => data[index], []);
-  const getSidebarItemCount = useCallback((data: SidebarListItem[]) => data.length, []);
-  const getMainItemCount = useCallback((data: MainListItem[]) => data.length, []);
-  const sidebarKeyExtractor = useCallback((item: SidebarListItem) => item.id, []);
-  const mainKeyExtractor = useCallback((item: MainListItem) => item.id, []);
-
-  // Sidebar item renderer
-  const renderSidebarItem = useCallback(({ item }: { item: SidebarListItem }) => {
-    switch (item.type) {
-      case 'loading':
-        return (
-          <View 
-            className='w-full items-center rounded-lg p-3 mb-2'
-            style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5' }}
-          >
-            <ActivityIndicator size="small" color={isDarkMode ? '#E0E0E0' : '#000'} />
-            <Text className={`font-inter_regular text-sm mt-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Loading...
-            </Text>
-          </View>
-        );
-      
-      case 'empty':
-        return (
-          <View 
-            className='w-full items-center rounded-lg p-3 mb-2'
-            style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5' }}
-          >
-            <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              No activities found.
-            </Text>
-          </View>
-        );
-      
-      case 'activity':
-        if (!item.data) return null;
-        const activity = item.data;
-        const statusInfo = getActivityStatus(activity);
-        const subjectColor = getSubjectColor(activity.subject._id);
-        const subjectInitials = getSubjectInitials(activity.subject.subjectName);
-        const isSelected = selectedActivity?._id === activity._id;
-        
-        return (
-          <TouchableOpacity
-            onPress={() => handleActivitySelect(activity)}
-            className='w-full rounded-md p-3 mb-2'
-            style={{ 
-              backgroundColor: isSelected 
-                ? (isDarkMode ? '#2563EB' : '#3B82F6') 
-                : (isDarkMode ? '#1E1E1E' : '#F5F5F5'),
-              borderWidth: 2,
-              borderColor: statusInfo.color
-            }}
-            activeOpacity={0.7}
-          >
-            {/* Subject Badge */}
-            <View className='flex-row'>
-              <View
-                className='w-[36px] h-[36px] rounded-md items-center justify-center mr-2'
-                style={{ backgroundColor: subjectColor }}
-              >
-                <Text className='font-inter_bold text-xs text-white'>
-                  {subjectInitials}
-                </Text>
-              </View>
-              <View>
-                {/* Activity Title */}
-                <Text 
-                  className={`font-inter_bold text-base ${
-                    isSelected 
-                      ? 'text-white' 
-                      : (isDarkMode ? 'text-[#E0E0E0]' : 'text-black')
-                  }`}
-                  numberOfLines={2}
-                  ellipsizeMode='tail'
-                >
-                  {activity.title}
-                </Text>
-                {/* Subject Name */}
-                <Text 
-                  className={`font-inter_regular text-xs flex-1 ${
-                    isSelected 
-                      ? 'text-white' 
-                      : (isDarkMode ? 'text-gray-300' : 'text-gray-700')
-                  }`}
-                  numberOfLines={1}
-                  ellipsizeMode='tail'
-                >
-                  {activity.subject.subjectName}
-                </Text>
-                {/* Due Date */}
-                <Text 
-                  className={`font-inter_regular text-xs ${
-                    isSelected 
-                      ? 'text-blue-100' 
-                      : (isDarkMode ? 'text-gray-400' : 'text-gray-500')
-                  }`}
-                >
-                  Due: {formatShortDate(activity.deadline)}
-                </Text>
-              </View>
-            </View>
-          </TouchableOpacity>
-        );
-      
-      default:
-        return null;
-    }
-  }, [isDarkMode, selectedActivity, getActivityStatus, getSubjectColor, getSubjectInitials, formatShortDate, handleActivitySelect]);
-
-  // Main item renderer
-  const renderMainItem = useCallback(({ item }: { item: MainListItem }) => {
-    switch (item.type) {
-      case 'empty':
-        if (error) {
-          return (
-            <View className='w-full items-center bg-red-100 rounded-lg p-4 mt-2 mb-2'>
-              <Text className='font-inter_regular text-red-800'>
-                {error}
-              </Text>
-            </View>
-          );
-        }
-        
-        return (
-          <View className={`w-full items-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} rounded-lg p-8 mt-2`}>
-            <Image
-              className="w-[120] h-[120] opacity-50"
-              contentFit="contain"
-              source={require('@/assets/images/activity.png')}
-            />
-            <Text className={`font-inter_regular text-center mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Select an activity from the sidebar to view details
-            </Text>
-          </View>
-        );
-      
-      case 'activity':
-        if (!item.data) return null;
-        const activity = item.data;
-        const statusInfo = getActivityStatus(activity);
-        const canModify = canModifyActivity(activity);
-        
-        return (
-          <View 
-            className={`w-full ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} p-4 mb-4 rounded-lg`}
-            style={{
-              borderLeftWidth: 8,
-              borderLeftColor: statusInfo.color
-            }}
-          >
-            {/* Header with Status and Actions */}
-            <View className='flex-row justify-between items-start mb-3'>
+    return (
+      <TouchableOpacity
+        style={{
+          backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
+          borderRadius: 12,
+          padding: 16,
+          marginBottom: 12,
+          borderWidth: 1,
+          borderColor: isDarkMode ? '#333333' : '#E5E7EB',
+        }}
+        onPress={() => handleViewActivity(item)}
+      >
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <View style={{ flexDirection: 'row', flex: 1 }}>
+            {item.subject.subjectImage ? (
+              <Image
+                source={{ uri: item.subject.subjectImage }}
+                style={{ width: 50, height: 50, borderRadius: 8 }}
+                contentFit="cover"
+              />
+            ) : (
               <View
                 style={{
-                  backgroundColor: statusInfo.color,
-                  paddingHorizontal: 8,
-                  paddingVertical: 4,
-                  borderRadius: 12,
+                  width: 50,
+                  height: 50,
+                  borderRadius: 8,
+                  backgroundColor: bgColor,
+                  justifyContent: 'center',
+                  alignItems: 'center',
                 }}
               >
-                <Text className='text-white font-inter_semibold text-xs'>
-                  {statusInfo.text}
-                </Text>
-              </View>
-              
-              {/* Action Buttons */}
-              <View className='flex-row'>
-                <TouchableOpacity
-                  onPress={() => handleViewSubmissions(activity)}
-                  style={{
-                    backgroundColor: '#8B5CF6',
-                    padding: 6,
-                    borderRadius: 6,
-                    marginRight: 8,
-                  }}
-                >
-                  <Image
-                    className="w-[16] h-[16]"
-                    contentFit="contain"
-                    source={require('@/assets/icons/import_file.png')}
-                    tintColor="white"
-                  />
-                </TouchableOpacity>
-                
-                {canModify && (
-                  <TouchableOpacity
-                    onPress={() => handleDeleteActivity(activity._id)}
-                    style={{
-                      backgroundColor: '#EF4444',
-                      padding: 6,
-                      borderRadius: 6,
-                    }}
-                  >
-                    <Image
-                      className="w-[16] h-[16]"
-                      contentFit="contain"
-                      source={require('@/assets/icons/delete.png')}
-                      tintColor="white"
-                    />
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
-
-            {/* Activity Title */}
-            <Text className={`font-inter_bold text-xl mb-3 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              {activity.title}
-            </Text>
-
-            {/* Subject Information */}
-            <View className='mb-3 p-3 rounded-lg' style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F3F4F6' }}>
-              <Text className={`font-inter_semibold text-sm mb-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                Subject: {activity.subject.subjectName}
-              </Text>
-              <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                {activity.subject.gradeLevel} • {activity.subject.section} {activity.subject.schoolYear}
-              </Text>
-            </View>
-
-            {/* Creator Info */}
-            <View className='mb-3'>
-              <Text className={`font-inter_semibold text-sm mb-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                Created by:
-              </Text>
-              <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                {getUserFullName(activity.createdBy)}
-                {canModify && (
-                  <Text className={`font-inter_semibold ${isDarkMode ? 'text-green-400' : 'text-green-600'}`}>
-                    {' '}(You)
-                  </Text>
-                )}
-              </Text>
-            </View>
-
-            {/* Description */}
-            {activity.description && (
-              <View className='mb-3'>
-                <Text className={`font-inter_semibold text-sm mb-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                  Description:
-                </Text>
-                <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                  {activity.description}
+                <Text style={{ color: 'white', fontFamily: 'Inter-Bold', fontSize: 18 }}>
+                  {initials}
                 </Text>
               </View>
             )}
 
-            {/* Dates and Points */}
-            <View className='flex-row justify-between items-center mb-3'>
-              <View className='flex-1'>
-                <Text className={`font-inter_semibold text-sm mb-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                  Start: {formatDate(activity.visibleDate)}
-                </Text>
-                <Text className={`font-inter_semibold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                  Due: {formatDate(activity.deadline)}
-                </Text>
-              </View>
-              
-              {activity.points !== null && (
-                <View className='items-end'>
-                  <Text className={`font-inter_bold text-2xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                    {activity.points}
-                  </Text>
-                  <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                    points
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text
+                style={{
+                  fontSize: 18,
+                  fontFamily: 'Inter-Bold',
+                  color: isDarkMode ? '#F9FAFB' : '#111827',
+                  marginBottom: 4,
+                }}
+                numberOfLines={1}
+              >
+                {item.title}
+              </Text>
+              <Text
+                style={{
+                  fontSize: 14,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#9CA3AF' : '#6B7280',
+                  marginBottom: 8,
+                }}
+              >
+                {item.subject?.subjectName || 'No Subject'} • {item.quarter}
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <View
+                  style={{
+                    backgroundColor: statusInfo.color,
+                    paddingHorizontal: 8,
+                    paddingVertical: 4,
+                    borderRadius: 12,
+                    marginRight: 12,
+                  }}
+                >
+                  <Text style={{ 
+                    color: 'white', 
+                    fontSize: 12, 
+                    fontFamily: 'Inter-Medium' 
+                  }}>
+                    {statusInfo.text}
                   </Text>
                 </View>
+                <Text style={{ 
+                  fontSize: 12, 
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#9CA3AF' : '#6B7280' 
+                }}>
+                  {item.points !== null ? `${item.points} points` : 'No points'}
+                </Text>
+              </View>
+              <Text style={{ 
+                fontSize: 12, 
+                fontFamily: 'Inter-Regular',
+                color: isDarkMode ? '#9CA3AF' : '#6B7280' 
+              }}>
+                Due: {formatDate(item.deadline)}
+              </Text>
+              {item.grades && item.grades.length > 0 && (
+                <Text style={{ 
+                  fontSize: 12, 
+                  fontFamily: 'Inter-Regular',
+                  color: '#8B5CF6',
+                  marginTop: 4
+                }}>
+                  {item.grades.length} student{item.grades.length !== 1 ? 's' : ''} graded
+                </Text>
               )}
             </View>
-
-            {/* Attachment */}
-            {activity.attachmentPath && (
-              <View className='mb-3'>
-                <Text className={`font-inter_semibold text-sm mb-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                  Attachment:
-                </Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    const url = `http://192.168.100.5:5000/${activity.attachmentPath}`;
-                    if (Platform.OS === 'web') {
-                      window.open(url, '_blank');
-                    }
-                  }}
-                  className='flex-row items-center'
-                >
-                  <AttachIcon 
-                    width={16} 
-                    height={16} 
-                    style={{ marginRight: 4 }} 
-                    fill={isDarkMode ? '#A78BFA' : '#6D28D9'} 
-                  />
-                  <Text className={`font-inter_regular text-sm underline ${isDarkMode ? 'text-blue-400' : 'text-blue-700'}`}>
-                    {activity.attachmentPath.split('/').pop()}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* Grading Summary */}
-            {activity.grades && activity.grades.length > 0 && (
-              <View className='mb-3 p-3 rounded-lg' style={{ backgroundColor: isDarkMode ? '#2D1B69' : '#EDE9FE' }}>
-                <Text className={`font-inter_semibold text-sm mb-1 ${isDarkMode ? 'text-purple-300' : 'text-purple-800'}`}>
-                  Grading Summary:
-                </Text>
-                <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-purple-200' : 'text-purple-700'}`}>
-                  {activity.grades.length} student{activity.grades.length !== 1 ? 's' : ''} graded
-                </Text>
-                <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-purple-200' : 'text-purple-700'}`}>
-                  Average Score: {(activity.grades.reduce((sum, grade) => sum + grade.score, 0) / activity.grades.length).toFixed(1)}
-                  {activity.points && ` / ${activity.points}`}
-                </Text>
-              </View>
-            )}
           </View>
-        );
-      
-      // Update the submissions section in renderMainItem callback
-      case 'submissions':
-        if (!item.data || !item.submissions) return null;
-        const activityData = item.data;
-        
-        return (
-          <View className={`w-full ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} p-4 rounded-lg`}>
-            <Text className={`font-inter_bold text-xl mb-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Student Submissions ({item.submissions.length})
-            </Text>
 
-            {submissionsLoading ? (
-              <View className='items-center py-8'>
-                <ActivityIndicator size="large" color={isDarkMode ? '#E0E0E0' : '#000000'} />
-                <Text className={`font-inter_regular mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                  Loading submissions...
-                </Text>
-              </View>
-            ) : item.submissions.length > 0 ? (
-              item.submissions.map((submission, idx) => {
-                const existingGrade = getExistingGrade(submission);
-                const gradeState = gradingState[submission._id] || { score: '', comments: '', isSubmitting: false };
-                
-                return (
-                  <View
-                    key={submission._id}
-                    style={{
-                      backgroundColor: isDarkMode ? '#1E1E1E' : '#F6F7F9',
-                      borderRadius: 8,
-                      padding: 16,
-                      marginBottom: 12,
-                      borderLeftWidth: 4,
-                      borderLeftColor: existingGrade ? '#8B5CF6' : (submission.status === 'submitted' ? '#10B981' : '#6B7280'),
-                    }}
-                  >
-                    {/* Student Info with Star Icon for Graded Submissions */}
-                    <View className='flex-row mb-2'>
-                      <Image
-                        style={{ width: 32, height: 32, borderRadius: 16, marginRight: 8 }}
-                        source={
-                          submission.student.profilePicture
-                            ? { uri: submission.student.profilePicture }
-                            : require('@/assets/images/sample_profile_picture.png')
-                        }
-                      />
-                      <View style={{ flex: 1 }}>
-                        <Text className={`font-inter_semibold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                          {getUserFullName(submission.student)}
-                        </Text>
-                        <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                          {submission.student.email}
-                        </Text>
-                      </View>
-                      <View className='flex-row items-center'>
-                        {/* Star Icon for Graded Submissions */}
-                        {existingGrade && (
-                          <TouchableOpacity
-                            onPress={() => handleUpdateGrade(existingGrade, submission)}
-                            style={{
-                              backgroundColor: '#FFD700',
-                              padding: 6,
-                              borderRadius: 6,
-                              marginLeft: 8,
-                              marginRight: 8,
-                            }}
-                          >
-                            <Image
-                              className="w-[16] h-[16]"
-                              contentFit="contain"
-                              source={require('@/assets/icons/star.png')} // You'll need to add this icon
-                              tintColor="white"
-                            />
-                          </TouchableOpacity>
-                        )}
-                        
-                        <View
-                          style={{
-                            backgroundColor: existingGrade ? '#8B5CF6' : (submission.status === 'submitted' ? '#10B981' : '#6B7280'),
-                            paddingHorizontal: 8,
-                            paddingVertical: 4,
-                            borderRadius: 12,
-                          }}
-                        >
-                          <Text className='text-white font-inter_semibold text-xs'>
-                            {existingGrade ? 'GRADED' : submission.status.toUpperCase()}
-                          </Text>
-                        </View>
-                      </View>
-                    </View>
-
-                    {/* Submission Details */}
-                    <Text className={`font-inter_regular text-sm mb-2 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                      Submitted on: {formatDate(submission.submissionDate)}
-                    </Text>
-
-                    {/* Existing Grade Display */}
-                    {existingGrade && (
-                      <View className='mb-3 p-3 rounded-lg' style={{ backgroundColor: isDarkMode ? '#2D1B69' : '#EDE9FE' }}>
-                        <Text className={`font-inter_semibold text-sm ${isDarkMode ? 'text-purple-300' : 'text-purple-800'}`}>
-                          Current Grade: {Number(existingGrade.score)} {/* Ensure it's treated as a number */}
-                          {existingGrade.bonusPoints && existingGrade.bonusPoints > 0 && ` + ${Number(existingGrade.bonusPoints)} bonus`}
-                          {activityData.points && ` / ${activityData.points}`}
-                        </Text>
-                        {existingGrade.comments && (
-                          <Text className={`font-inter_regular text-sm mt-1 ${isDarkMode ? 'text-purple-200' : 'text-purple-700'}`}>
-                            Comments: {existingGrade.comments}
-                          </Text>
-                        )}
-                        <Text className={`font-inter_regular text-xs mt-1 ${isDarkMode ? 'text-purple-200' : 'text-purple-600'}`}>
-                          Graded by: {getUserFullName(existingGrade.gradedBy)}
-                        </Text>
-                      </View>
-                    )}
-
-                    {/* Attached Files */}
-                    <View style={{ marginTop: 8 }}>
-                      <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                        Attached Files:
-                      </Text>
-                      {submission.attachmentPaths && submission.attachmentPaths.length > 0 ? (
-                        submission.attachmentPaths.map((path, fileIdx) => (
-                          <TouchableOpacity
-                            key={fileIdx}
-                            onPress={() => {
-                              const url = `http://192.168.100.5:5000/${path}`;
-                              if (Platform.OS === 'web') {
-                                window.open(url, '_blank');
-                              }
-                            }}
-                            style={{
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              marginBottom: 4,
-                              padding: 8,
-                              backgroundColor: isDarkMode ? '#2A2A2A' : '#E8E8E8',
-                              borderRadius: 6,
-                            }}
-                          >
-                            <AttachIcon
-                              width={16}
-                              height={16}
-                              style={{ marginRight: 4 }}
-                              fill={isDarkMode ? '#A78BFA' : '#6D28D9'}
-                            />
-                            <Text className={`font-inter_regular text-sm underline ${isDarkMode ? 'text-blue-400' : 'text-blue-700'}`}>
-                              {path.split('/').pop()}
-                            </Text>
-                          </TouchableOpacity>
-                        ))
-                      ) : (
-                        <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-500' : 'text-gray-400'} italic`}>
-                          No files attached
-                        </Text>
-                      )}
-                      
-                      {/* Grading Section - Only show if not already graded */}
-                      {!existingGrade && (
-                        <View className='mt-4 p-3 rounded-lg' style={{ backgroundColor: isDarkMode ? '#2A2A2A' : '#F0F0F0' }}>
-                          <Text className={`font-inter_semibold text-sm mb-3 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                            Grade Submission:
-                          </Text>
-                          
-                          {/* Score Input */}
-                          <Text className={`font-inter_semibold text-sm mb-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                            Score:
-                          </Text>
-                          <View className='flex-row items-center mb-3'>
-                            <TextInput
-                              className={`border rounded-md px-3 py-2 mr-2 font-inter_regular text-sm ${
-                                isDarkMode ? 'border-gray-600 bg-[#121212] text-white' : 'border-gray-300 bg-white text-black'
-                              }`}
-                              style={{ width: 80 }}
-                              placeholder="0"
-                              placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-                              value={gradeState.score}
-                              onChangeText={(text) => {
-                                // Only allow whole numbers, no decimals
-                                const numericValue = text.replace(/[^0-9]/g, '');
-                                updateGradingState(submission._id, 'score', numericValue);
-                              }}
-                              keyboardType="numeric"
-                              editable={!gradeState.isSubmitting}
-                            />
-                            <Text className={`font-inter_semibold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                              / {activityData.points || '∞'}
-                            </Text>
-                            {activityData.points && gradeState.score && (
-                              <Text className={`font-inter_regular text-xs ml-2 ${
-                                validateScore(gradeState.score, activityData.points) 
-                                  ? (isDarkMode ? 'text-green-400' : 'text-green-600')
-                                  : (isDarkMode ? 'text-red-400' : 'text-red-600')
-                              }`}>
-                                {validateScore(gradeState.score, activityData.points) ? '✓' : '✗ Invalid'}
-                              </Text>
-                            )}
-                          </View>
-                          
-                          {/* Comments Input */}
-                          <Text className={`font-inter_semibold text-sm mb-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                            Comments (Optional):
-                          </Text>
-                          <TextInput
-                            className={`border rounded-md px-3 py-2 font-inter_regular text-sm mb-3 ${
-                              isDarkMode ? 'border-gray-600 bg-[#121212] text-white' : 'border-gray-300 bg-white text-black'
-                            }`}
-                            multiline
-                            numberOfLines={3}
-                            placeholder="Enter feedback or comments..."
-                            placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
-                            value={gradeState.comments}
-                            onChangeText={(text) => updateGradingState(submission._id, 'comments', text)}
-                            editable={!gradeState.isSubmitting}
-                          />
-                          
-                          {/* Submit Grade Button */}
-                          <TouchableOpacity
-                            className={`rounded-md h-[40px] justify-center items-center ${
-                              gradeState.isSubmitting || !validateScore(gradeState.score, activityData.points)
-                                ? 'bg-gray-400'
-                                : 'bg-blue-500'
-                            }`}
-                            activeOpacity={0.7}
-                            disabled={gradeState.isSubmitting || !validateScore(gradeState.score, activityData.points)}
-                            onPress={() => handleSubmitGrade(submission, activityData)}
-                          >
-                            {gradeState.isSubmitting ? (
-                              <View className='flex-row items-center'>
-                                <ActivityIndicator size="small" color="white" style={{ marginRight: 8 }} />
-                                <Text className='text-white font-psemibold text-base'>
-                                  Submitting...
-                                </Text>
-                              </View>
-                            ) : (
-                              <Text className='text-white font-psemibold text-base'>
-                                Submit Grade
-                              </Text>
-                            )}
-                          </TouchableOpacity>
-                        </View>
-                      )}
-                    </View>
-                  </View>
-                );
-              })
-            ) : (
-              <View className='items-center justify-center py-8'>
-                <Image
-                  className="w-[80] h-[80] opacity-50"
-                  contentFit="contain"
-                  source={require('@/assets/images/no_results.png')}
-                />
-                <Text className={`font-inter_regular text-center mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                  No submissions yet for this activity.
-                </Text>
-              </View>
-            )}
-          </View>
-        );
-      
-      default:
-        return null;
-    }
-  }, [isDarkMode, error, submissionsLoading, formatDate, getUserFullName, getActivityStatus, canModifyActivity, handleViewSubmissions, handleDeleteActivity, gradingState, updateGradingState, validateScore, handleSubmitGrade, getExistingGrade]);
+          <TouchableOpacity
+            onPress={() => openContextMenu(item)}
+            style={{ padding: 8, marginLeft: 8 }}
+          >
+            <MoreVertIcon width={20} height={20} fill={isDarkMode ? '#E0E0E0' : 'black'} />
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    );
+  }, [isDarkMode, getActivityStatus, formatDate, openContextMenu, handleViewActivity, getConsistentColor]);
 
   if (loading) {
     return (
-      <SafeAreaView className={`flex-1 items-center justify-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-        <ActivityIndicator size="large" color={isDarkMode ? '#E0E0E0' : '#000000'} />
-        <Text className={`font-inter_regular mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-          Loading your activities...
+      <View style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB', justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color="#3B82F6" />
+        <Text style={{ 
+          marginTop: 16, 
+          fontFamily: 'Inter-Regular',
+          color: isDarkMode ? '#9CA3AF' : '#6B7280' 
+        }}>
+          Loading activities...
         </Text>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'black' : 'white'}/>
-      </SafeAreaView>
+        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+      </View>
     );
   }
 
   if (error) {
     return (
-      <SafeAreaView className={`flex-1 items-center justify-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-        <Text className={`font-inter_regular text-center ${isDarkMode ? 'text-red-400' : 'text-red-600'}`}>
+      <View style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+        <Text style={{ 
+          fontFamily: 'Inter-Regular',
+          color: isDarkMode ? '#EF4444' : '#DC2626',
+          textAlign: 'center',
+          marginBottom: 16
+        }}>
           {error}
         </Text>
         <TouchableOpacity
-          className='bg-blue-500 rounded-xl h-[40px] justify-center items-center mt-4 px-4'
           onPress={fetchTeacherActivities}
-          activeOpacity={0.7}
+          style={{
+            backgroundColor: '#3B82F6',
+            paddingHorizontal: 16,
+            paddingVertical: 8,
+            borderRadius: 8,
+          }}
         >
-          <Text className='text-white font-psemibold text-base'>
+          <Text style={{ color: 'white', fontFamily: 'Inter-Medium' }}>
             Retry
           </Text>
         </TouchableOpacity>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'black' : 'white'}/>
-      </SafeAreaView>
-    );
-  }
-
-  if (activities.length === 0) {
-    return (
-      <SafeAreaView className={`flex-1 items-center justify-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-        <Image
-          className="w-[150] h-[150]"
-          contentFit="contain"
-          source={require('@/assets/images/activity.png')}
-          transition={200}
-        />
-        <Text className={`font-inter_regular text-center ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-          No activities found in your assigned subjects.
-        </Text>
-        <TouchableOpacity
-          className='bg-blue-500 rounded-xl h-[40px] justify-center items-center mt-4 px-4'
-          onPress={fetchTeacherActivities}
-          activeOpacity={0.7}
-        >
-          <Text className='text-white font-psemibold text-base'>
-            Refresh
-          </Text>
-        </TouchableOpacity>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'black' : 'white'}/>
-      </SafeAreaView>
+        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+      </View>
     );
   }
 
   return (
-    <View className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
+    <View style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB' }}>
       {/* Header */}
-      <View 
-        className='flex-row items-center p-4' 
+      <View
         style={{
+          backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
+          paddingHorizontal: 20,
+          paddingTop: 20,
+          paddingBottom: 16,
           borderBottomWidth: 1,
-          borderBottomColor: isDarkMode ? '#333333' : '#E0E0E0'
+          borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
         }}
       >
-        <View className='flex-col mr-auto'>
-          <Text className={`font-inter_semibold text-2xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-            My Subject Activities
-          </Text>
-          <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-            {filteredActivities.length} of {activities.length} activities
-          </Text>
-          {/* Role indicator */}
-          <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-green-400' : 'text-green-600'} mt-1`}>
-            👨‍🏫 Teacher View
-          </Text>
-        </View>
-        <View className='flex-row items-center'>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <View>
+            <Text
+              style={{
+                fontSize: 24,
+                fontFamily: 'Inter-Bold',
+                color: isDarkMode ? '#F9FAFB' : '#111827',
+              }}
+            >
+              Activities
+            </Text>
+            <Text
+              style={{
+                fontSize: 14,
+                fontFamily: 'Inter-Regular',
+                color: isDarkMode ? '#9CA3AF' : '#6B7280',
+                marginTop: 4,
+              }}
+            >
+              {filteredActivities.length} of {activities.length} activities
+            </Text>
+          </View>
           <TouchableOpacity
-            className={`rounded-md justify-center items-center p-2 mr-1 ${isDarkMode ? 'bg-red-600' : 'bg-red-500'}`}
             onPress={fetchTeacherActivities}
-            activeOpacity={0.7}
+            style={{
+              backgroundColor: '#EF4444',
+              padding: 8,
+              borderRadius: 8,
+            }}
           >
             <Image
-              className="w-[24] h-[24]"
-              contentFit="contain"
               source={require('@/assets/icons/refresh.png')}
+              style={{ width: 24, height: 24}}
               tintColor="white"
             />
           </TouchableOpacity>
-          <TouchableOpacity
-            className='bg-gray-500 rounded-md justify-center items-center p-2'
-            onPress={clearFilters}
-            activeOpacity={0.7}
-          >
-            <Text className='text-white font-psemibold text-base'>
-              Clear
-            </Text>
-          </TouchableOpacity>
         </View>
-      </View>
 
-      {/* Main Content */}
-      <View style={{ flex: 1, flexDirection: width < 768 ? 'column' : 'row' }}>
-        {/* Side Bar - Short Activity Details */}
-        <View className={`p-4 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}
-          style={{
-            borderRightWidth: width >= 768 ? 1 : 0,
-            borderBottomWidth: width < 768 ? 1 : 0,
-            borderRightColor: isDarkMode ? '#333333' : '#E0E0E0',
-            borderBottomColor: isDarkMode ? '#333333' : '#E0E0E0',
-            width: width < 768 ? '100%' : '33%',
-            height: width < 768 ? '50%' : '100%',
-            padding: 16,
-          }}>
-            <Text className={`font-inter_semibold text-lg mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              Activities:
-            </Text>
-            {/* Search Bar */}
+        {/* Filters */}
+        <View style={{ marginTop: 16 }}>
+          <View style={{ marginBottom: 12 }}>
             <TextInput
-              className={`border rounded-md px-3 py-2 font-inter_regular text-base ${isDarkMode ? 'border-[#1E1E1E] bg-[#1E1E1E] text-white' : 'border-gray-300 text-black'}`}
-              placeholder='Search...'
-              placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
+              placeholder="Search activities..."
               value={searchQuery}
               onChangeText={setSearchQuery}
-            />
-            {/* Filters */}
-          <View className='my-1'>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 16 }}>
-              <View className='flex-row my-2'>
-                <View
-                  style={{
-                    backgroundColor: isDarkMode ? '#1E1E1E' : 'white',
-                    borderWidth: 1,
-                    borderColor: isDarkMode ? '#1E1E1E' : '#d1d5db', 
-                    borderRadius: 6,
-                    marginRight: 8,
-                  }}
-                >
-                  <Picker
-                    selectedValue={subjectFilter}
-                    onValueChange={setSubjectFilter}
-                    style={{ 
-                      color: isDarkMode ? '#E0E0E0' : 'black',
-                      fontFamily: 'Inter-18pt-Regular',
-                      fontSize: 14, 
-                      padding: 12,
-                      width: width < 768 ? 200 : '100%',
-                      height: 55,
-                    }}
-                    dropdownIconColor={isDarkMode ? '#E0E0E0' : 'black'}
-                    mode="dropdown"
-                  >
-                    <Picker.Item label="All Subjects" value="" />
-                    {subjects.map(subject => (
-                      <Picker.Item 
-                        key={subject._id} 
-                        label={subject.subjectName} 
-                        value={subject._id} 
-                      />
-                    ))}
-                  </Picker>
-                </View>
-                <View
-                  style={{
-                    backgroundColor: isDarkMode ? '#1E1E1E' : 'white',
-                    borderWidth: 1,
-                    borderColor: isDarkMode ? '#1E1E1E' : '#d1d5db', 
-                    borderRadius: 6,
-                    marginRight: 8,
-                  }}
-                >
-                  <Picker
-                    selectedValue={statusFilter}
-                    onValueChange={setStatusFilter}
-                    style={{ 
-                      color: isDarkMode ? '#E0E0E0' : 'black',
-                      fontFamily: 'Inter-18pt-Regular',
-                      fontSize: 14, 
-                      padding: 12,
-                      width: width < 768 ? 150 : '100%',
-                      height: 55,
-                    }}
-                    dropdownIconColor={isDarkMode ? '#E0E0E0' : 'black'}
-                    mode="dropdown"
-                  >
-                    <Picker.Item label="All Status" value="" />
-                    <Picker.Item label="Active" value="active" />
-                    <Picker.Item label="Overdue" value="overdue" />
-                    <Picker.Item label="Graded" value="graded" />
-                  </Picker>
-                </View>
-              </View>
-            </ScrollView>
-          </View>
-            
-          {/* FlashList with proper container */}
-          <View style={{ flex: 1, marginTop: 8 }}>
-            <FlashList
-              data={sidebarListData}
-              renderItem={renderSidebarItem}
-              keyExtractor={sidebarKeyExtractor}
-              estimatedItemSize={100}
+              style={{
+                backgroundColor: isDarkMode ? '#2A2A2A' : '#F3F4F6',
+                borderRadius: 8,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                color: isDarkMode ? '#E0E0E0' : '#111827',
+                fontFamily: 'Inter-Regular',
+              }}
+              placeholderTextColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
             />
           </View>
-        </View>
-        {/* Main List - Full Activity Details and Submissions */}
-        <View
-          className='p-4'
-          style={{ 
-            backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5', 
-            width: width < 768 ? '100%' : '67%',
-            height: width < 768 ? '50%' : '100%',
-            padding: 16,
-          }}
-        >
-          <FlashList
-            data={mainListData}
-            renderItem={renderMainItem}
-            keyExtractor={mainKeyExtractor}
-            estimatedItemSize={200}
-            contentContainerStyle={{ paddingBottom: 16 }}
-          />
+
+          {/* Horizontal Dropdowns */}
+          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ 
+                fontSize: 12, 
+                fontFamily: 'Inter-Medium',
+                color: isDarkMode ? '#E0E0E0' : '#6B7280', 
+                marginBottom: 4 
+              }}>
+                Subject
+              </Text>
+              <DropdownMobile
+                label="Subject"
+                selectedValue={subjectFilter}
+                onValueChange={setSubjectFilter}
+                items={subjectFilterOptions}
+                placeholder="All"
+                buttonRightIcon={DownIcon}
+              />
+            </View>
+
+            <View style={{ flex: 1 }}>
+              <Text style={{ 
+                fontSize: 12, 
+                fontFamily: 'Inter-Medium',
+                color: isDarkMode ? '#E0E0E0' : '#6B7280',
+                marginBottom: 4 
+              }}>
+                Status
+              </Text>
+              <DropdownMobile
+                label="Status"
+                selectedValue={statusFilter}
+                onValueChange={setStatusFilter}
+                items={statusFilterOptions}
+                placeholder="All"
+                buttonRightIcon={DownIcon}
+              />
+            </View>
+          </View>
+
+          <View>
+            <Text style={{ 
+              fontSize: 12, 
+              fontFamily: 'Inter-Medium',
+              color: isDarkMode ? '#E0E0E0' : '#6B7280',
+              marginBottom: 4 
+            }}>
+              Quarter
+            </Text>
+            <DropdownMobile
+              label="Quarter"
+              selectedValue={quarterFilter}
+              onValueChange={setQuarterFilter}
+              items={quarterFilterOptions}
+              placeholder="All Quarters"
+              buttonRightIcon={DownIcon}
+            />
+          </View>
         </View>
       </View>
 
-      {/* View Activity Modal */}
-      <ViewActivityModalWeb
-        visible={viewModalVisible}
-        onClose={() => setViewModalVisible(false)}
-        activity={selectedActivity}
-        onViewSubmissions={handleViewSubmissions}
-        canModifyActivity={canModifyActivity}
-        getActivityStatus={getActivityStatus}
-        getSubmissionCount={getSubmissionCount}
-        formatDate={formatDate}
-        getUserFullName={getUserFullName}
-      />
+      {/* Content */}
+      <View style={{ flex: 1, paddingHorizontal: 20, paddingTop: 20 }}>
+        {filteredActivities.length > 0 ? (
+          <FlashList
+            data={filteredActivities}
+            renderItem={renderActivityItem}
+            keyExtractor={(item) => item._id}
+            estimatedItemSize={150}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: 20 }}
+          />
+        ) : (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            <Image
+              source={require('@/assets/images/activity.png')}
+              style={{ width: 64, height: 64, marginBottom: 16 }}
+            />
+            <Text style={{ 
+              fontSize: 18, 
+              fontFamily: 'Inter-SemiBold',
+              color: isDarkMode ? '#9CA3AF' : '#6B7280', 
+              marginBottom: 8 
+            }}>
+              No activities found
+            </Text>
+            <Text style={{ 
+              fontSize: 14, 
+              fontFamily: 'Inter-Regular',
+              color: isDarkMode ? '#6B7280' : '#9CA3AF', 
+              textAlign: 'center' 
+            }}>
+              {searchQuery || subjectFilter || statusFilter || quarterFilter
+                ? 'Try adjusting your filters'
+                : 'No activities available in your assigned subjects'}
+            </Text>
+          </View>
+        )}
+      </View>
 
-      {/* View All Submissions Modal */}
-      <ViewSubmissionsModalWeb
+      {/* Context Menu Modal - LARGER SIZE */}
+      <Modal
+        visible={contextMenuVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setContextMenuVisible(false)}
+      >
+        <Pressable 
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}
+          onPress={() => setContextMenuVisible(false)}
+        >
+          <View
+            style={{
+              backgroundColor: isDarkMode ? '#1E1E1E' : 'white',
+              borderRadius: 16,
+              padding: 12,
+              width: '85%',
+              maxWidth: 360,
+            }}
+          >
+            <TouchableOpacity
+              onPress={() => contextMenuActivity && handleViewActivity(contextMenuActivity)}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                padding: 16,
+                borderRadius: 8,
+              }}
+            >
+              <Image
+                source={require('@/assets/icons/show_password.png')}
+                style={{ width: 24, height: 24, marginRight: 16 }}
+                tintColor={isDarkMode ? '#E0E0E0' : '#333'}
+              />
+              <Text style={{ fontFamily: 'Inter-Medium', fontSize: 15, color: isDarkMode ? '#E0E0E0' : '#111827' }}>
+                View Details
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => contextMenuActivity && handleViewSubmissions(contextMenuActivity)}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                padding: 16,
+                borderRadius: 8,
+              }}
+            >
+              <Image
+                source={require('@/assets/icons/import_file.png')}
+                style={{ width: 24, height: 24, marginRight: 16 }}
+                tintColor={isDarkMode ? '#E0E0E0' : '#333'}
+              />
+              <Text style={{ fontFamily: 'Inter-Medium', fontSize: 15, color: isDarkMode ? '#E0E0E0' : '#111827' }}>
+                View Submissions
+              </Text>
+            </TouchableOpacity>
+
+            {contextMenuActivity && canModifyActivity(contextMenuActivity) && (
+              <TouchableOpacity
+                onPress={() => contextMenuActivity && handleDeleteActivity(contextMenuActivity._id)}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  padding: 16,
+                  borderRadius: 8,
+                }}
+              >
+                <DeleteIcon width={24} height={24} style={{ marginRight: 16 }} fill="#EF4444" />
+                <Text style={{ fontFamily: 'Inter-Medium', fontSize: 15, color: '#EF4444' }}>
+                  Delete Activity
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* View Activity Detail Modal */}
+      <Modal
+        visible={viewDetailModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setViewDetailModalVisible(false)}
+      >
+        <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: isDarkMode ? '#333' : '#E5E7EB' }}>
+            <TouchableOpacity onPress={() => setViewDetailModalVisible(false)} style={{ marginRight: 16 }}>
+              <Image source={require('@/assets/icons/back.png')} style={{ width: 24, height: 24 }} tintColor={isDarkMode ? '#E0E0E0' : '#333'} />
+            </TouchableOpacity>
+            <Text style={{ fontSize: 18, fontFamily: 'Inter-Bold', color: isDarkMode ? '#E0E0E0' : '#111827', flex: 1 }}>
+              Activity Details
+            </Text>
+          </View>
+
+          {selectedActivity && (
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
+              <View style={{ backgroundColor: isDarkMode ? '#1E1E1E' : 'white', borderRadius: 12, padding: 16, marginBottom: 16 }}>
+                <Text style={{ fontSize: 20, fontFamily: 'Inter-Bold', color: isDarkMode ? '#E0E0E0' : '#111827', marginBottom: 8 }}>
+                  {selectedActivity.title}
+                </Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                  <View style={{ backgroundColor: getActivityStatus(selectedActivity).color, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12 }}>
+                    <Text style={{ color: 'white', fontSize: 12, fontFamily: 'Inter-SemiBold' }}>
+                      {getActivityStatus(selectedActivity).text}
+                    </Text>
+                  </View>
+                  {selectedActivity.points !== null && (
+                    <View style={{ backgroundColor: isDarkMode ? '#2A2A2A' : '#F3F4F6', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12 }}>
+                      <Text style={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontSize: 12, fontFamily: 'Inter-SemiBold' }}>
+                        {selectedActivity.points} pts
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={{ fontSize: 14, fontFamily: 'Inter-Regular', color: isDarkMode ? '#9CA3AF' : '#6B7280' }}>
+                  {selectedActivity.subject.subjectName} • {selectedActivity.subject.section} • {selectedActivity.quarter}
+                </Text>
+              </View>
+
+              {selectedActivity.description && (
+                <View style={{ backgroundColor: isDarkMode ? '#1E1E1E' : 'white', borderRadius: 12, padding: 16, marginBottom: 16 }}>
+                  <Text style={{ fontSize: 14, fontFamily: 'Inter-Bold', color: isDarkMode ? '#E0E0E0' : '#111827', marginBottom: 8 }}>
+                    Description
+                  </Text>
+                  <Text style={{ fontSize: 14, fontFamily: 'Inter-Regular', color: isDarkMode ? '#9CA3AF' : '#6B7280', lineHeight: 20 }}>
+                    {selectedActivity.description}
+                  </Text>
+                </View>
+              )}
+
+              <View style={{ backgroundColor: isDarkMode ? '#1E1E1E' : 'white', borderRadius: 12, padding: 16, marginBottom: 16 }}>
+                <Text style={{ fontSize: 14, fontFamily: 'Inter-Bold', color: isDarkMode ? '#E0E0E0' : '#111827', marginBottom: 12 }}>
+                  Timeline
+                </Text>
+                <View style={{ marginBottom: 8 }}>
+                  <Text style={{ fontSize: 13, fontFamily: 'Inter-SemiBold', color: isDarkMode ? '#E0E0E0' : '#374151', marginBottom: 4 }}>
+                    Start Date:
+                  </Text>
+                  <Text style={{ fontSize: 13, fontFamily: 'Inter-Regular', color: isDarkMode ? '#9CA3AF' : '#6B7280' }}>
+                    {formatDate(selectedActivity.visibleDate)}
+                  </Text>
+                </View>
+                <View style={{ marginBottom: 8 }}>
+                  <Text style={{ fontSize: 13, fontFamily: 'Inter-SemiBold', color: isDarkMode ? '#E0E0E0' : '#374151', marginBottom: 4 }}>
+                    Deadline:
+                  </Text>
+                  <Text style={{ fontSize: 13, fontFamily: 'Inter-Regular', color: isDarkMode ? '#9CA3AF' : '#6B7280' }}>
+                    {formatDate(selectedActivity.deadline)}
+                  </Text>
+                </View>
+                <View>
+                  <Text style={{ fontSize: 13, fontFamily: 'Inter-SemiBold', color: isDarkMode ? '#E0E0E0' : '#374151', marginBottom: 4 }}>
+                    Late Work:
+                  </Text>
+                  <Text style={{ fontSize: 13, fontFamily: 'Inter-Regular', color: selectedActivity.allowLateSubmissions ? '#10B981' : '#EF4444' }}>
+                    {selectedActivity.allowLateSubmissions ? 'Accepted' : 'Not Accepted'}
+                  </Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                onPress={() => {
+                  setViewDetailModalVisible(false);
+                  handleViewSubmissions(selectedActivity);
+                }}
+                style={{ backgroundColor: '#8B5CF6', borderRadius: 8, paddingVertical: 12, marginBottom: 12 }}
+              >
+                <Text style={{ fontSize: 14, fontFamily: 'Inter-SemiBold', color: 'white', textAlign: 'center' }}>
+                  View All Submissions{selectedActivity.grades && selectedActivity.grades.length > 0 && ` (${selectedActivity.grades.length} Graded)`}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setViewDetailModalVisible(false)}
+                style={{ backgroundColor: '#EF4444', borderRadius: 8, paddingVertical: 12 }}
+              >
+                <Text style={{ fontSize: 14, fontFamily: 'Inter-SemiBold', color: 'white', textAlign: 'center' }}>
+                  Close
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
+          )}
+        </SafeAreaView>
+      </Modal>
+
+      {/* View Submissions Modal */}
+      <Modal
         visible={viewSubmissionsModalVisible}
-        onClose={() => setViewSubmissionsModalVisible(false)}
-        activity={selectedActivity}
-        submissions={activitySubmissions}
-        loading={submissionsLoading}
-        formatDate={formatDate}
-        getUserFullName={getUserFullName}
-      />
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => {
+          setViewSubmissionsModalVisible(false);
+          setExpandedSubmission(null);
+          setGradingStates({});
+        }}
+      >
+        <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: isDarkMode ? '#333' : '#E5E7EB' }}>
+            <TouchableOpacity onPress={() => {
+              setViewSubmissionsModalVisible(false);
+              setExpandedSubmission(null);
+              setGradingStates({});
+            }} style={{ marginRight: 16 }}>
+              <Image source={require('@/assets/icons/back.png')} style={{ width: 24, height: 24 }} tintColor={isDarkMode ? '#E0E0E0' : '#333'} />
+            </TouchableOpacity>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 18, fontFamily: 'Inter-Bold', color: isDarkMode ? '#E0E0E0' : '#111827' }}>
+                Submissions for "{selectedActivity?.title}"
+              </Text>
+              <Text style={{ fontSize: 12, fontFamily: 'Inter-Regular', color: isDarkMode ? '#9CA3AF' : '#6B7280', marginTop: 2 }}>
+                {selectedActivity?.subject.subjectName} • {selectedActivity?.quarter}
+              </Text>
+            </View>
+          </View>
 
-      {/* Update Grade Modal */}
-      <UpdateGradeModal
-        visible={updateGradeModalVisible}
-        onClose={() => setUpdateGradeModalVisible(false)}
-        grade={selectedGrade}
-        activity={selectedActivity} // This should now have the quarter field
-        submission={selectedSubmissionForUpdate}
-        onGradeUpdated={handleGradeUpdated}
-        getUserFullName={getUserFullName}
-      />
+          {submissionsLoading ? (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+              <ActivityIndicator size="large" color="#3B82F6" />
+              <Text style={{ marginTop: 16, fontFamily: 'Inter-Regular', color: isDarkMode ? '#9CA3AF' : '#6B7280' }}>
+                Loading submissions...
+              </Text>
+            </View>
+          ) : activitySubmissions.length > 0 ? (
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
+              {activitySubmissions.map((submission) => {
+                const existingGrade = getStudentGrade(submission.student._id);
+                const isExpanded = expandedSubmission === submission._id;
+                
+                if (isExpanded && !gradingStates[submission._id]) {
+                  initializeGradingState(submission._id, existingGrade);
+                }
+
+                const state = gradingStates[submission._id];
+                const totalScore = state ? 
+                  parseInt(state.score || '0', 10) + parseInt(state.bonusPoints || '0', 10) : 
+                  existingGrade ? existingGrade.score + (existingGrade.bonusPoints || 0) : 0;
+
+                return (
+                  <View
+                    key={submission._id}
+                    style={{
+                      backgroundColor: isDarkMode ? '#1E1E1E' : 'white',
+                      borderRadius: 12,
+                      marginBottom: 16,
+                      borderLeftWidth: 4,
+                      borderLeftColor: existingGrade ? '#8B5CF6' : '#3B82F6',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <TouchableOpacity
+                      onPress={() => setExpandedSubmission(isExpanded ? null : submission._id)}
+                      style={{ padding: 16 }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                          <Image
+                            style={{ width: 40, height: 40, borderRadius: 20, marginRight: 12 }}
+                            source={
+                              submission.student.profilePicture
+                                ? { uri: submission.student.profilePicture }
+                                : require('@/assets/images/sample_profile_picture.png')
+                            }
+                          />
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 16, fontFamily: 'Inter-SemiBold', color: isDarkMode ? '#E0E0E0' : '#111827' }}>
+                              {getUserFullName(submission.student)}
+                            </Text>
+                            <Text style={{ fontSize: 13, fontFamily: 'Inter-Regular', color: isDarkMode ? '#9CA3AF' : '#6B7280' }}>
+                              {formatDate(submission.submissionDate)}
+                            </Text>
+                          </View>
+                        </View>
+                        <View style={{ alignItems: 'flex-end', marginLeft: 12 }}>
+                          {existingGrade ? (
+                            <View>
+                              <Text style={{ fontSize: 18, fontFamily: 'Inter-Bold', color: '#8B5CF6', textAlign: 'right' }}>
+                                {totalScore}{selectedActivity?.points && ` / ${selectedActivity.points}`}
+                              </Text>
+                              <View style={{ backgroundColor: '#8B5CF6', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, marginTop: 4 }}>
+                                <Text style={{ color: 'white', fontSize: 11, fontFamily: 'Inter-SemiBold' }}>GRADED</Text>
+                              </View>
+                            </View>
+                          ) : (
+                            <View style={{ backgroundColor: '#3B82F6', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 }}>
+                              <Text style={{ color: 'white', fontSize: 11, fontFamily: 'Inter-SemiBold' }}>SUBMITTED</Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+
+                    {isExpanded && (
+                      <View style={{ padding: 16, paddingTop: 0 }}>
+                        <View style={{ backgroundColor: isDarkMode ? '#121212' : '#F9FAFB', borderRadius: 8, padding: 16, marginTop: 12 }}>
+                          <Text style={{ fontSize: 16, fontFamily: 'Inter-Bold', color: isDarkMode ? '#E0E0E0' : '#111827', marginBottom: 16 }}>
+                            {existingGrade ? 'Update Grade' : 'Grade Submission'}
+                          </Text>
+
+                          <View style={{ marginBottom: 12 }}>
+                            <Text style={{ fontSize: 13, fontFamily: 'Inter-SemiBold', color: isDarkMode ? '#E0E0E0' : '#111827', marginBottom: 6 }}>
+                              Score <Text style={{ color: '#EF4444' }}>*</Text>
+                            </Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                              <TextInput
+                                value={state?.score || ''}
+                                onChangeText={(text) => updateGradingField(submission._id, 'score', text.replace(/[^0-9]/g, ''))}
+                                keyboardType="numeric"
+                                placeholder="0"
+                                placeholderTextColor={isDarkMode ? '#6B7280' : '#9CA3AF'}
+                                style={{
+                                  width: 100,
+                                  height: 44,
+                                  backgroundColor: isDarkMode ? '#2A2A2A' : '#FFFFFF',
+                                  borderWidth: 1,
+                                  borderColor: isDarkMode ? '#404040' : '#D1D5DB',
+                                  borderRadius: 8,
+                                  paddingHorizontal: 12,
+                                  fontSize: 15,
+                                  fontFamily: 'Inter-Regular',
+                                  color: isDarkMode ? '#F9FAFB' : '#111827',
+                                  marginRight: 12,
+                                }}
+                              />
+                              <Text style={{ fontSize: 15, fontFamily: 'Inter-SemiBold', color: isDarkMode ? '#9CA3AF' : '#6B7280' }}>
+                                / {selectedActivity?.points || '∞'}
+                              </Text>
+                            </View>
+                          </View>
+
+                          <View style={{ marginBottom: 12 }}>
+                            <Text style={{ fontSize: 13, fontFamily: 'Inter-SemiBold', color: isDarkMode ? '#E0E0E0' : '#111827', marginBottom: 6 }}>
+                              Bonus Points (Optional)
+                            </Text>
+                            <TextInput
+                              value={state?.bonusPoints || ''}
+                              onChangeText={(text) => updateGradingField(submission._id, 'bonusPoints', text.replace(/[^0-9]/g, ''))}
+                              keyboardType="numeric"
+                              placeholder="0"
+                              placeholderTextColor={isDarkMode ? '#6B7280' : '#9CA3AF'}
+                              style={{
+                                width: 100,
+                                height: 44,
+                                backgroundColor: isDarkMode ? '#2A2A2A' : '#FFFFFF',
+                                borderWidth: 1,
+                                borderColor: isDarkMode ? '#404040' : '#D1D5DB',
+                                borderRadius: 8,
+                                paddingHorizontal: 12,
+                                fontSize: 15,
+                                fontFamily: 'Inter-Regular',
+                                color: isDarkMode ? '#F9FAFB' : '#111827',
+                              }}
+                            />
+                          </View>
+
+                          {state && (state.score || state.bonusPoints) && (
+                            <View style={{ backgroundColor: '#8B5CF6', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+                              <Text style={{ fontSize: 15, fontFamily: 'Inter-Bold', color: 'white' }}>
+                                Total Score: {totalScore}
+                                {selectedActivity?.points && ` / ${selectedActivity.points}`}
+                                {state.bonusPoints && parseInt(state.bonusPoints) > 0 && ` (${state.score || 0} + ${state.bonusPoints} bonus)`}
+                              </Text>
+                            </View>
+                          )}
+
+                          <View style={{ marginBottom: 16 }}>
+                            <Text style={{ fontSize: 13, fontFamily: 'Inter-SemiBold', color: isDarkMode ? '#E0E0E0' : '#111827', marginBottom: 6 }}>
+                              Comments (Optional)
+                            </Text>
+                            <TextInput
+                              value={state?.comments || ''}
+                              onChangeText={(text) => updateGradingField(submission._id, 'comments', text)}
+                              multiline
+                              numberOfLines={3}
+                              placeholder="Enter feedback..."
+                              placeholderTextColor={isDarkMode ? '#6B7280' : '#9CA3AF'}
+                              style={{
+                                backgroundColor: isDarkMode ? '#2A2A2A' : '#FFFFFF',
+                                borderWidth: 1,
+                                borderColor: isDarkMode ? '#404040' : '#D1D5DB',
+                                borderRadius: 8,
+                                paddingHorizontal: 12,
+                                paddingVertical: 10,
+                                fontSize: 14,
+                                fontFamily: 'Inter-Regular',
+                                color: isDarkMode ? '#F9FAFB' : '#111827',
+                                minHeight: 80,
+                                textAlignVertical: 'top',
+                              }}
+                            />
+                          </View>
+
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                            {existingGrade && (
+                              <TouchableOpacity
+                                onPress={() => handleDeleteGrade(existingGrade._id, submission._id)}
+                                disabled={state?.isSubmitting}
+                                style={{ backgroundColor: '#EF4444', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 16, opacity: state?.isSubmitting ? 0.5 : 1 }}
+                              >
+                                <Text style={{ fontSize: 14, fontFamily: 'Inter-SemiBold', color: 'white' }}>
+                                  Delete Grade
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+                            
+                            <TouchableOpacity
+                              onPress={() => handleGradeSubmission(submission)}
+                              disabled={state?.isSubmitting || !state?.score}
+                              style={{
+                                backgroundColor: !state?.score || state?.isSubmitting ? '#9CA3AF' : '#10B981',
+                                borderRadius: 8,
+                                paddingVertical: 10,
+                                paddingHorizontal: 16,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                marginLeft: 'auto',
+                              }}
+                            >
+                              {state?.isSubmitting && (
+                                <ActivityIndicator size="small" color="white" style={{ marginRight: 8 }} />
+                              )}
+                              <Text style={{ fontSize: 14, fontFamily: 'Inter-SemiBold', color: 'white' }}>
+                                {state?.isSubmitting ? 'Saving...' : existingGrade ? 'Update Grade' : 'Submit Grade'}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </ScrollView>
+          ) : (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 }}>
+              <Image style={{ width: 80, height: 80, marginBottom: 16, opacity: 0.5 }} source={require('@/assets/images/no_results.png')} />
+              <Text style={{ fontSize: 16, fontFamily: 'Inter-SemiBold', color: isDarkMode ? '#9CA3AF' : '#6B7280', textAlign: 'center' }}>
+                No submissions yet
+              </Text>
+            </View>
+          )}
+        </SafeAreaView>
+      </Modal>
 
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
     </View>

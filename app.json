@@ -2,9 +2,9 @@
   "expo": {
     "name": "GracEdLMS",
     "slug": "GracEdLMS",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/gracedlms_icon_large.png",
+    "icon": "./assets/images/app_icon.png",
     "scheme": "gracedlms",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -13,25 +13,55 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/gracedlms_icon_large.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#4276B4",
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "monochromeImage": "./assets/images/adaptive-icon.png"
       },
-      "package": "com.teamz.gracedlms"
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "package": "com.teamzero.gracedlms",
+      "permissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.CAMERA",
+        "android.permission.READ_CALENDAR",
+        "android.permission.WRITE_CALENDAR",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        "android.permission.ACCESS_MEDIA_LOCATION",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/images/gracedlms_icon_small.png"
+	  "sourceMaps": true,
+      "favicon": "./assets/images/web_icon.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/gracedlms_icon_large.png",
+          "image": "./assets/images/splash-icon-dark.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "backgroundColor": "#ffffff",
+          "dark": {
+            "backgroundColor": "#18191A",
+            "image": "./assets/images/splash-icon-light.png"
+          }
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow GracEdLMS to access your photos for uploading assignments and profile pictures.",
+          "savePhotosPermission": "Allow GracEdLMS to save photos.",
+          "isAccessMediaLocationEnabled": true,
+          "useAudioAccess": false
         }
       ],
       [
@@ -40,10 +70,32 @@
           "photosPermission": "Allow GracEdLMS to access your photos to upload profile pictures.",
           "cameraPermission": "Allow GracEdLMS to access your camera to take profile pictures."
         }
-      ]
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "Allow GracEdLMS to access your calendar to add assignment deadlines."
+        }
+      ],
+      [
+        "expo-document-picker",
+        {
+          "iCloudContainerEnvironment": "Production"
+        }
+      ],
+      "expo-web-browser",
+      "expo-font"
     ],
     "experiments": {
-      "typedRoutes": true
-    }
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "f6e19a80-f2f7-48ef-9b8d-685d4bd7ab54"
+      }
+    },
+    "owner": "bustamanteso7828"
   }
 }

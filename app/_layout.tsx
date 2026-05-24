@@ -1,7 +1,10 @@
 import { SplashScreen, Stack, useRouter, useSegments } from "expo-router";
 import { useFonts } from 'expo-font';
-import "@/app/globals.css";
+import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
+import { Poppins_400Regular, Poppins_600SemiBold, Poppins_700Bold } from '@expo-google-fonts/poppins';
+import "@/app/globals.css"; 
 import { useEffect } from "react";
+import { Platform } from "react-native";
 import { DarkModeProvider, useDarkMode } from '@/contexts/DarkModeContext';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 
@@ -15,34 +18,37 @@ function InitialLayout() {
   useEffect(() => {
     if (!isLoading) {
       const inAuthGroup = segments[0] === '(auth)';
-      // Define checks for being inside each role group
       const inAdminGroup = segments[0] === '(admins)';
       const inStudentGroup = segments[0] === '(students)';
       const inTeacherGroup = segments[0] === '(teachers)';
+      
+      // Check if on mobile platform
+      const isMobile = Platform.OS === 'ios' || Platform.OS === 'android';
 
       if (isAuthenticated) {
-        // User IS authenticated
+        // Block admin access on mobile
+        if (isMobile && user?.role === 'Admin') {
+          // This shouldn't happen due to AuthContext checks, but as a safety measure
+          router.replace('/(auth)/signin');
+          return;
+        }
+
         if (inAuthGroup) {
-          // If authenticated and currently on an auth page (like signin),
-          // redirect them to their correct dashboard based on their role.
+          // Redirect authenticated users from auth pages to their dashboard
           if (user?.role === 'Admin') {
-             router.replace('/(admins)/dashboard');
+            router.replace('/(admins)/dashboard');
           } else if (user?.role === 'Student') {
-             router.replace('/(students)/dashboard');
+            router.replace('/(students)/dashboard');
           } else if (user?.role === 'Teacher') {
-             router.replace('/(teachers)/dashboard');
+            router.replace('/(teachers)/dashboard');
           }
         } else {
-          // User is authenticated and NOT on an auth page.
-          // Check if they are accessing a role group they don't belong to
+          // Prevent users from accessing wrong role pages
           if (user?.role === 'Admin' && (inStudentGroup || inTeacherGroup)) {
-            // Admin trying to access student or teacher pages
             router.replace('/(admins)/dashboard');
           } else if (user?.role === 'Student' && (inAdminGroup || inTeacherGroup)) {
-            // Student trying to access admin or teacher pages
             router.replace('/(students)/dashboard');
           } else if (user?.role === 'Teacher' && (inAdminGroup || inStudentGroup)) {
-            // Teacher trying to access admin or student pages
             router.replace('/(teachers)/dashboard');
           } else if (!inAdminGroup && !inStudentGroup && !inTeacherGroup) {
             // User is on index or unknown path, redirect to their role dashboard
@@ -54,16 +60,17 @@ function InitialLayout() {
               router.replace('/(teachers)/dashboard');
             }
           }
-          // If user is in their correct role group, do nothing (let them stay)
         }
       } else {
-        // User is NOT authenticated
+        // Block admin pages access on mobile even when not authenticated
+        if (isMobile && inAdminGroup) {
+          router.replace('/(auth)/signin');
+          return;
+        }
+
         if (!inAuthGroup) {
-          // If NOT authenticated and trying to access any page outside the auth group,
-          // redirect them to the sign-in page.
           router.replace('/(auth)/signin');
         }
-        // If NOT authenticated and already on an auth page, do nothing (stay on the signin page).
       }
     }
   }, [isAuthenticated, isLoading, user, segments, router]);
@@ -81,44 +88,32 @@ function InitialLayout() {
 
 export default function RootLayout() {
   const [fontsLoaded, error] = useFonts({
-    // Inter 18pt
-    'Inter-18pt-ExtraLight': require('../assets/fonts/Inter-18pt-Regular.ttf'),
-    'Inter-18pt-Italic': require('../assets/fonts/Inter-18pt-Italic.ttf'),
-    'Inter-18pt-Light': require('../assets/fonts/Inter-18pt-Light.ttf'),
-    'Inter-18pt-Medium': require('../assets/fonts/Inter-18pt-Medium.ttf'),
-    'Inter-18pt-Regular': require('../assets/fonts/Inter-18pt-Regular.ttf'),
-    'Inter-18pt-Thin': require('../assets/fonts/Inter-18pt-Thin.ttf'),
-    // Inter 24pt
-    'Inter-24pt-Bold': require('../assets/fonts/Inter-24pt-Bold.ttf'),
-    'Inter-24pt-SemiBold': require('../assets/fonts/Inter-24pt-SemiBold.ttf'),
-    // Inter 28pt
-    'Inter-28pt-Black': require('../assets/fonts/Inter-28pt-Black.ttf'),
-    'Inter-28pt-ExtraBold': require('../assets/fonts/Inter-28pt-ExtraBold.ttf'),
-    // Poppins
-    'Poppins-Black': require('../assets/fonts/Poppins-Black.ttf'),
-    'Poppins-Bold': require('../assets/fonts/Poppins-Bold.ttf'),
-    'Poppins-ExtraBold': require('../assets/fonts/Poppins-ExtraBold.ttf'),
-    'Poppins-ExtraLight': require('../assets/fonts/Poppins-ExtraLight.ttf'),
-    'Poppins-Italic': require('../assets/fonts/Poppins-Italic.ttf'),
-    'Poppins-Light': require('../assets/fonts/Poppins-Light.ttf'),
-    'Poppins-Medium': require('../assets/fonts/Poppins-Medium.ttf'),
-    'Poppins-Regular': require('../assets/fonts/Poppins-Regular.ttf'),
-    'Poppins-SemiBold': require('../assets/fonts/Poppins-SemiBold.ttf'),
-    'Poppins-Thin': require('../assets/fonts/Poppins-Thin.ttf'),
+    // Inter weights
+    'Inter-Regular': Inter_400Regular,
+    'Inter-Medium': Inter_500Medium,
+    'Inter-SemiBold': Inter_600SemiBold,
+    'Inter-Bold': Inter_700Bold,
+    
+    // Poppins weights
+    'Poppins-Regular': Poppins_400Regular,
+    'Poppins-SemiBold': Poppins_600SemiBold,
+    'Poppins-Bold': Poppins_700Bold,
   });
 
   const { isDarkMode } = useDarkMode();
   
+  const isWeb = Platform.OS === 'web'
+
   useEffect(()=>{
     if (error){
       throw error;
     }
-    if (fontsLoaded){
+    if (fontsLoaded || isWeb){
       SplashScreen.hideAsync();
     }
-  }, [fontsLoaded, error])
+  }, [fontsLoaded, error, isWeb]);
 
-  if (!fontsLoaded && !error){
+  if (!fontsLoaded && !error && !isWeb) {
     return null;
   }
 

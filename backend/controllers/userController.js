@@ -9,33 +9,46 @@ const ExcelJS = require("exceljs");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
+const { bucket } = require("../config/firebaseService"); // Add Firebase import
 
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, "../uploads/excel");
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(null, "users-" + uniqueSuffix + path.extname(file.originalname));
-  },
-});
+// Configure multer for file uploads (updated to handle both Excel and images)
+const storage = multer.memoryStorage(); // Use memory storage for Firebase
 
 const upload = multer({
   storage: storage,
   fileFilter: (req, file, cb) => {
-    const allowedTypes = [
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
-      "application/vnd.ms-excel", // .xls
-    ];
-    if (allowedTypes.includes(file.mimetype)) {
-      cb(null, true);
+    if (file.fieldname === "excelFile") {
+      // Excel file validation
+      const allowedTypes = [
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
+        "application/vnd.ms-excel", // .xls
+      ];
+      if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error("Only Excel files (.xlsx, .xls) are allowed!"), false);
+      }
+    } else if (file.fieldname === "profileImage") {
+      // Image file validation
+      const allowedImageTypes = [
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+      ];
+      if (allowedImageTypes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(
+          new Error(
+            "Only image files (JPEG, JPG, PNG, GIF, WebP) are allowed for profile pictures!"
+          ),
+          false
+        );
+      }
     } else {
-      cb(new Error("Only Excel files (.xlsx, .xls) are allowed!"), false);
+      cb(new Error("Unexpected field name!"), false);
     }
   },
   limits: {
@@ -43,11 +56,101 @@ const upload = multer({
   },
 });
 
+// Helper function to upload image to Firebase Storage
+const uploadImageToFirebase = async (file, folder = "profile-pictures") => {
+  try {
+    const fileName = `${folder}/${Date.now()}-${Math.round(
+      Math.random() * 1e9
+    )}${path.extname(file.originalname)}`;
+    const fileUpload = bucket.file(fileName);
+
+    const stream = fileUpload.createWriteStream({
+      metadata: {
+        contentType: file.mimetype,
+      },
+      public: true, // Make the file publicly accessible
+    });
+
+    return new Promise((resolve, reject) => {
+      stream.on("error", (error) => {
+        console.error("Firebase upload error:", error);
+        reject(error);
+      });
+
+      stream.on("finish", async () => {
+        try {
+          // Make the file public
+          await fileUpload.makePublic();
+
+          // Get the public URL
+          const publicUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
+          resolve(publicUrl);
+        } catch (error) {
+          console.error("Error making file public:", error);
+          reject(error);
+        }
+      });
+
+      stream.end(file.buffer);
+    });
+  } catch (error) {
+    console.error("Error uploading to Firebase:", error);
+    throw error;
+  }
+};
+
+// @desc    Upload profile picture to Firebase Storage
+// @route   POST /api/v1/users/upload-profile-picture
+// @access  Private/Admin
+const uploadProfilePicture = asyncHandler(async (req, res, next) => {
+  upload.single("profileImage")(req, res, async (err) => {
+    if (err) {
+      return next(new ErrorResponse(`File upload error: ${err.message}`, 400));
+    }
+
+    if (!req.file) {
+      return next(new ErrorResponse("Please upload an image file", 400));
+    }
+
+    try {
+      console.log("Uploading profile picture to Firebase Storage...");
+
+      // Upload to Firebase Storage
+      const firebaseUrl = await uploadImageToFirebase(
+        req.file,
+        "profile-pictures"
+      );
+
+      console.log("Profile picture uploaded successfully:", firebaseUrl);
+
+      res.status(200).json({
+        success: true,
+        message: "Profile picture uploaded successfully",
+        data: {
+          url: firebaseUrl,
+          originalName: req.file.originalname,
+          size: req.file.size,
+          mimetype: req.file.mimetype,
+        },
+      });
+    } catch (error) {
+      console.error("Error uploading profile picture:", error);
+      return next(
+        new ErrorResponse(
+          `Error uploading profile picture: ${error.message}`,
+          500
+        )
+      );
+    }
+  });
+});
+
 // @desc    Create a new user by Admin
 // @route   POST /api/v1/users
 // @access  Private/Admin
 const createUser = asyncHandler(async (req, res, next) => {
   const {
+    userId, // Now required from admin input
     username,
     firstName,
     middleName,
@@ -61,21 +164,19 @@ const createUser = asyncHandler(async (req, res, next) => {
     profilePicture,
   } = req.body;
 
-  // Add 'sex' to required field check
+  // Updated required field check - removed email, phoneNumber, address
   if (
+    !userId ||
     !username ||
     !firstName ||
     !lastName ||
-    !email ||
     !password ||
-    !phoneNumber ||
-    !address ||
     !role ||
     !sex
   ) {
     return next(
       new ErrorResponse(
-        "Missing required fields for user creation by admin, including sex",
+        "Missing required fields: userId, username, firstName, lastName, password, role, sex",
         400
       )
     );
@@ -96,17 +197,19 @@ const createUser = asyncHandler(async (req, res, next) => {
 
   let newUser;
   const userData = {
+    userId, // Use admin-provided userId
     username,
     firstName,
     middleName,
     lastName,
-    email,
+    email: email && email.trim() !== "" ? email.trim() : undefined, // Only set if provided and not empty
     password,
-    phoneNumber,
-    address,
+    phoneNumber:
+      phoneNumber && phoneNumber.trim() !== "" ? phoneNumber : undefined, // Only set if provided and not empty
+    address: address && address.trim() !== "" ? address.trim() : undefined, // Only set if provided and not empty
     role,
     sex,
-    status: "active", // Always set to 'active' for admin-created users
+    status: "active",
     profilePicture,
   };
 
@@ -540,6 +643,7 @@ const createMultipleUsers = asyncHandler(async (req, res, next) => {
   for (let i = 0; i < usersData.length; i++) {
     const userData = usersData[i];
     const {
+      userId, // Now required
       username,
       firstName,
       middleName,
@@ -553,15 +657,13 @@ const createMultipleUsers = asyncHandler(async (req, res, next) => {
       profilePicture,
     } = userData;
 
-    // --- Start Basic Validation for each user object ---
+    // Updated validation - removed email, phoneNumber, address from required
     const currentItemErrors = [];
+    if (!userId) currentItemErrors.push("userId is required.");
     if (!username) currentItemErrors.push("username is required.");
     if (!firstName) currentItemErrors.push("firstName is required.");
     if (!lastName) currentItemErrors.push("lastName is required.");
-    if (!email) currentItemErrors.push("email is required.");
     if (!password) currentItemErrors.push("password is required.");
-    if (!phoneNumber) currentItemErrors.push("phoneNumber is required.");
-    if (!address) currentItemErrors.push("address is required.");
     if (!role) currentItemErrors.push("role is required.");
     if (!sex) currentItemErrors.push("sex is required.");
 
@@ -587,8 +689,7 @@ const createMultipleUsers = asyncHandler(async (req, res, next) => {
       continue;
     }
 
-    // Check for existing username or email to prevent duplicates
-    // This adds DB queries per user; for very large batches, consider other strategies.
+    // Only check for existing username - remove email duplicate checking
     try {
       const existingUserByUsername = await User.findOne({ username });
       if (existingUserByUsername) {
@@ -600,15 +701,19 @@ const createMultipleUsers = asyncHandler(async (req, res, next) => {
         });
         continue;
       }
-      const existingUserByEmail = await User.findOne({ email });
-      if (existingUserByEmail) {
-        errors.push({
-          index: i,
-          userIdentifier: email,
-          messages: [`Email '${email}' already exists.`],
-          data: userData,
-        });
-        continue;
+
+      // Only check for existing email if email is provided
+      if (email && email.trim() !== "") {
+        const existingUserByEmail = await User.findOne({ email: email.trim() });
+        if (existingUserByEmail) {
+          errors.push({
+            index: i,
+            userIdentifier: email,
+            messages: [`Email '${email}' already exists.`],
+            data: userData,
+          });
+          continue;
+        }
       }
     } catch (dbCheckError) {
       errors.push({
@@ -623,14 +728,16 @@ const createMultipleUsers = asyncHandler(async (req, res, next) => {
     try {
       let newUser;
       const fullUserData = {
+        userId,
         username,
         firstName,
         middleName,
         lastName,
-        email,
+        email: email && email.trim() !== "" ? email.trim() : undefined, // Only set if provided and not empty
         password,
-        phoneNumber,
-        address,
+        phoneNumber:
+          phoneNumber && phoneNumber.trim() !== "" ? phoneNumber : undefined, // Only set if provided and not empty
+        address: address && address.trim() !== "" ? address.trim() : undefined, // Only set if provided and not empty
         role,
         sex,
         status: "active", // Always set to 'active' for admin-created users
@@ -699,7 +806,7 @@ const createMultipleUsers = asyncHandler(async (req, res, next) => {
   });
 });
 
-// @desc    Create multiple users from Excel file
+// @desc    Create multiple users from Excel file (updated to handle new multer config)
 // @route   POST /api/v1/users/bulk-excel
 // @access  Private/Admin
 const createUsersFromExcel = asyncHandler(async (req, res, next) => {
@@ -713,16 +820,20 @@ const createUsersFromExcel = asyncHandler(async (req, res, next) => {
     }
 
     try {
-      console.log("Processing Excel file:", req.file.path);
+      console.log("Processing Excel file from memory buffer");
+
+      // Create a temporary file from the buffer for ExcelJS
+      const tempFilePath = path.join(__dirname, `../temp-${Date.now()}.xlsx`);
+      fs.writeFileSync(tempFilePath, req.file.buffer);
 
       // Read the Excel file using exceljs
       const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.readFile(req.file.path);
+      await workbook.xlsx.readFile(tempFilePath);
 
       // Get the first worksheet
       const worksheet = workbook.getWorksheet(1);
       if (!worksheet) {
-        fs.unlinkSync(req.file.path);
+        fs.unlinkSync(tempFilePath);
         return next(new ErrorResponse("Excel file has no worksheets", 400));
       }
 
@@ -797,7 +908,7 @@ const createUsersFromExcel = asyncHandler(async (req, res, next) => {
       console.log("Sample data:", jsonData[0]);
 
       if (!jsonData || jsonData.length === 0) {
-        fs.unlinkSync(req.file.path);
+        fs.unlinkSync(tempFilePath);
         return next(
           new ErrorResponse("Excel file is empty or contains no data", 400)
         );
@@ -805,13 +916,11 @@ const createUsersFromExcel = asyncHandler(async (req, res, next) => {
 
       // Validate required headers
       const requiredHeaders = [
+        "userId", // Now required
         "username",
         "firstName",
         "lastName",
-        "email",
         "password",
-        "phoneNumber",
-        "address",
         "role",
         "sex",
       ];
@@ -822,7 +931,7 @@ const createUsersFromExcel = asyncHandler(async (req, res, next) => {
       );
 
       if (missingHeaders.length > 0) {
-        fs.unlinkSync(req.file.path);
+        fs.unlinkSync(tempFilePath);
         return next(
           new ErrorResponse(
             `Excel file is missing required columns: ${missingHeaders.join(
@@ -847,6 +956,7 @@ const createUsersFromExcel = asyncHandler(async (req, res, next) => {
         console.log(`Processing row ${rowNumber}:`, rowData);
 
         const {
+          userId, // Now required
           username,
           firstName,
           middleName,
@@ -861,22 +971,18 @@ const createUsersFromExcel = asyncHandler(async (req, res, next) => {
           profilePicture,
         } = rowData;
 
-        // Validate required fields
+        // Updated validation - removed email, phoneNumber, address from required
         const currentItemErrors = [];
+        if (!userId || userId.trim() === "")
+          currentItemErrors.push("userId is required.");
         if (!username || username.trim() === "")
           currentItemErrors.push("username is required.");
         if (!firstName || firstName.trim() === "")
           currentItemErrors.push("firstName is required.");
         if (!lastName || lastName.trim() === "")
           currentItemErrors.push("lastName is required.");
-        if (!email || email.trim() === "")
-          currentItemErrors.push("email is required.");
         if (!password || password.trim() === "")
           currentItemErrors.push("password is required.");
-        if (!phoneNumber || phoneNumber.trim() === "")
-          currentItemErrors.push("phoneNumber is required.");
-        if (!address || address.trim() === "")
-          currentItemErrors.push("address is required.");
         if (!role || role.trim() === "")
           currentItemErrors.push("role is required.");
         if (!sex || sex.trim() === "")
@@ -913,21 +1019,29 @@ const createUsersFromExcel = asyncHandler(async (req, res, next) => {
 
         // Clean and prepare data
         const cleanData = {
+          userId: userId.trim(), // Use admin-provided userId
           username: username.trim(),
           firstName: firstName.trim(),
           middleName: middleName ? middleName.trim() : undefined,
           lastName: lastName.trim(),
-          email: email.trim().toLowerCase(),
+          email:
+            email && email.trim() !== ""
+              ? email.trim().toLowerCase()
+              : undefined, // Only set if provided and not empty
           password: password.trim(),
-          phoneNumber: phoneNumber.trim(),
-          address: address.trim(),
+          phoneNumber:
+            phoneNumber && phoneNumber.trim() !== ""
+              ? phoneNumber.trim()
+              : undefined, // Only set if provided and not empty
+          address:
+            address && address.trim() !== "" ? address.trim() : undefined, // Only set if provided and not empty
           role: role.trim(),
           sex: sex.trim(),
-          status: "active", // Always set to 'active' for admin-created users
+          status: "active",
           profilePicture: profilePicture ? profilePicture.trim() : undefined,
         };
 
-        // Check for existing users
+        // Check for existing users - only check email if provided
         try {
           const existingUserByUsername = await User.findOne({
             username: cleanData.username,
@@ -942,17 +1056,20 @@ const createUsersFromExcel = asyncHandler(async (req, res, next) => {
             continue;
           }
 
-          const existingUserByEmail = await User.findOne({
-            email: cleanData.email,
-          });
-          if (existingUserByEmail) {
-            errors.push({
-              row: rowNumber,
-              userIdentifier: cleanData.email,
-              messages: [`Email '${cleanData.email}' already exists.`],
-              data: rowData,
+          // Only check for existing email if email is provided
+          if (cleanData.email) {
+            const existingUserByEmail = await User.findOne({
+              email: cleanData.email,
             });
-            continue;
+            if (existingUserByEmail) {
+              errors.push({
+                row: rowNumber,
+                userIdentifier: cleanData.email,
+                messages: [`Email '${cleanData.email}' already exists.`],
+                data: rowData,
+              });
+              continue;
+            }
           }
         } catch (dbCheckError) {
           errors.push({
@@ -1015,9 +1132,9 @@ const createUsersFromExcel = asyncHandler(async (req, res, next) => {
         }
       }
 
-      // Clean up uploaded file
-      fs.unlinkSync(req.file.path);
-      console.log("File cleaned up");
+      // Clean up temporary file
+      fs.unlinkSync(tempFilePath);
+      console.log("Temporary file cleaned up");
 
       const success = createdUsers.length > 0;
       const statusCode = success ? (errors.length > 0 ? 207 : 201) : 400;
@@ -1037,10 +1154,17 @@ const createUsersFromExcel = asyncHandler(async (req, res, next) => {
         },
       });
     } catch (error) {
-      // Clean up uploaded file in case of error
-      if (req.file && fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-      }
+      // Clean up temporary file in case of error
+      const tempFiles = fs
+        .readdirSync(__dirname)
+        .filter((file) => file.startsWith("temp-") && file.endsWith(".xlsx"));
+      tempFiles.forEach((file) => {
+        try {
+          fs.unlinkSync(path.join(__dirname, file));
+        } catch (e) {
+          console.log("Error cleaning temp file:", e.message);
+        }
+      });
 
       console.error("Error processing Excel file:", error);
       return next(
@@ -1050,7 +1174,7 @@ const createUsersFromExcel = asyncHandler(async (req, res, next) => {
   });
 });
 
-// Export all functions
+// Export all functions (add the new function)
 module.exports = {
   createUser,
   getAllUsers,
@@ -1062,4 +1186,5 @@ module.exports = {
   permanentDeleteUser,
   createMultipleUsers,
   createUsersFromExcel,
+  uploadProfilePicture, // Add new export
 };

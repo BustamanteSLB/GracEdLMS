@@ -1,7 +1,7 @@
 import React from 'react';
 import { Drawer } from 'expo-router/drawer';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { Platform, Pressable } from 'react-native';
+import { Platform, Pressable, TouchableOpacity } from 'react-native';
 import { Image } from 'expo-image';
 import { cssInterop } from 'nativewind';
 import CustomDrawerContent from '@/components/CustomDrawerContent';
@@ -34,9 +34,9 @@ export default function DrawerLayout() {
           drawerHideStatusBarOnOpen: false,
           drawerInactiveTintColor: isDarkMode ? '#E0E0E0' : 'black',
           headerLeft: () => (
-            <Pressable className="ml-2 mr-2" onPress={() => navigation.toggleDrawer()}>
+            <TouchableOpacity className="ml-3 mr-2" onPress={() => navigation.toggleDrawer()}>
               <DrawerIcon width={24} height={24} fill="white"/>
-            </Pressable>
+            </TouchableOpacity>
           )
         })}
       >
@@ -51,7 +51,7 @@ export default function DrawerLayout() {
             ),
             drawerLabel: "Dashboard", 
             drawerLabelStyle:{
-              fontFamily: 'Inter-24pt-SemiBold'
+              fontFamily: 'Inter-SemiBold'
             },           
             headerStyle: {
               backgroundColor: Platform.select({
@@ -73,7 +73,7 @@ export default function DrawerLayout() {
           }}
         />
         <Drawer.Screen
-          name="institution"
+          name="school-page"
           options={{
             drawerIcon:({focused})=>(
               <InstitutionIcon
@@ -81,9 +81,9 @@ export default function DrawerLayout() {
                 fill={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
               />
             ),
-            drawerLabel: "Institution",
+            drawerLabel: "School Page",
             drawerLabelStyle:{
-              fontFamily: 'Inter-24pt-SemiBold'
+              fontFamily: 'Inter-SemiBold'
             },            
             headerStyle: {
               backgroundColor: Platform.select({
@@ -101,7 +101,7 @@ export default function DrawerLayout() {
                 default: 5
               })
             },
-            title:"Institution",
+            title:"School Page",
           }}
         />
         <Drawer.Screen
@@ -115,7 +115,7 @@ export default function DrawerLayout() {
             ),
             drawerLabel: "Profile",
             drawerLabelStyle:{
-              fontFamily: 'Inter-24pt-SemiBold'
+              fontFamily: 'Inter-SemiBold'
             },
             headerStyle: {
               backgroundColor: Platform.select({
@@ -148,7 +148,7 @@ export default function DrawerLayout() {
             headerShown: false,
             drawerLabel: "Edit Profile",
             drawerLabelStyle:{
-              fontFamily: 'Inter-24pt-SemiBold'
+              fontFamily: 'Inter-SemiBold'
             },
             drawerItemStyle: { display: 'none' },
             headerStyle: {
@@ -181,7 +181,7 @@ export default function DrawerLayout() {
             ),
             drawerLabel: "Activity",
             drawerLabelStyle:{
-              fontFamily: 'Inter-24pt-SemiBold'
+              fontFamily: 'Inter-SemiBold'
             },  
             headerStyle: {
               backgroundColor: Platform.select({
@@ -214,7 +214,7 @@ export default function DrawerLayout() {
             ),
             drawerLabel: "Quizzes",
             drawerLabelStyle:{
-              fontFamily: 'Inter-24pt-SemiBold'
+              fontFamily: 'Inter-SemiBold'
             },  
             headerStyle: {
               backgroundColor: Platform.select({
@@ -236,6 +236,111 @@ export default function DrawerLayout() {
           }}
         />
         <Drawer.Screen
+          name="add-quiz"
+          options={{
+            drawerIcon:({focused})=>(
+              <Image
+                className='w-[24] h-[24]'
+                source={require('@/assets/icons/quizzes.png')}
+                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
+              />
+            ),
+            drawerItemStyle: { display: 'none' }, // Hide this item from the drawer
+            drawerLabel: "Add Quiz",
+            drawerLabelStyle:{
+              fontFamily: 'Inter-SemiBold'
+            },
+            headerShown: false,  
+            headerStyle: {
+              backgroundColor: Platform.select({
+                android: '#22C55E',
+                ios: '#3B82F6',
+                web: '#6D28D9',
+              }),
+            },
+            headerTintColor: 'white', 
+            headerTitleAlign: 'left',             
+            headerTitleStyle: {
+              fontFamily: 'Poppins-Bold',
+              marginTop: Platform.select({
+                web: 0,
+                default: 5
+              })
+            },
+            title:"Add Quiz",
+          }}
+        />
+        <Drawer.Screen
+          name="edit-quiz"
+          options={{
+            drawerIcon:({focused})=>(
+              <Image
+                className='w-[24] h-[24]'
+                source={require('@/assets/icons/quizzes.png')}
+                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
+              />
+            ),
+            drawerItemStyle: { display: 'none' }, // Hide this item from the drawer
+            drawerLabel: "Edit Quiz",
+            drawerLabelStyle:{
+              fontFamily: 'Inter-SemiBold'
+            },
+            headerShown: false,  
+            headerStyle: {
+              backgroundColor: Platform.select({
+                android: '#22C55E',
+                ios: '#3B82F6',
+                web: '#6D28D9',
+              }),
+            },
+            headerTintColor: 'white', 
+            headerTitleAlign: 'left',             
+            headerTitleStyle: {
+              fontFamily: 'Poppins-Bold',
+              marginTop: Platform.select({
+                web: 0,
+                default: 5
+              })
+            },
+            title:"Edit Quiz",
+          }}
+        />
+        <Drawer.Screen
+          name="quiz/submissions/[id]"
+          options={{
+            drawerIcon:({focused})=>(
+              <Image
+                className='w-[24] h-[24]'
+                source={require('@/assets/icons/quizzes.png')}
+                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
+              />
+            ),
+            drawerItemStyle: { display: 'none' }, // Hide this item from the drawer
+            drawerLabel: "Quiz Submissions",
+            drawerLabelStyle:{
+              fontFamily: 'Inter-SemiBold'
+            },
+            headerShown: false,  
+            headerStyle: {
+              backgroundColor: Platform.select({
+                android: '#22C55E',
+                ios: '#3B82F6',
+                web: '#6D28D9',
+              }),
+            },
+            headerTintColor: 'white', 
+            headerTitleAlign: 'left',             
+            headerTitleStyle: {
+              fontFamily: 'Poppins-Bold',
+              marginTop: Platform.select({
+                web: 0,
+                default: 5
+              })
+            },
+            title:"Quiz Submissions",
+          }}
+        />
+        <Drawer.Screen
           name="subjects"
           options={{
             drawerIcon:({focused})=>(
@@ -246,7 +351,7 @@ export default function DrawerLayout() {
             ),
             drawerLabel: "Subjects",
             drawerLabelStyle:{
-              fontFamily: 'Inter-24pt-SemiBold'
+              fontFamily: 'Inter-SemiBold'
             },            
             headerStyle: {
               backgroundColor: Platform.select({
@@ -268,6 +373,40 @@ export default function DrawerLayout() {
           }}
         />
         <Drawer.Screen
+          name="subjects/[id]"
+          options={{
+            drawerIcon:({focused})=>(
+              <CoursesIcon
+                width={24} height={24}
+                fill={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
+              />
+            ),
+            headerShown: false,
+            drawerLabel: "Subject Details",
+            drawerLabelStyle:{
+              fontFamily: 'Inter-SemiBold'
+            },            
+            drawerItemStyle: { display: 'none' },
+            headerStyle: {
+              backgroundColor: Platform.select({
+                android: '#22C55E',
+                ios: '#3B82F6',
+                web: '#6D28D9',
+              }),
+            },
+            headerTintColor: 'white', 
+            headerTitleAlign: 'left',             
+            headerTitleStyle: {
+              fontFamily: 'Poppins-Bold',
+              marginTop: Platform.select({
+                web: 0,
+                default: 5
+              })
+            },
+            title:"Subject Details",
+          }}
+        />
+        <Drawer.Screen
           name="grades"
           options={{
             drawerIcon:({focused})=>(
@@ -278,7 +417,7 @@ export default function DrawerLayout() {
             ),
             drawerLabel: "Grades",
             drawerLabelStyle:{
-              fontFamily: 'Inter-24pt-SemiBold'
+              fontFamily: 'Inter-SemiBold'
             },            
             headerStyle: {
               backgroundColor: Platform.select({
@@ -310,7 +449,7 @@ export default function DrawerLayout() {
             ),
             drawerLabel: "Calendar",
             drawerLabelStyle:{
-              fontFamily: 'Inter-24pt-SemiBold'
+              fontFamily: 'Inter-SemiBold'
             },            
             headerStyle: {
               backgroundColor: Platform.select({

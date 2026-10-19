@@ -26,7 +26,7 @@ You need two `.env` files: one at the **project root** (Expo app) and one in **`
 Create a file named `.env` in the project root (same folder as `package.json` and `app.json`):
 
 ```env
-EXPO_PUBLIC_API_URL=http://YOUR_LOCAL_IP:5000
+EXPO_PUBLIC_API_URL=http://YOUR_LOCAL_IP:5000/api/v1
 ```
 
 | Variable | Description |

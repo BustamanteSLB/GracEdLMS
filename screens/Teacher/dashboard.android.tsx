@@ -1,12 +1,13 @@
-import { Text, TouchableOpacity, useColorScheme, View, ScrollView, Platform, Dimensions, ActivityIndicator } from 'react-native';
+import { Text, TouchableOpacity, useColorScheme, View, ScrollView, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { Image } from "expo-image";
 import { cssInterop } from "nativewind";
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { useDarkMode } from '@/contexts/DarkModeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import apiClient from '@/app/services/apiClient';
+import NetworkBanner from '@/components/NetworkBanner.android';
 
 // Icons for analytics
 import AttachIcon from '@/assets/icons/attach.svg';
@@ -56,42 +57,56 @@ const DBAndroid: React.FC = () => {
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { width, height } = Dimensions.get('window');
+  const [networkError, setNetworkError] = useState(false);
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+  const horizontalPadding = 32;
+  const columnGap = 12;
+  const feedCardWidth = isLandscape ? (width - horizontalPadding - columnGap) / 2 : undefined;
+
+  const isNetworkError = (err: any) =>
+    err?.message?.toLowerCase?.().includes('network') ||
+    err?.status === 0 ||
+    !err?.response;
 
   // Fetch analytics data
+  const fetchAnalytics = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      setNetworkError(false);
+
+      // Use the new analytics endpoint
+      const analyticsResponse = await apiClient.get('/analytics/teacher-dashboard');
+      setAnalyticsData(analyticsResponse.data.data);
+
+    } catch (error: any) {
+      console.error('Error fetching analytics:', error);
+      if (isNetworkError(error)) setNetworkError(true);
+      setError('Failed to load analytics data');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    const fetchAnalytics = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-
-        // Use the new analytics endpoint
-        const analyticsResponse = await apiClient.get('/analytics/teacher-dashboard');
-        setAnalyticsData(analyticsResponse.data.data);
-
-      } catch (error: any) {
-        console.error('Error fetching analytics:', error);
-        setError('Failed to load analytics data');
-      } finally {
-        setLoading(false);
-      }
-    };
-
     if (user) {
       fetchAnalytics();
     }
-  }, [user]);
+  }, [user, fetchAnalytics]);
 
   // Move these component functions INSIDE the main component so they can access isDarkMode
   
   // Facebook-style card component
-  const FeedCard = ({ children, className = "", ...props }: { 
+  const FeedCard = ({ children, className = "", style, ...props }: { 
     children: React.ReactNode; 
     className?: string;
+    style?: object;
     [key: string]: any;
   }) => (
     <View 
       className={`${isDarkMode ? 'bg-[#242526]' : 'bg-white'} rounded-lg shadow-sm border ${isDarkMode ? 'border-[#3A3B3C]' : 'border-gray-200'} mb-4 ${className}`}
+      style={style}
       {...props}
     >
       {children}
@@ -108,11 +123,11 @@ const DBAndroid: React.FC = () => {
   }) => (
     <TouchableOpacity
       onPress={onPress}
-      className={`p-4 rounded-lg mr-3 ${isDarkMode ? 'bg-[#3A3B3C]' : 'bg-gray-50'} hover:opacity-80`}
-      style={{ 
-        minWidth: 130, // Increased minimum width
-        width: Math.max(130, width * 0.25), // Increased percentage and ensure minimum
-      }}
+      className={`p-4 rounded-lg ${isLandscape ? '' : 'mr-3'} ${isDarkMode ? 'bg-[#3A3B3C]' : 'bg-gray-50'} hover:opacity-80`}
+      style={isLandscape
+        ? { flex: 1 }
+        : { minWidth: 130, width: Math.max(130, width * 0.25) }
+      }
     >
       <View className="items-center">
         <View className="w-12 h-12 rounded-full items-center justify-center mb-2" style={{ backgroundColor: color + '20' }}>
@@ -182,6 +197,13 @@ const DBAndroid: React.FC = () => {
     return (
       <View className={`flex-1 justify-center items-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
         <Text>Loading...</Text>
+        <NetworkBanner
+          forceVisible={networkError}
+          onRetry={() => {
+            setNetworkError(false);
+            fetchAnalytics();
+          }}
+        />
       </View>
     );
   }
@@ -193,6 +215,13 @@ const DBAndroid: React.FC = () => {
         <Text className={`mt-4 font-inter_regular ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
           Loading analytics...
         </Text>
+        <NetworkBanner
+          forceVisible={networkError}
+          onRetry={() => {
+            setNetworkError(false);
+            fetchAnalytics();
+          }}
+        />
       </View>
     );
   }
@@ -202,16 +231,53 @@ const DBAndroid: React.FC = () => {
       <View className={`flex-1 justify-center items-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
         <Text className={`font-inter_regular text-red-500 mb-4`}>{error}</Text>
         <TouchableOpacity
-          onPress={() => window.location.reload()}
+          onPress={fetchAnalytics}
           className="bg-blue-500 px-4 py-2 rounded-md"
         >
           <Text className="text-white font-inter_medium">Retry</Text>
         </TouchableOpacity>
+        <NetworkBanner
+          forceVisible={networkError}
+          onRetry={() => {
+            setNetworkError(false);
+            fetchAnalytics();
+          }}
+        />
       </View>
     );
   }
 
   // Update the main return section with Facebook-inspired design
+  const quickStats = [
+    {
+      icon: SubjectsIcon,
+      label: 'Subjects',
+      value: analyticsData?.totalSubjects || 0,
+      color: '#1877F2',
+      onPress: () => router.push('/(teachers)/subjects'),
+    },
+    {
+      icon: StudentsIcon,
+      label: 'Students',
+      value: analyticsData?.totalStudents || 0,
+      color: '#42B883',
+    },
+    {
+      icon: ActivitiesIcon,
+      label: 'Activities',
+      value: analyticsData?.totalActivities || 0,
+      color: '#8B5CF6',
+      onPress: () => router.push('/(teachers)/activity'),
+    },
+    {
+      icon: () => <Image source={require('@/assets/icons/quizzes.png')} style={{ width: 24, height: 24 }} tintColor="#F59E0B" />,
+      label: 'Quizzes',
+      value: analyticsData?.totalQuizzes || 0,
+      color: '#F59E0B',
+      onPress: () => router.push('/(teachers)/quizzes'),
+    },
+  ];
+
   return (
     <View className={`flex-1 ${isDarkMode ? 'bg-[#18191A]' : 'bg-[#F0F2F5]'}`}>
       {/* Facebook-style header */}
@@ -248,47 +314,34 @@ const DBAndroid: React.FC = () => {
         className="flex-1"
         contentContainerStyle={{ paddingBottom: 20 }}
       >
-        {/* Quick Stats Row - Horizontally scrollable */}
-        <View className="py-4">
-          <ScrollView 
-            horizontal 
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: 16 }}
-            className="flex-row"
-          >
-            <QuickStat
-              icon={SubjectsIcon}
-              label="Subjects"
-              value={analyticsData?.totalSubjects || 0}
-              color="#1877F2"
-              onPress={() => router.push('/(teachers)/subjects')}
-            />
-            <QuickStat
-              icon={StudentsIcon}
-              label="Students"
-              value={analyticsData?.totalStudents || 0}
-              color="#42B883"
-            />
-            <QuickStat
-              icon={ActivitiesIcon}
-              label="Activities"
-              value={analyticsData?.totalActivities || 0}
-              color="#8B5CF6"
-              onPress={() => router.push('/(teachers)/activity')}
-            />
-            <QuickStat
-              icon={() => <Image source={require('@/assets/icons/quizzes.png')} style={{ width: 24, height: 24 }} tintColor="#F59E0B" />}
-              label="Quizzes"
-              value={analyticsData?.totalQuizzes || 0}
-              color="#F59E0B"
-              onPress={() => router.push('/(teachers)/quizzes')}
-            />
-          </ScrollView>
+        {/* Quick Stats Row */}
+        <View className="py-4 px-4">
+          {isLandscape ? (
+            <View className="flex-row" style={{ gap: columnGap }}>
+              {quickStats.map((stat) => (
+                <QuickStat key={stat.label} {...stat} />
+              ))}
+            </View>
+          ) : (
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ paddingRight: 16 }}
+              className="flex-row"
+            >
+              {quickStats.map((stat) => (
+                <QuickStat key={stat.label} {...stat} />
+              ))}
+            </ScrollView>
+          )}
         </View>
 
-        <View className="px-4">
+        <View
+          className={`px-4 ${isLandscape ? 'flex-row flex-wrap' : ''}`}
+          style={isLandscape ? { gap: columnGap } : undefined}
+        >
           {/* Action Items Feed Card */}
-          <FeedCard>
+          <FeedCard style={feedCardWidth ? { width: feedCardWidth } : undefined}>
             <View className={`p-4 border-b ${isDarkMode ? 'border-[#3A3B3C]' : 'border-gray-200'}`}>
               <View className="flex-row items-center">
                 <View className="w-8 h-8 rounded-full bg-red-100 dark:bg-red-900 items-center justify-center mr-3">
@@ -333,7 +386,7 @@ const DBAndroid: React.FC = () => {
           </FeedCard>
 
           {/* Subject Overview Feed Card */}
-          <FeedCard>
+          <FeedCard style={feedCardWidth ? { width: feedCardWidth } : undefined}>
             <View className={`p-4 border-b ${isDarkMode ? 'border-[#3A3B3C]' : 'border-gray-200'}`}>
               <View className="flex-row items-center justify-between">
                 <View className="flex-row items-center">
@@ -387,7 +440,7 @@ const DBAndroid: React.FC = () => {
 
           {/* Grade Distribution Feed Card */}
           {analyticsData?.gradeDistribution && (
-            <FeedCard>
+            <FeedCard style={feedCardWidth ? { width: feedCardWidth } : undefined}>
               <View className={`p-4 border-b ${isDarkMode ? 'border-[#3A3B3C]' : 'border-gray-200'}`}>
                 <View className="flex-row items-center">
                   <View className="w-8 h-8 rounded-full bg-green-100 dark:bg-green-900 items-center justify-center mr-3">
@@ -404,33 +457,41 @@ const DBAndroid: React.FC = () => {
                 </View>
               </View>
               
-              <View className="p-4 space-y-4">
-                <GradeDistributionItem
-                  label="Excellent (90-100%)"
-                  value={analyticsData.gradeDistribution.excellent}
-                  color="#42B883"
-                />
-                <GradeDistributionItem
-                  label="Good (80-89%)"
-                  value={analyticsData.gradeDistribution.good}
-                  color="#1877F2"
-                />
-                <GradeDistributionItem
-                  label="Satisfactory (70-79%)"
-                  value={analyticsData.gradeDistribution.satisfactory}
-                  color="#F59E0B"
-                />
-                <GradeDistributionItem
-                  label="Needs Improvement (<70%)"
-                  value={analyticsData.gradeDistribution.needsImprovement}
-                  color="#EF4444"
-                />
+              <View className={`p-4 space-y-4`}>
+                <View>
+                  <GradeDistributionItem
+                    label="Excellent (90-100%)"
+                    value={analyticsData.gradeDistribution.excellent}
+                    color="#42B883"
+                  />
+                </View>
+                <View>
+                  <GradeDistributionItem
+                    label="Good (80-89%)"
+                    value={analyticsData.gradeDistribution.good}
+                    color="#1877F2"
+                  />
+                </View>
+                <View>
+                  <GradeDistributionItem
+                    label="Satisfactory (70-79%)"
+                    value={analyticsData.gradeDistribution.satisfactory}
+                    color="#F59E0B"
+                  />
+                </View>
+                <View>
+                  <GradeDistributionItem
+                    label="Needs Improvement (<70%)"
+                    value={analyticsData.gradeDistribution.needsImprovement}
+                    color="#EF4444"
+                  />
+                </View>
               </View>
             </FeedCard>
           )}
 
           {/* Recent Activity Feed Card */}
-          <FeedCard>
+          <FeedCard style={feedCardWidth ? { width: feedCardWidth } : undefined}>
             <View className={`p-4 border-b ${isDarkMode ? 'border-[#3A3B3C]' : 'border-gray-200'}`}>
               <View className="flex-row items-center">
               <View className="w-8 h-8 rounded-full bg-purple-100 dark:bg-purple-900 items-center justify-center mr-3">
@@ -487,7 +548,16 @@ const DBAndroid: React.FC = () => {
           </FeedCard>
         </View>
       </ScrollView>
-      
+
+      {/* Animated network banner overlay */}
+      <NetworkBanner
+        forceVisible={networkError}
+        onRetry={() => {
+          setNetworkError(false);
+          fetchAnalytics();
+        }}
+      />
+
       <StatusBar style={isDarkMode ? 'light' : 'dark'} />
     </View>
   );

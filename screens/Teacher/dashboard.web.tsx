@@ -2,12 +2,13 @@ import { Text, TouchableOpacity, useColorScheme, View, ScrollView, Platform, Dim
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from "expo-image";
 import { cssInterop } from "nativewind";
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { useDarkMode } from '@/contexts/DarkModeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import apiClient from '@/app/services/apiClient';
+import NetworkBanner from '@/components/NetworkBanner.web';
 
 // Icons for analytics
 import AttachIcon from '@/assets/icons/attach.svg';
@@ -58,6 +59,7 @@ const DBWeb: React.FC = () => {
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [networkError, setNetworkError] = useState(false);
   const [isPortrait, setIsPortrait] = useState(true);
   const { width, height } = Dimensions.get('window');
 
@@ -74,29 +76,36 @@ const DBWeb: React.FC = () => {
     };
   }, []);
 
+  const isNetworkError = (err: any) =>
+    err?.message?.toLowerCase?.().includes('network') ||
+    err?.status === 0 ||
+    !err?.response;
+
   // Fetch analytics data
+  const fetchAnalytics = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      setNetworkError(false);
+
+      // Use the new analytics endpoint
+      const analyticsResponse = await apiClient.get('/analytics/teacher-dashboard');
+      setAnalyticsData(analyticsResponse.data.data);
+
+    } catch (error: any) {
+      console.error('Error fetching analytics:', error);
+      if (isNetworkError(error)) setNetworkError(true);
+      setError('Failed to load analytics data');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    const fetchAnalytics = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-
-        // Use the new analytics endpoint
-        const analyticsResponse = await apiClient.get('/analytics/teacher-dashboard');
-        setAnalyticsData(analyticsResponse.data.data);
-
-      } catch (error: any) {
-        console.error('Error fetching analytics:', error);
-        setError('Failed to load analytics data');
-      } finally {
-        setLoading(false);
-      }
-    };
-
     if (user) {
       fetchAnalytics();
     }
-  }, [user]);
+  }, [user, fetchAnalytics]);
 
   // Move these component functions INSIDE the main component so they can access isDarkMode
   
@@ -195,6 +204,13 @@ const DBWeb: React.FC = () => {
     return (
       <SafeAreaView className={`flex-1 justify-center items-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
         <Text>Loading...</Text>
+        <NetworkBanner
+          forceVisible={networkError}
+          onRetry={() => {
+            setNetworkError(false);
+            fetchAnalytics();
+          }}
+        />
       </SafeAreaView>
     );
   }
@@ -206,6 +222,13 @@ const DBWeb: React.FC = () => {
         <Text className={`mt-4 font-inter_regular ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
           Loading analytics...
         </Text>
+        <NetworkBanner
+          forceVisible={networkError}
+          onRetry={() => {
+            setNetworkError(false);
+            fetchAnalytics();
+          }}
+        />
       </SafeAreaView>
     );
   }
@@ -215,11 +238,18 @@ const DBWeb: React.FC = () => {
       <SafeAreaView className={`flex-1 justify-center items-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
         <Text className={`font-inter_regular text-red-500 mb-4`}>{error}</Text>
         <TouchableOpacity
-          onPress={() => window.location.reload()}
+          onPress={fetchAnalytics}
           className="bg-blue-500 px-4 py-2 rounded-md"
         >
           <Text className="text-white font-inter_medium">Retry</Text>
         </TouchableOpacity>
+        <NetworkBanner
+          forceVisible={networkError}
+          onRetry={() => {
+            setNetworkError(false);
+            fetchAnalytics();
+          }}
+        />
       </SafeAreaView>
     );
   }
@@ -500,7 +530,16 @@ const DBWeb: React.FC = () => {
           </FeedCard>
         </View>
       </ScrollView>
-      
+
+      {/* Animated network banner overlay */}
+      <NetworkBanner
+        forceVisible={networkError}
+        onRetry={() => {
+          setNetworkError(false);
+          fetchAnalytics();
+        }}
+      />
+
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
     </View>
   );

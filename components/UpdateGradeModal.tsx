@@ -25,7 +25,7 @@ interface Grade {
   student: User;
   activity: string;
   subject: string;
-  quarter: string; // Add the required quarter field
+  term: string; // Add the required term field
   score: number;
   bonusPoints?: number;
   gradedBy: User;
@@ -41,7 +41,7 @@ interface Activity {
   visibleDate: string;
   deadline: string;
   points: number | null;
-  quarter: string; // Add the required quarter field
+  term: string; // Add the required term field
   createdBy: User;
   subject: any;
   attachmentPath?: string | null;
@@ -158,10 +158,15 @@ const UpdateGradeModal: React.FC<UpdateGradeModalProps> = ({
         comments: commentsValue || undefined
       });
 
+      const term = ["1", "2", "3"].includes(String(activity?.term || grade.term))
+        ? String(activity?.term || grade.term)
+        : "1";
+
       const response = await apiClient.put(`/grades/${grade._id}`, {
         score: parseInt(scoreValue, 10),
         bonusPoints: bonusValue ? parseInt(bonusValue, 10) : undefined,
-        comments: commentsValue || undefined
+        comments: commentsValue || undefined,
+        term,
       });
 
       console.log('✅ Grade updated successfully:', response.data);
@@ -336,7 +341,7 @@ const UpdateGradeModal: React.FC<UpdateGradeModalProps> = ({
                 Activity: {activity.title}
               </Text>
               <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                Quarter: {activity.quarter}
+                Term: {activity.term === '1' ? '1st Term' : activity.term === '2' ? '2nd Term' : '3rd Term'}
               </Text>
             </View>
 

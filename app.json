@@ -2,8 +2,8 @@
   "expo": {
     "name": "GracEdLMS",
     "slug": "GracEdLMS",
-    "version": "2.0.0",
-    "orientation": "portrait",
+    "version": "3.0.6",
+    "orientation": "default",
     "icon": "./assets/images/app_icon.png",
     "scheme": "gracedlms",
     "userInterfaceStyle": "automatic",
@@ -37,7 +37,7 @@
     "web": {
       "bundler": "metro",
       "output": "static",
-	  "sourceMaps": true,
+      "sourceMaps": true,
       "favicon": "./assets/images/web_icon.png"
     },
     "plugins": [
@@ -78,13 +78,21 @@
         }
       ],
       [
+        "expo-video",
+        {
+          "supportsBackgroundPlayback": true,
+          "supportsPictureInPicture": true
+        }
+      ],
+      [
         "expo-document-picker",
         {
           "iCloudContainerEnvironment": "Production"
         }
       ],
       "expo-web-browser",
-      "expo-font"
+      "expo-font",
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true,

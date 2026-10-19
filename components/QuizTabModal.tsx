@@ -37,6 +37,7 @@ interface Subject {
 
 interface User {
   _id: string;
+  username: string;
   firstName: string;
   lastName: string;
   email: string;
@@ -82,7 +83,7 @@ interface Quiz {
   sectionDescription?: string;
   questions: Question[];
   timeLimit?: number;
-  quarter: string;
+  term: string;
   quizPoints: number;
   status: 'draft' | 'published' | 'archived' | 'graded' | 'closed';
   quizSubmissions: QuizSubmission[];
@@ -116,7 +117,7 @@ const QuizTabModal: React.FC<QuizTabModalProps> = ({
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<string>('');
-  const [selectedQuarter, setSelectedQuarter] = useState<string>('');
+  const [selectedTerm, setSelectedTerm] = useState<string>('');
   
   // Quiz taking states (for students)
   const [takingQuiz, setTakingQuiz] = useState<Quiz | null>(null);
@@ -158,12 +159,11 @@ const QuizTabModal: React.FC<QuizTabModalProps> = ({
     { label: 'Closed', value: 'closed' },
   ], []);
 
-  const quarterFilterOptions: DropdownItem[] = useMemo(() => [
-    { label: 'All Quarters', value: '' },
-    { label: 'First Quarter', value: 'First Quarter' },
-    { label: 'Second Quarter', value: 'Second Quarter' },
-    { label: '3rd Quarter', value: '3rd Quarter' },
-    { label: '4th Quarter', value: '4th Quarter' },
+  const termFilterOptions: DropdownItem[] = useMemo(() => [
+    { label: 'All Terms', value: '' },
+    { label: '1st Term', value: '1' },
+    { label: '2nd Term', value: '2' },
+    { label: '3rd Term', value: '3' },
   ], []);
 
   // Mobile dropdown options
@@ -176,17 +176,16 @@ const QuizTabModal: React.FC<QuizTabModalProps> = ({
     { label: 'Closed', value: 'closed' },
   ], []);
 
-  const quarterFilterMobileOptions: DropdownMobileItem[] = useMemo(() => [
-    { label: 'All Quarters', value: '' },
-    { label: 'First Quarter', value: 'First Quarter' },
-    { label: 'Second Quarter', value: 'Second Quarter' },
-    { label: '3rd Quarter', value: '3rd Quarter' },
-    { label: '4th Quarter', value: '4th Quarter' },
+  const termFilterMobileOptions: DropdownMobileItem[] = useMemo(() => [
+    { label: 'All Terms', value: '' },
+    { label: '1st Term', value: '1' },
+    { label: '2nd Term', value: '2' },
+    { label: '3rd Term', value: '3' },
   ], []);
 
   useEffect(() => {
     fetchQuizzes();
-  }, [subjectId, selectedStatus, selectedQuarter]);
+  }, [subjectId, selectedStatus, selectedTerm]);
 
   useEffect(() => {
     if (timeLeft !== null && timeLeft > 0 && quizStarted && !quizCompleted) {
@@ -211,7 +210,7 @@ const QuizTabModal: React.FC<QuizTabModalProps> = ({
       params.append('subject', subjectId);
       if (isStudent) params.append('status', 'published');
       if (selectedStatus && isTeacher) params.append('status', selectedStatus);
-      if (selectedQuarter) params.append('quarter', selectedQuarter);
+      if (selectedTerm) params.append('term', selectedTerm);
       if (searchQuery) params.append('search', searchQuery);
 
       const response = await apiClient.get(`/quizzes?${params.toString()}`);
@@ -1076,7 +1075,7 @@ const QuizTabModal: React.FC<QuizTabModalProps> = ({
                   marginBottom: 8,
                 }}
               >
-                {item.subject?.subjectName || 'No Subject'} • {item.quarter}
+                {item.subject?.subjectName || 'No Subject'} • {item.term === '1' ? '1st Term' : item.term === '2' ? '2nd Term' : '3rd Term'}
               </Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
                 <View
@@ -1273,22 +1272,22 @@ const QuizTabModal: React.FC<QuizTabModalProps> = ({
               color: isDarkMode ? '#E0E0E0' : '#6B7280',
               marginBottom: 4 
             }}>
-              Quarter
+              Term
             </Text>
             {isWeb ? (
               <Dropdown
-                data={quarterFilterOptions}
-                selectedValue={selectedQuarter}
-                onValueChange={setSelectedQuarter}
-                placeholder="All Quarters"
+                data={termFilterOptions}
+                selectedValue={selectedTerm}
+                onValueChange={setSelectedTerm}
+                placeholder="All Terms"
               />
             ) : (
               <DropdownMobile
-                label="Quarter"
-                selectedValue={selectedQuarter}
-                onValueChange={setSelectedQuarter}
-                items={quarterFilterMobileOptions}
-                placeholder="All Quarters"
+                label="Term"
+                selectedValue={selectedTerm}
+                onValueChange={setSelectedTerm}
+                items={termFilterMobileOptions}
+                placeholder="All Terms"
               />
             )}
           </View>
@@ -2088,7 +2087,7 @@ const QuizTabModal: React.FC<QuizTabModalProps> = ({
                       fontFamily: 'Inter-Regular',
                       color: isDarkMode ? '#9CA3AF' : '#6B7280' 
                     }}>
-                      Quarter: {selectedQuiz.quarter}
+                      Term: {selectedQuiz.term === '1' ? '1st Term' : selectedQuiz.term === '2' ? '2nd Term' : '3rd Term'}
                     </Text>
                     <Text style={{ 
                       fontSize: 14, 

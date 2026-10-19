@@ -1,4 +1,5 @@
-import { View, Text, useColorScheme, TextInput, Alert, ActivityIndicator, Keyboard, TouchableOpacity, Platform } from 'react-native'
+// edit-profile.android.tsx
+import { View, Text, useColorScheme, TextInput, Alert, ActivityIndicator, Keyboard, TouchableOpacity, Platform, ToastAndroid } from 'react-native'
 import React, { useEffect, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useDarkMode } from '@/contexts/DarkModeContext';
@@ -13,6 +14,7 @@ import { User } from '@/app/types';
 import * as ImagePicker from 'expo-image-picker';
 import DropdownMobile, { DropdownMobileItem } from '@/components/DropdownMobile';
 import DownIcon from '@/assets/icons/down.svg';
+import NetworkBanner from '@/components/NetworkBanner.android';
 
 cssInterop(Image, { className: "style" });
 
@@ -26,6 +28,7 @@ const EditProfileAndroid = () => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [networkError, setNetworkError] = useState(false);
 
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
@@ -41,17 +44,24 @@ const EditProfileAndroid = () => {
   const toggleSecure = () => setSecure(prev => !prev);
   const toggleConfirmSecure = () => setConfirmSecure(prev => !prev);
 
+  // Shared network error detection helper
+  const isNetworkError = (err: any) =>
+    err?.message?.toLowerCase?.().includes('network') ||
+    err?.status === 0 ||
+    !err?.response;
+
   // Function to handle image upload to Firebase
   const handleImageUpload = async () => {
     try {
       setIsUploadingImage(true);
+      setNetworkError(false);
 
       // Mobile image picker
       try {
         const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
         
         if (permissionResult.granted === false) {
-          Alert.alert('Permission Required', 'Permission to access camera roll is required!');
+          ToastAndroid.show('Permission to access camera roll is required!', ToastAndroid.SHORT);
           setIsUploadingImage(false);
           return;
         }
@@ -64,7 +74,6 @@ const EditProfileAndroid = () => {
         });
 
         if (result.canceled) {
-          // User cancelled image selection
           setIsUploadingImage(false);
           return;
         }
@@ -72,7 +81,6 @@ const EditProfileAndroid = () => {
         if (result.assets && result.assets[0]) {
           const asset = result.assets[0];
           
-          // Create FormData for mobile
           const formData = new FormData();
           formData.append('profileImage', {
             uri: asset.uri,
@@ -81,7 +89,6 @@ const EditProfileAndroid = () => {
           } as any);
 
           try {
-            // Use the new auth route for user profile picture upload
             const response = await apiClient.post('/auth/upload-profile-picture', formData, {
               headers: {
                 'Content-Type': 'multipart/form-data',
@@ -90,26 +97,26 @@ const EditProfileAndroid = () => {
 
             if (response.data.success) {
               setProfilePicture(response.data.data.url);
-              // Refresh user data to get updated profile picture
               await fetchCurrentUser();
-              Alert.alert('Success', 'Profile picture uploaded and updated successfully!');
+              ToastAndroid.show('Profile picture uploaded successfully.', ToastAndroid.SHORT);
             } else {
-              Alert.alert('Upload Failed', response.data.message);
+              ToastAndroid.show(response.data.message, ToastAndroid.SHORT);
             }
           } catch (error: any) {
             console.error('Upload error:', error);
-            Alert.alert('Upload Failed', error.response?.data?.message || error.message);
+            if (isNetworkError(error)) setNetworkError(true);
+            ToastAndroid.show(error.response?.data?.message || error.message, ToastAndroid.SHORT);
           }
         }
       } catch (error: any) {
         console.error('Image picker error:', error);
-        Alert.alert('Error', error.message);
+        ToastAndroid.show(error.message, ToastAndroid.SHORT);
       } finally {
         setIsUploadingImage(false);
       }
     } catch (error: any) {
       console.error('Image upload error:', error);
-      Alert.alert('Error', error.message);
+      ToastAndroid.show(error.message, ToastAndroid.SHORT);
       setIsUploadingImage(false);
     }
   };
@@ -118,7 +125,6 @@ const EditProfileAndroid = () => {
     if (user) {
       setProfilePicture(user.profilePicture || '');
       setEmail(user.email || '');
-      // Handle phone number - remove +63 prefix if present for display
       const phoneNum = user.phoneNumber || '';
       if (phoneNum.startsWith('+63')) {
         setPhoneNumber(phoneNum.substring(3));
@@ -138,6 +144,35 @@ const EditProfileAndroid = () => {
     Keyboard.dismiss();
     setSubmitting(true);
     setError(null);
+    setNetworkError(false);
+
+    // --- Validation ---
+    // Email required
+    if (!email || email.trim() === '') {
+      Alert.alert('Validation Error', 'Email address is required.');
+      setSubmitting(false);
+      return;
+    }
+    // Gender required
+    if (!sex) {
+      Alert.alert('Validation Error', 'Please select your gender.');
+      setSubmitting(false);
+      return;
+    }
+    // Phone number validation if provided
+    if (phoneNumber && phoneNumber.trim() !== '') {
+      const cleaned = phoneNumber.replace(/[^0-9]/g, '');
+      if (cleaned.length !== 10) {
+        Alert.alert('Validation Error', 'Phone number must be exactly 10 digits (e.g., 9123456789).');
+        setSubmitting(false);
+        return;
+      }
+      if (!cleaned.startsWith('9')) {
+        Alert.alert('Validation Error', 'Phone number must start with 9 (Philippine mobile format).');
+        setSubmitting(false);
+        return;
+      }
+    }
 
     let successMessages: string[] = [];
     let errorMessages: string[] = [];
@@ -146,7 +181,7 @@ const EditProfileAndroid = () => {
       // Update profile details
       const updatedData: { [key: string]: any } = {
         profilePicture,
-        email: email && email.trim() !== '' ? email.trim() : undefined,
+        email: email.trim(),
         phoneNumber: phoneNumber && phoneNumber.trim() !== '' ? `+63${phoneNumber}` : undefined,
         address: address && address.trim() !== '' ? address.trim() : undefined,
         sex,
@@ -157,6 +192,7 @@ const EditProfileAndroid = () => {
       fetchCurrentUser();
     } catch (err: any) {
       console.error('Error updating profile details:', err.response?.data || err.message);
+      if (isNetworkError(err)) setNetworkError(true);
       errorMessages.push(err.response?.data?.message || 'Failed to update profile details.');
     }
 
@@ -171,7 +207,6 @@ const EditProfileAndroid = () => {
       } else {
         // Check if new password is same as current password
         try {
-          // First verify the new password against current password
           const verifyResponse = await apiClient.post('/auth/verify-password', { 
             password: newPassword 
           });
@@ -187,12 +222,11 @@ const EditProfileAndroid = () => {
               setConfirmNewPassword('');
             } catch (err: any) {
               console.error('Error updating password:', err.response?.data || err.message);
+              if (isNetworkError(err)) setNetworkError(true);
               errorMessages.push(err.response?.data?.message || 'Failed to update password.');
             }
           }
         } catch (err: any) {
-          // If verify endpoint fails, it might mean password is different or endpoint error
-          // Proceed with password update
           if (err.response?.status === 401) {
             // Password is different, proceed
             try {
@@ -202,10 +236,12 @@ const EditProfileAndroid = () => {
               setConfirmNewPassword('');
             } catch (updateErr: any) {
               console.error('Error updating password:', updateErr.response?.data || updateErr.message);
+              if (isNetworkError(updateErr)) setNetworkError(true);
               errorMessages.push(updateErr.response?.data?.message || 'Failed to update password.');
             }
           } else {
             console.error('Error verifying password:', err.response?.data || err.message);
+            if (isNetworkError(err)) setNetworkError(true);
             errorMessages.push('Failed to verify password. Please try again.');
           }
         }
@@ -215,12 +251,12 @@ const EditProfileAndroid = () => {
     setSubmitting(false);
 
     if (successMessages.length > 0 && errorMessages.length === 0) {
-      Alert.alert('Success', successMessages.join('\n'));
+      ToastAndroid.show(successMessages.join('\n'), ToastAndroid.SHORT);
       router.replace('/(teachers)/profile');
     } else if (errorMessages.length > 0) {
-      Alert.alert('Error', errorMessages.join('\n'));
+      ToastAndroid.show(errorMessages.join('\n'), ToastAndroid.SHORT);
     } else {
-      Alert.alert('No Changes', 'No updates were submitted.');
+      ToastAndroid.show('No updates were submitted.', ToastAndroid.SHORT);
     }
   };
 
@@ -242,6 +278,10 @@ const EditProfileAndroid = () => {
             Loading Profile data...
           </Text>
         </View>
+        <NetworkBanner
+          forceVisible={networkError}
+          onDismiss={() => setNetworkError(false)}
+        />
         <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       </SafeAreaView>
     );
@@ -305,6 +345,10 @@ const EditProfileAndroid = () => {
             </TouchableOpacity>
           </View>
         </View>
+        <NetworkBanner
+          forceVisible={networkError}
+          onDismiss={() => setNetworkError(false)}
+        />
         <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       </SafeAreaView>
     );
@@ -388,7 +432,7 @@ const EditProfileAndroid = () => {
           shadowRadius: 8,
           elevation: 4,
         }}>
-          {/* Profile Picture Section */}
+          {/* Profile Picture Section - always stacked on top */}
           <View style={{ alignItems: 'center', marginBottom: 24 }}>
             <View style={{
               width: 120,
@@ -489,7 +533,7 @@ const EditProfileAndroid = () => {
 
           {/* Form Fields */}
           <View style={{ gap: 16 }}>
-            {/* Email */}
+            {/* Email - required */}
             <View>
               <Text style={{
                 fontSize: 14,
@@ -497,7 +541,7 @@ const EditProfileAndroid = () => {
                 color: isDarkMode ? '#E4E6EA' : '#1C1E21',
                 marginBottom: 8,
               }}>
-                Email Address
+                Email Address <Text style={{ color: '#EF4444' }}>*</Text>
               </Text>
               <TextInput
                 style={{
@@ -520,7 +564,7 @@ const EditProfileAndroid = () => {
               />
             </View>
 
-            {/* Sex */}
+            {/* Sex - required */}
             <View>
               <Text style={{
                 fontSize: 14,
@@ -528,7 +572,7 @@ const EditProfileAndroid = () => {
                 color: isDarkMode ? '#E4E6EA' : '#1C1E21',
                 marginBottom: 8,
               }}>
-                Gender
+                Gender <Text style={{ color: '#EF4444' }}>*</Text>
               </Text>
               <DropdownMobile
                 label="Gender"
@@ -639,7 +683,7 @@ const EditProfileAndroid = () => {
                 color: isDarkMode ? '#E4E6EA' : '#1C1E21',
                 marginBottom: 8,
               }}>
-                Phone Number
+                Phone Number (optional)
               </Text>
               <View style={{
                 flexDirection: 'row',
@@ -693,7 +737,7 @@ const EditProfileAndroid = () => {
                 color: isDarkMode ? '#E4E6EA' : '#1C1E21',
                 marginBottom: 8,
               }}>
-                Address
+                Address (optional)
               </Text>
               <TextInput
                 style={{
@@ -742,12 +786,12 @@ const EditProfileAndroid = () => {
                 flex: 1,
                 lineHeight: 20,
               }}>
-                Leave password fields empty to keep current password. Email, phone number, and address are optional fields.
+                Leave password fields empty to keep current password. Email and Gender are required.
               </Text>
             </View>
           </View>
 
-          {/* Action Buttons */}
+          {/* Action Buttons - always stacked vertically */}
           <View style={{ gap: 12 }}>
             <TouchableOpacity
               onPress={handleEditProfile}
@@ -802,6 +846,13 @@ const EditProfileAndroid = () => {
           </View>
         </View>
       </ScrollView>
+
+      {/* Animated network banner overlay */}
+      <NetworkBanner
+        forceVisible={networkError}
+        onDismiss={() => setNetworkError(false)}
+      />
+
       <StatusBar style={isDarkMode ? 'light' : 'dark'} />
     </SafeAreaView>
   )

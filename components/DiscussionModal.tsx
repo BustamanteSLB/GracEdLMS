@@ -7,6 +7,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  ToastAndroid,
 } from 'react-native';
 import apiClient from '@/app/services/apiClient';
 import { useAuth } from '@/contexts/AuthContext';
@@ -149,7 +150,7 @@ const DiscussionModal: React.FC<DiscussionModalProps> = ({
       if (Platform.OS === 'web') {
         window.alert(`Error: ${message}`);
       } else {
-        Alert.alert('Error', message);
+        ToastAndroid.show(message, ToastAndroid.SHORT);
       }
     } finally {
       setIsLoading(false);
@@ -219,23 +220,16 @@ const DiscussionModal: React.FC<DiscussionModalProps> = ({
     setAddEditModalVisible(true);
   };
 
-  // Helper function to check if current user can edit/delete a discussion
+  // Update canEditDiscussion - only author
   const canEditDiscussion = (discussion: Discussion): boolean => {
     if (!user || !isAuthenticated) return false;
-    // User is the author
-    if (discussion.author._id === user._id) return true;
-    // Admins can edit any discussion
-    if (user.role === 'Admin') return true;
-    return false;
+    return discussion.author._id === user._id;
   };
 
+  // Update canDeleteDiscussion - only author
   const canDeleteDiscussion = (discussion: Discussion): boolean => {
     if (!user || !isAuthenticated) return false;
-    // User is the author
-    if (discussion.author._id === user._id) return true;
-    // Admins can delete any discussion
-    if (user.role === 'Admin') return true;
-    return false;
+    return discussion.author._id === user._id;
   };
 
   const openEditModal = (discussion: Discussion) => {
@@ -308,7 +302,7 @@ const DiscussionModal: React.FC<DiscussionModalProps> = ({
       if (Platform.OS === 'web') {
         window.alert(`Error: ${message}`);
       } else {
-        Alert.alert('Error', message);
+        ToastAndroid.show(message, ToastAndroid.SHORT);
       }
     }
   };
@@ -357,14 +351,14 @@ const DiscussionModal: React.FC<DiscussionModalProps> = ({
         if (Platform.OS === 'web') {
           window.alert(`Success: ${message}`);
         } else {
-          Alert.alert('Success', message);
+          ToastAndroid.show(message, ToastAndroid.SHORT);
         }
       } catch {
         const message = 'Failed to delete discussion.';
         if (Platform.OS === 'web') {
           window.alert(`Error: ${message}`);
         } else {
-          Alert.alert('Error', message);
+          ToastAndroid.show(message, ToastAndroid.SHORT);
         }
       }
     }

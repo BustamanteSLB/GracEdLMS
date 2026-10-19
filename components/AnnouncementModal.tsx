@@ -9,6 +9,7 @@ import {
   View,
   ScrollView,
   Platform,
+  ToastAndroid,
 } from 'react-native';
 import apiClient from '@/app/services/apiClient';
 import { useAuth } from '@/contexts/AuthContext';
@@ -112,7 +113,7 @@ const AnnouncementModal: React.FC<AnnouncementModalProps> = ({
         window.alert('Error: Failed to load announcements.');
       }
       if (Platform.OS === 'android' || Platform.OS === 'ios') {
-        Alert.alert('Error', 'Failed to load announcements.');
+        ToastAndroid.show('Failed to load announcements.', ToastAndroid.SHORT);
       }
     } finally {
       setIsLoading(false);
@@ -169,7 +170,7 @@ const AnnouncementModal: React.FC<AnnouncementModalProps> = ({
         window.alert('Error: Failed to add announcement.');
       }
       if (Platform.OS === 'android' || Platform.OS === 'ios'){
-        Alert.alert('Error', 'Failed to add announcement.');
+        ToastAndroid.show('Failed to add announcement.', ToastAndroid.SHORT); 
       }
     }
   };
@@ -277,7 +278,7 @@ const AnnouncementModal: React.FC<AnnouncementModalProps> = ({
       if (Platform.OS === 'web') {
         window.alert(`Success: ${message}`);
       } else {
-        Alert.alert('Success', message);
+        ToastAndroid.show(message, ToastAndroid.SHORT);
       }
     } catch {
       const message = 'Failed to delete announcement.';
@@ -285,7 +286,7 @@ const AnnouncementModal: React.FC<AnnouncementModalProps> = ({
         window.alert(`Error: ${message}`);
       }
       if (Platform.OS === 'android' || Platform.OS === 'ios'){
-        Alert.alert('Error', message);
+        ToastAndroid.show(message, ToastAndroid.SHORT);
       }
     }
   };
@@ -578,7 +579,7 @@ const AnnouncementModal: React.FC<AnnouncementModalProps> = ({
                 marginBottom: 4,
               }}
             >
-              Title:
+              Title <Text className="text-red-500">*</Text>
             </Text>
             <TextInput
               placeholder="Enter title..."
@@ -601,7 +602,7 @@ const AnnouncementModal: React.FC<AnnouncementModalProps> = ({
                 marginBottom: 4,
               }}
             >
-              Body:
+              Body <Text className="text-red-500">*</Text>
             </Text>
             <TextInput
               placeholder="Enter announcement body..."

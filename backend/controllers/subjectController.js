@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const Subject = require("../models/Subject");
+const { SubjectSettings } = require("../models/Subject");
 const Teacher = require("../models/Teacher");
 const Student = require("../models/Student");
 const User = require("../models/User");
@@ -56,17 +57,120 @@ async function findUserByIdentifier(identifier, role, requireActive = true) {
   return userDoc;
 }
 
+const getActiveSchoolYearSetting = async () => {
+  const settings = await SubjectSettings.findOne();
+  return settings?.activeSchoolYear || null;
+};
+
+const validateSchoolYearForRole = async (
+  schoolYear,
+  userRole,
+  existingSchoolYear = null,
+) => {
+  const activeSchoolYear = await getActiveSchoolYearSetting();
+
+  if (userRole === "Teacher" && activeSchoolYear && schoolYear !== activeSchoolYear) {
+    if (existingSchoolYear && schoolYear === existingSchoolYear) {
+      return null;
+    }
+
+    return `Only school year "${activeSchoolYear}" is currently allowed for new subjects.`;
+  }
+
+  return null;
+};
+
+const normalizeClassCode = (classCode) =>
+  classCode ? classCode.trim().toUpperCase() : "";
+
+const validateClassCode = (classCode) => {
+  const normalized = normalizeClassCode(classCode);
+
+  if (!normalized) {
+    return "Class code is required";
+  }
+
+  if (normalized.length > 12) {
+    return "Class code must be at most 12 characters";
+  }
+
+  if (!/^[A-Z0-9]+$/.test(normalized)) {
+    return "Class code may only contain letters and numbers";
+  }
+
+  return null;
+};
+
+const ensureUniqueClassCode = async (classCode, excludeSubjectId = null) => {
+  const normalized = normalizeClassCode(classCode);
+  const query = {
+    classCode: normalized,
+    isArchived: false,
+  };
+
+  if (excludeSubjectId) {
+    query._id = { $ne: excludeSubjectId };
+  }
+
+  const existing = await Subject.findOne(query);
+  if (existing) {
+    return "Class code already exists. Please use a different code.";
+  }
+
+  return null;
+};
+
+// @desc    Get active school year for subjects
+// @route   GET /api/v1/subjects/active-school-year
+// @access  Private
+exports.getActiveSchoolYear = asyncHandler(async (req, res) => {
+  const activeSchoolYear = await getActiveSchoolYearSetting();
+
+  res.status(200).json({
+    success: true,
+    data: { activeSchoolYear },
+  });
+});
+
+// @desc    Set active school year for subjects
+// @route   PUT /api/v1/subjects/active-school-year
+// @access  Private/Admin
+exports.setActiveSchoolYear = asyncHandler(async (req, res, next) => {
+  const { schoolYear } = req.body;
+
+  if (!schoolYear || !schoolYear.trim()) {
+    return next(new ErrorResponse("School year is required", 400));
+  }
+
+  let settings = await SubjectSettings.findOne();
+  if (!settings) {
+    settings = new SubjectSettings();
+  }
+
+  settings.activeSchoolYear = schoolYear.trim();
+  settings.setBy = req.user.id;
+  settings.setAt = new Date();
+  await settings.save();
+
+  res.status(200).json({
+    success: true,
+    message: `Active school year set to ${settings.activeSchoolYear}`,
+    data: { activeSchoolYear: settings.activeSchoolYear },
+  });
+});
+
 // @desc    Create a new subject
 // @route   POST /api/v1/subjects
 // @access  Private/Admin, Teacher
 exports.createSubject = asyncHandler(async (req, res, next) => {
   const {
     subjectName,
+    classCode,
     description,
     gradeLevel,
     section: sectionName,
     schoolYear,
-    teachers, // Array of teacher assignments with quarters
+    teachers, // Array of teacher assignments with terms
   } = req.body;
 
   if (!subjectName || !schoolYear) {
@@ -75,14 +179,34 @@ exports.createSubject = asyncHandler(async (req, res, next) => {
     );
   }
 
+  const classCodeError = validateClassCode(classCode);
+  if (classCodeError) {
+    return next(new ErrorResponse(classCodeError, 400));
+  }
+
+  const normalizedClassCode = normalizeClassCode(classCode);
+  const duplicateClassCodeError = await ensureUniqueClassCode(normalizedClassCode);
+  if (duplicateClassCodeError) {
+    return next(new ErrorResponse(duplicateClassCodeError, 400));
+  }
+
   if (!teachers || !Array.isArray(teachers) || teachers.length === 0) {
     return next(
       new ErrorResponse("At least one teacher assignment is required", 400),
     );
   }
 
+  const schoolYearError = await validateSchoolYearForRole(
+    schoolYear,
+    req.user.role,
+  );
+  if (schoolYearError) {
+    return next(new ErrorResponse(schoolYearError, 400));
+  }
+
   let subjectData = {
     subjectName,
+    classCode: normalizedClassCode,
     description,
     gradeLevel,
     section: sectionName,
@@ -95,7 +219,7 @@ exports.createSubject = asyncHandler(async (req, res, next) => {
 
   // Process teacher assignments
   for (const teacherAssignment of teachers) {
-    const { teacherId, quarters, isAssignedToAllQuarters } = teacherAssignment;
+    const { teacherId, terms, isAssignedToAllTerms } = teacherAssignment;
 
     if (!teacherId) {
       return next(new ErrorResponse("Teacher ID is required", 400));
@@ -111,24 +235,23 @@ exports.createSubject = asyncHandler(async (req, res, next) => {
       );
     }
 
-    // Validate quarters
-    if (isAssignedToAllQuarters) {
+    // Validate terms
+    if (isAssignedToAllTerms) {
       subjectData.teachers.push({
         teacher: teacher._id,
-        quarters: {
-          firstQuarter: true,
-          secondQuarter: true,
-          thirdQuarter: true,
-          fourthQuarter: true,
+        terms: {
+          1: true,
+          2: true,
+          3: true,
         },
-        isAssignedToAllQuarters: true,
+        isAssignedToAllTerms: true,
       });
     } else {
-      const hasAnyQuarter = Object.values(quarters || {}).some((q) => q);
-      if (!hasAnyQuarter) {
+      const hasAnyTerm = Object.values(terms || {}).some((t) => t);
+      if (!hasAnyTerm) {
         return next(
           new ErrorResponse(
-            `Teacher ${teacher.firstName} ${teacher.lastName} must be assigned to at least one quarter`,
+            `Teacher ${teacher.firstName} ${teacher.lastName} must be assigned to at least one term`,
             400,
           ),
         );
@@ -136,13 +259,12 @@ exports.createSubject = asyncHandler(async (req, res, next) => {
 
       subjectData.teachers.push({
         teacher: teacher._id,
-        quarters: quarters || {
-          firstQuarter: false,
-          secondQuarter: false,
-          thirdQuarter: false,
-          fourthQuarter: false,
+        terms: terms || {
+          1: false,
+          2: false,
+          3: false,
         },
-        isAssignedToAllQuarters: false,
+        isAssignedToAllTerms: false,
       });
     }
   }
@@ -212,19 +334,47 @@ exports.updateSubject = asyncHandler(async (req, res, next) => {
 
   const {
     subjectName,
+    classCode,
     description,
     gradeLevel,
     section,
     schoolYear,
-    teachers, // Array of teacher assignments with quarters
+    teachers, // Array of teacher assignments with terms
   } = req.body;
 
   const fieldsToUpdate = {};
   if (subjectName !== undefined) fieldsToUpdate.subjectName = subjectName;
+  if (classCode !== undefined) {
+    const classCodeError = validateClassCode(classCode);
+    if (classCodeError) {
+      return next(new ErrorResponse(classCodeError, 400));
+    }
+
+    const normalizedClassCode = normalizeClassCode(classCode);
+    const duplicateClassCodeError = await ensureUniqueClassCode(
+      normalizedClassCode,
+      subject._id,
+    );
+    if (duplicateClassCodeError) {
+      return next(new ErrorResponse(duplicateClassCodeError, 400));
+    }
+
+    fieldsToUpdate.classCode = normalizedClassCode;
+  }
   if (description !== undefined) fieldsToUpdate.description = description;
   if (gradeLevel !== undefined) fieldsToUpdate.gradeLevel = gradeLevel;
   if (section !== undefined) fieldsToUpdate.section = section;
-  if (schoolYear !== undefined) fieldsToUpdate.schoolYear = schoolYear;
+  if (schoolYear !== undefined) {
+    const schoolYearError = await validateSchoolYearForRole(
+      schoolYear,
+      req.user.role,
+      subject.schoolYear,
+    );
+    if (schoolYearError) {
+      return next(new ErrorResponse(schoolYearError, 400));
+    }
+    fieldsToUpdate.schoolYear = schoolYear;
+  }
   if (req.body.subjectImage !== undefined) {
     fieldsToUpdate.subjectImage = req.body.subjectImage;
   }
@@ -242,7 +392,7 @@ exports.updateSubject = asyncHandler(async (req, res, next) => {
     const updatedTeachers = [];
 
     for (const teacherAssignment of teachers) {
-      const { teacherId, quarters, isAssignedToAllQuarters } =
+      const { teacherId, terms, isAssignedToAllTerms } =
         teacherAssignment;
 
       if (!teacherId) {
@@ -261,24 +411,23 @@ exports.updateSubject = asyncHandler(async (req, res, next) => {
 
       newTeacherIds.push(teacher._id.toString());
 
-      // Validate quarters
-      if (isAssignedToAllQuarters) {
+      // Validate terms
+      if (isAssignedToAllTerms) {
         updatedTeachers.push({
           teacher: teacher._id,
-          quarters: {
-            firstQuarter: true,
-            secondQuarter: true,
-            thirdQuarter: true,
-            fourthQuarter: true,
+          terms: {
+            1: true,
+            2: true,
+            3: true,
           },
-          isAssignedToAllQuarters: true,
+          isAssignedToAllTerms: true,
         });
       } else {
-        const hasAnyQuarter = Object.values(quarters || {}).some((q) => q);
-        if (!hasAnyQuarter) {
+        const hasAnyTerm = Object.values(terms || {}).some((t) => t);
+        if (!hasAnyTerm) {
           return next(
             new ErrorResponse(
-              `Teacher ${teacher.firstName} ${teacher.lastName} must be assigned to at least one quarter`,
+              `Teacher ${teacher.firstName} ${teacher.lastName} must be assigned to at least one term`,
               400,
             ),
           );
@@ -286,13 +435,12 @@ exports.updateSubject = asyncHandler(async (req, res, next) => {
 
         updatedTeachers.push({
           teacher: teacher._id,
-          quarters: quarters || {
-            firstQuarter: false,
-            secondQuarter: false,
-            thirdQuarter: false,
-            fourthQuarter: false,
+          terms: terms || {
+            1: false,
+            2: false,
+            3: false,
           },
-          isAssignedToAllQuarters: false,
+          isAssignedToAllTerms: false,
         });
       }
     }
@@ -505,7 +653,7 @@ exports.deleteSubject = asyncHandler(async (req, res, next) => {
 
 // @desc    Restore archived subject
 // @route   PUT /api/v1/subjects/:id/restore
-// @access  Private/Admin
+// @access  Private/Admin or Private/Teacher (assigned to the subject)
 exports.restoreSubject = asyncHandler(async (req, res, next) => {
   const subject = await Subject.findById(req.params.id);
 
@@ -517,6 +665,21 @@ exports.restoreSubject = asyncHandler(async (req, res, next) => {
 
   if (!subject.isArchived) {
     return next(new ErrorResponse("Subject is not archived", 400));
+  }
+
+  // Teachers may only restore subjects they are assigned to
+  if (req.user.role === "Teacher") {
+    const isAssignedTeacher = subject.teachers.some(
+      (ta) => ta.teacher && ta.teacher.toString() === req.user.id.toString(),
+    );
+    if (!isAssignedTeacher) {
+      return next(
+        new ErrorResponse(
+          "You are not authorized to restore this subject. You can only restore subjects assigned to you.",
+          403,
+        ),
+      );
+    }
   }
 
   // Restore the subject
@@ -547,7 +710,7 @@ exports.restoreSubject = asyncHandler(async (req, res, next) => {
 
 // @desc    Permanently delete subject
 // @route   DELETE /api/v1/subjects/:id/permanent
-// @access  Private/Admin
+// @access  Private/Admin or Private/Teacher (assigned to the subject)
 exports.permanentDeleteSubject = asyncHandler(async (req, res, next) => {
   const subject = await Subject.findById(req.params.id);
 
@@ -564,6 +727,21 @@ exports.permanentDeleteSubject = asyncHandler(async (req, res, next) => {
         400,
       ),
     );
+  }
+
+  // Teachers may only permanently delete subjects they are assigned to
+  if (req.user.role === "Teacher") {
+    const isAssignedTeacher = subject.teachers.some(
+      (ta) => ta.teacher && ta.teacher.toString() === req.user.id.toString(),
+    );
+    if (!isAssignedTeacher) {
+      return next(
+        new ErrorResponse(
+          "You are not authorized to permanently delete this subject. You can only delete subjects assigned to you.",
+          403,
+        ),
+      );
+    }
   }
 
   // Unassign from all teachers' assignedSubjects

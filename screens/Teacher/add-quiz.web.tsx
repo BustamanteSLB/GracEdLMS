@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,9 @@ import { useDarkMode } from '@/contexts/DarkModeContext';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import AddFile from '@/assets/icons/add_file.svg';
+import TeacherQuizStudentPreview, {
+  StudentPreviewQuestion,
+} from '@/components/TeacherQuizStudentPreview';
 
 cssInterop(Image, { className: "style" });
 
@@ -67,14 +70,16 @@ const AddQuizWeb = () => {
     sectionHeader: '',
     sectionDescription: '',
     subject: '',
-    quarter: 'First Quarter',
+    term: '1',
     timeLimit: '',
+    shuffleQuestions: false,
   });
 
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
+  const [studentPreviewMode, setStudentPreviewMode] = useState(false);
   const [selectedImages, setSelectedImages] = useState<{[key: number]: (File | DocumentPicker.DocumentPickerAsset)[]}>({});
 
   const [aiGenerationMode, setAiGenerationMode] = useState(false);
@@ -86,7 +91,7 @@ const AddQuizWeb = () => {
   });
   const [generatingAI, setGeneratingAI] = useState(false);
 
-  const quarters = ['First Quarter', 'Second Quarter', '3rd Quarter', '4th Quarter'];
+  const terms = ['1', '2', '3'];
 
   // Fetch subjects
   useEffect(() => {
@@ -292,6 +297,31 @@ const AddQuizWeb = () => {
     return null;
   };
 
+  const studentPreviewQuestions = useMemo<StudentPreviewQuestion[]>(
+    () =>
+      questions.map((question, index) => ({
+        text: question.text,
+        type: question.type,
+        options: question.options.map((option) => ({ text: option.text })),
+        images: (selectedImages[index] || [])
+          .map((_, imgIndex) => getImageUrl(index, imgIndex))
+          .filter((url): url is string => !!url),
+        itemPoints: question.itemPoints,
+        caseSensitive: question.caseSensitive,
+      })),
+    [questions, selectedImages],
+  );
+
+  const toggleStudentPreviewMode = () => {
+    if (!studentPreviewMode && questions.length === 0) {
+      window.alert('Add at least one question to preview as a student.');
+      return;
+    }
+    setStudentPreviewMode(!studentPreviewMode);
+    setPreviewMode(false);
+    setAiGenerationMode(false);
+  };
+
   // Remove image
   const removeImage = (questionIndex: number, imageIndex: number) => {
     const images = selectedImages[questionIndex] || [];
@@ -387,11 +417,13 @@ const AddQuizWeb = () => {
       formDataToSend.append('sectionHeader', formData.sectionHeader.trim());
       formDataToSend.append('sectionDescription', formData.sectionDescription.trim());
       formDataToSend.append('subject', formData.subject);
-      formDataToSend.append('quarter', formData.quarter);
+      formDataToSend.append('term', formData.term);
       
       if (formData.timeLimit && formData.timeLimit.trim()) {
         formDataToSend.append('timeLimit', formData.timeLimit.trim());
       }
+
+      formDataToSend.append('shuffleQuestions', String(formData.shuffleQuestions));
 
       formDataToSend.append('questions', JSON.stringify(cleanedQuestions));
 
@@ -486,7 +518,7 @@ const AddQuizWeb = () => {
       // Add generation parameters
       formDataToSend.append('subject', formData.subject);
       formDataToSend.append('title', formData.title || `AI Generated Quiz`);
-      formDataToSend.append('quarter', formData.quarter);
+      formDataToSend.append('term', formData.term);
       formDataToSend.append('numberOfQuestions', aiGenerationData.numberOfQuestions);
       formDataToSend.append('questionTypes', JSON.stringify(aiGenerationData.questionTypes));
       formDataToSend.append('difficulty', aiGenerationData.difficulty);
@@ -546,7 +578,7 @@ const AddQuizWeb = () => {
         {/* File Upload */}
         <View style={{ marginBottom: 16 }}>
           <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
-            Upload Document *
+            Upload Document <Text className="text-red-500">*</Text>
           </Text>
           <TouchableOpacity
             onPress={handleAIFilePick}
@@ -616,7 +648,7 @@ const AddQuizWeb = () => {
         {/* Number of Questions */}
         <View style={{ marginBottom: 16 }}>
           <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
-            Number of Questions
+            Number of Questions <Text className="text-red-500">*</Text>
           </Text>
           <TextInput
             value={aiGenerationData.numberOfQuestions}
@@ -1076,7 +1108,7 @@ const AddQuizWeb = () => {
 
       <View style={{ marginBottom: 16 }}>
         <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
-          Question Text *
+          Question Text <Text className="text-red-500">*</Text>
         </Text>
         <TextInput
           value={question.text}
@@ -1190,7 +1222,7 @@ const AddQuizWeb = () => {
         )}
         <View style={{ flexDirection: 'row', gap: 16 }}>
           <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-[#6B7280]'}`}>
-            Quarter: {formData.quarter}
+            Term: {`${formData.term === '1' ? '1st Term' : formData.term === '2' ? '2nd Term':  '3rd Term'}`}
           </Text>
           <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-[#6B7280]'}`}>
             Points: {calculateTotalPoints()}
@@ -1198,6 +1230,11 @@ const AddQuizWeb = () => {
           {formData.timeLimit && (
             <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-[#6B7280]'}`}>
               Time: {formData.timeLimit} minutes
+            </Text>
+          )}
+          {formData.shuffleQuestions && (
+            <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-[#6B7280]'}`}>
+              Shuffled questions
             </Text>
           )}
         </View>
@@ -1407,6 +1444,7 @@ const AddQuizWeb = () => {
               onPress={() => {
                 setAiGenerationMode(!aiGenerationMode);
                 setPreviewMode(false);
+                setStudentPreviewMode(false);
               }}
               style={{
                 backgroundColor: aiGenerationMode ? '#10B981' : '#6B7280',
@@ -1424,6 +1462,7 @@ const AddQuizWeb = () => {
               onPress={() => {
                 setPreviewMode(!previewMode);
                 setAiGenerationMode(false);
+                setStudentPreviewMode(false);
               }}
               style={{
                 backgroundColor: previewMode ? '#6B7280' : '#10B981',
@@ -1436,12 +1475,40 @@ const AddQuizWeb = () => {
                 {previewMode ? 'Edit' : 'Preview'}
               </Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              onPress={toggleStudentPreviewMode}
+              style={{
+                backgroundColor: studentPreviewMode ? '#6B7280' : '#3B82F6',
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                borderRadius: 6,
+              }}
+            >
+              <Text className='font-inter_medium text-sm text-white'>
+                {studentPreviewMode ? 'Edit' : 'View as Student'}
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       </View>
 
       {/* Conditional rendering based on mode */}
-      {aiGenerationMode ? renderAIGeneration() : 
+      {aiGenerationMode ? renderAIGeneration() :
+       studentPreviewMode ? (
+        <TeacherQuizStudentPreview
+          key={`student-preview-${questions.length}-${formData.title}`}
+          title={formData.title}
+          sectionHeader={formData.sectionHeader}
+          sectionDescription={formData.sectionDescription}
+          term={formData.term}
+          totalPoints={calculateTotalPoints()}
+          timeLimit={formData.timeLimit}
+          shuffleQuestions={formData.shuffleQuestions}
+          questions={studentPreviewQuestions}
+          isDarkMode={isDarkMode}
+          onExit={() => setStudentPreviewMode(false)}
+        />
+       ) :
        previewMode ? renderPreview() : (
         <ScrollView style={{ flex: 1, padding: 20 }}>
           {/* Basic Quiz Information */}
@@ -1459,7 +1526,7 @@ const AddQuizWeb = () => {
 
             <View style={{ marginBottom: 16 }}>
               <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
-                Quiz Title *
+                Quiz Title <Text className="text-red-500">*</Text>
               </Text>
               <TextInput
                 value={formData.title}
@@ -1520,7 +1587,7 @@ const AddQuizWeb = () => {
             <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
               <View style={{ flex: 1 }}>
                 <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
-                  Subject *
+                  Subject <Text className="text-red-500">*</Text>
                 </Text>
                 <Dropdown
                   data={[
@@ -1537,22 +1604,23 @@ const AddQuizWeb = () => {
               </View>
               <View style={{ flex: 1 }}>
                 <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
-                  Quarter *
+                  Term <Text className="text-red-500">*</Text>
                 </Text>
                 <RadioButtonGroup
-                  value={formData.quarter}
-                  onChange={(value) => setFormData({ ...formData, quarter: value })}
+                  value={formData.term}
+                  onChange={(value) => setFormData({ ...formData, term: value })}
                   activeColor="#3B82F6"
                 >
-                  {quarters.map(quarter => (
+                  {terms.map(term => (
                     <RadioButton
-                      key={quarter}
-                      value={quarter}
-                      label={quarter}
+                      key={term}
+                      value={term}
+                      label={`${term === '1' ? '1st Term' : term === '2'  ? '2nd Term': '3rd Term'}`}
                       labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontSize: 12, fontFamily: 'Inter-Regular' }}
                       width={24}
                       height={24}
                     />
+                    
                   ))}
                 </RadioButtonGroup>
               </View>
@@ -1576,6 +1644,23 @@ const AddQuizWeb = () => {
                 }}
                 placeholderTextColor={isDarkMode ? '#9ca3af' : '#6B7280'}
               />
+            </View>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+              <Checkbox
+                value={formData.shuffleQuestions}
+                onValueChange={(value) => setFormData({ ...formData, shuffleQuestions: value })}
+                color={formData.shuffleQuestions ? '#3B82F6' : undefined}
+                style={{ marginRight: 8 }}
+              />
+              <View style={{ flex: 1 }}>
+                <Text className={`font-inter_semibold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
+                  Shuffle questions
+                </Text>
+                <Text className={`font-inter_regular text-xs mt-1 ${isDarkMode ? 'text-gray-400' : 'text-[#6B7280]'}`}>
+                  Randomize question order for each student when they take the quiz
+                </Text>
+              </View>
             </View>
 
             {questions.length > 0 && (

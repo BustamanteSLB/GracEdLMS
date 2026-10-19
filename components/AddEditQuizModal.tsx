@@ -59,7 +59,7 @@ interface Quiz {
   sectionDescription?: string;
   questions: Question[];
   timeLimit?: number;
-  quarter: string;
+  term: string;
   quizPoints: number;
   status: 'draft' | 'published' | 'archived' | 'graded' | 'closed';
 }
@@ -87,7 +87,7 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
     sectionHeader: '',
     sectionDescription: '',
     subject: '',
-    quarter: 'First Quarter',
+    term: '1',
     timeLimit: '',
   });
 
@@ -101,7 +101,7 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
   const [imagePreviewModal, setImagePreviewModal] = useState(false);
   const [selectedPreviewImage, setSelectedPreviewImage] = useState<string | null>(null);
 
-  const quarters = ['First Quarter', 'Second Quarter', '3rd Quarter', '4th Quarter'];
+  const terms = ['1', '2', '3'];
 
   // AI Generation state
   const [aiGenerationMode, setAiGenerationMode] = useState(false);
@@ -124,7 +124,7 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
         sectionHeader: quiz.sectionHeader || '',
         sectionDescription: quiz.sectionDescription || '',
         subject: quiz.subject._id,
-        quarter: quiz.quarter,
+        term: quiz.term,
         timeLimit: quiz.timeLimit?.toString() || '',
       });
       setQuestions(quiz.questions);
@@ -144,7 +144,7 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
         sectionHeader: '',
         sectionDescription: '',
         subject: '',
-        quarter: 'First Quarter',
+        term: '1',
         timeLimit: '',
       });
       setQuestions([]);
@@ -496,7 +496,7 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
       formDataToSend.append('sectionHeader', formData.sectionHeader.trim());
       formDataToSend.append('sectionDescription', formData.sectionDescription.trim());
       formDataToSend.append('subject', formData.subject);
-      formDataToSend.append('quarter', formData.quarter);
+      formDataToSend.append('term', formData.term);
       
       if (formData.timeLimit && formData.timeLimit.trim()) {
         formDataToSend.append('timeLimit', formData.timeLimit.trim());
@@ -634,7 +634,7 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
       // Add generation parameters
       formDataToSend.append('subject', formData.subject);
       formDataToSend.append('title', formData.title || `AI Generated Quiz`);
-      formDataToSend.append('quarter', formData.quarter);
+      formDataToSend.append('term', formData.term);
       formDataToSend.append('numberOfQuestions', aiGenerationData.numberOfQuestions);
       formDataToSend.append('questionTypes', JSON.stringify(aiGenerationData.questionTypes));
       formDataToSend.append('difficulty', aiGenerationData.difficulty);
@@ -1138,7 +1138,7 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
         )}
         <View style={{ flexDirection: 'row', gap: 16 }}>
           <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-[#6B7280]'}`}>
-            Quarter: {formData.quarter}
+            Term: {formData.term === '1' ? '1st Term' : formData.term === '2' ? '2nd Term' : '3rd Term'}
           </Text>
           <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-[#6B7280]'}`}>
             Points: {calculateTotalPoints()}
@@ -1547,18 +1547,18 @@ const AddEditQuizModal: React.FC<AddEditQuizModalProps> = ({
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
-                    Quarter *
+                    Term *
                   </Text>
                   <RadioButtonGroup
-                    value={formData.quarter}
-                    onChange={(value) => setFormData({ ...formData, quarter: value })}
+                    value={formData.term}
+                    onChange={(value) => setFormData({ ...formData, term: value })}
                     activeColor="#3B82F6"
                   >
-                    {quarters.map(quarter => (
+                    {terms.map(term => (
                       <RadioButton
-                        key={quarter}
-                        value={quarter}
-                        label={quarter}
+                        key={term}
+                        value={term}
+                        label={term}
                         labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontSize: 12, fontFamily: 'Inter-Regular' }}
                         width={24}
                         height={24}

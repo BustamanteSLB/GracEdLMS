@@ -1,4 +1,4 @@
-import { Linking, ScrollView, View, Text, useColorScheme, TouchableOpacity, useWindowDimensions, ActivityIndicator, Alert, Platform } from 'react-native'
+import { Linking, ScrollView, View, Text, useColorScheme, TouchableOpacity, useWindowDimensions, ActivityIndicator, Alert, Platform, ToastAndroid } from 'react-native'
 import { StatusBar } from 'expo-status-bar'
 import React, { useState, useEffect, useCallback } from 'react'
 import { SafeAreaView } from 'react-native-safe-area-context'
@@ -8,6 +8,7 @@ import { useDarkMode } from '@/contexts/DarkModeContext';
 import { useFocusEffect } from 'expo-router';
 import apiClient from '@/app/services/apiClient';
 import ImagePreviewModal from '@/components/ImagePreviewModal';
+import NetworkBanner from '@/components/NetworkBanner.android';
 
 cssInterop(Image, { className: "style" });
 
@@ -44,6 +45,12 @@ interface SchoolData {
     caption: string;
     uploadedAt: Date;
   }>;
+  galleryVideos: Array<{
+    _id: string;
+    url: string;
+    caption: string;
+    uploadedAt: Date;
+  }>;
 }
 
 const SchoolPageAndroid: React.FC = () => {
@@ -54,25 +61,44 @@ const SchoolPageAndroid: React.FC = () => {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [schoolData, setSchoolData] = useState<SchoolData | null>(null);
+  const [networkError, setNetworkError] = useState(false);
 
   // Image preview modal states
   const [previewModalVisible, setPreviewModalVisible] = useState(false);
   const [previewImageUrl, setPreviewImageUrl] = useState('');
 
-  // Fetch school data from API
+  // Dynamic stats from API (like web version)
+  const [studentCount, setStudentCount] = useState(0);
+  const [teacherCount, setTeacherCount] = useState(0);
+
+  const isNetworkError = (err: any) =>
+    err?.message?.toLowerCase?.().includes('network') ||
+    err?.status === 0 ||
+    !err?.response;
+
+  // Fetch school data and stats
   const fetchSchoolData = async () => {
     try {
       setLoading(true);
-      const response = await apiClient.get('/school');
+      setNetworkError(false);
+      const [schoolResponse, statsResponse] = await Promise.all([
+        apiClient.get('/school'),
+        apiClient.get('/school/stats'),
+      ]);
       
-      if (response.data.success) {
-        setSchoolData(response.data.data);
+      if (schoolResponse.data.success) {
+        setSchoolData(schoolResponse.data.data);
+      }
+
+      if (statsResponse.data.success) {
+        setStudentCount(statsResponse.data.data?.studentCount || 0);
+        setTeacherCount(statsResponse.data.data?.teacherCount || 0);
       }
     } catch (error: any) {
       console.error('Error fetching school data:', error);
+      if (isNetworkError(error)) setNetworkError(true);
       const errorMessage = error.response?.data?.message || 'Failed to load school information';
-      
-      Alert.alert('Error', errorMessage);
+      ToastAndroid.show(errorMessage, ToastAndroid.SHORT);
     } finally {
       setLoading(false);
     }
@@ -112,6 +138,11 @@ const SchoolPageAndroid: React.FC = () => {
     setPreviewModalVisible(true);
   };
 
+  // Handle video press - open video URL externally
+  const handleVideoPress = (videoUrl: string) => {
+    Linking.openURL(videoUrl).catch(err => console.error("Couldn't open video", err));
+  };
+
   if (loading) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' }} edges={['top', 'left', 'right']}>
@@ -126,6 +157,13 @@ const SchoolPageAndroid: React.FC = () => {
             Loading school information...
           </Text>
         </View>
+        <NetworkBanner
+          forceVisible={networkError}
+          onRetry={() => {
+            setNetworkError(false);
+            fetchSchoolData();
+          }}
+        />
         <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       </SafeAreaView>
     );
@@ -176,22 +214,30 @@ const SchoolPageAndroid: React.FC = () => {
             </Text>
           </TouchableOpacity>
         </View>
+        <NetworkBanner
+          forceVisible={networkError}
+          onRetry={() => {
+            setNetworkError(false);
+            fetchSchoolData();
+          }}
+        />
         <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       </SafeAreaView>
     );
   }
 
+  // Use dynamic counts from API (like web version)
   const schoolStats = [
-    { label: 'Students Enrolled', value: schoolData.stats.studentsEnrolled, icon: require('@/assets/icons/students.png') },
+    { label: 'Students Enrolled', value: studentCount.toString(), icon: require('@/assets/icons/students.png') },
     { label: 'Years of Excellence', value: schoolData.stats.yearsOfExcellence, icon: require('@/assets/icons/award.png') },
-    { label: 'Dedicated Teachers', value: schoolData.stats.dedicatedTeachers, icon: require('@/assets/icons/teacher.png') },
+    { label: 'Dedicated Teachers', value: teacherCount.toString(), icon: require('@/assets/icons/teacher.png') },
     { label: 'Graduates', value: schoolData.stats.graduates, icon: require('@/assets/icons/graduation.png') },
   ];
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' }} edges={['left', 'right']}>
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Header */}
+        {/* Header - with shadow and larger title (web style) */}
         <View style={{
           backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
           paddingVertical: 20,
@@ -210,6 +256,11 @@ const SchoolPageAndroid: React.FC = () => {
               justifyContent: 'center',
               alignItems: 'center',
               marginRight: 16,
+              shadowColor: '#1877F2',
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 0.3,
+              shadowRadius: 8,
+              elevation: 6,
             }}>
               <Image
                 source={schoolData.logoUrl 
@@ -222,7 +273,7 @@ const SchoolPageAndroid: React.FC = () => {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={{
-                fontSize: 20,
+                fontSize: 24,
                 fontFamily: 'Inter-Bold',
                 color: isDarkMode ? '#E4E6EA' : '#1C1E21',
                 marginBottom: 4,
@@ -230,7 +281,7 @@ const SchoolPageAndroid: React.FC = () => {
                 {schoolData.name}
               </Text>
               <Text style={{
-                fontSize: 12,
+                fontSize: 14,
                 fontFamily: 'Inter-Regular',
                 color: isDarkMode ? '#B0B3B8' : '#65676B',
               }}>
@@ -303,7 +354,7 @@ const SchoolPageAndroid: React.FC = () => {
             {/* School Stats */}
             <View style={{ padding: 20 }}>
               <Text style={{
-                fontSize: 18,
+                fontSize: 24,
                 fontFamily: 'Inter-Bold',
                 color: isDarkMode ? '#E4E6EA' : '#1C1E21',
                 marginBottom: 16,
@@ -712,7 +763,7 @@ const SchoolPageAndroid: React.FC = () => {
                 flexWrap: 'wrap',
                 gap: 12,
               }}>
-                {schoolData.galleryImages.map((image, index) => (
+                {schoolData.galleryImages.map((image) => (
                   <TouchableOpacity
                     key={image._id}
                     activeOpacity={0.9}
@@ -731,7 +782,6 @@ const SchoolPageAndroid: React.FC = () => {
                       contentFit="cover"
                       transition={200}
                     />
-
                     {image.caption && (
                       <View style={{ padding: 8, backgroundColor: isDarkMode ? '#242526' : '#FFFFFF' }}>
                         <Text
@@ -751,6 +801,121 @@ const SchoolPageAndroid: React.FC = () => {
               </View>
             </View>
           )}
+
+          {/* Video Gallery Section - Mobile optimized (no thumbnail extraction) */}
+          {schoolData.galleryVideos && schoolData.galleryVideos.length > 0 && (
+            <View style={{
+              backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+              borderRadius: 12,
+              padding: 20,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.1,
+              shadowRadius: 8,
+              elevation: 4,
+              marginBottom: 32,
+            }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+                <View style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 16,
+                  backgroundColor: '#1877F2',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  marginRight: 12,
+                }}>
+                  <Image
+                    source={require('@/assets/icons/play.png')}
+                    style={{ width: 16, height: 16 }}
+                    tintColor="#FFFFFF"
+                    contentFit="contain"
+                  />
+                </View>
+                <Text style={{
+                  fontSize: 18,
+                  fontFamily: 'Inter-Bold',
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                }}>
+                  Video Gallery ({schoolData.galleryVideos.length})
+                </Text>
+              </View>
+
+              <View style={{
+                flexDirection: 'row',
+                flexWrap: 'wrap',
+                gap: 12,
+              }}>
+                {schoolData.galleryVideos.map((video) => (
+                  <TouchableOpacity
+                    key={video._id}
+                    activeOpacity={0.9}
+                    onPress={() => handleVideoPress(video.url)}
+                    style={{
+                      width: width < 768 ? '48%' : '31%',
+                      backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                      borderRadius: 8,
+                      overflow: 'hidden',
+                      position: 'relative',
+                    }}
+                  >
+                    {/* Video placeholder - uses play icon as thumbnail on mobile */}
+                    <View style={{ width: '100%', height: 200, backgroundColor: isDarkMode ? '#1C1E21' : '#E4E6EA', justifyContent: 'center', alignItems: 'center' }}>
+                      <Image
+                        source={require('@/assets/icons/play.png')}
+                        style={{ width: 50, height: 50 }}
+                        tintColor="#1877F2"
+                        contentFit="contain"
+                      />
+                    </View>
+                    
+                    {/* Play button overlay */}
+                    <View style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      backgroundColor: 'rgba(0, 0, 0, 0.2)',
+                    }}>
+                      <View style={{
+                        width: 50,
+                        height: 50,
+                        borderRadius: 25,
+                        backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                      }}>
+                        <Image
+                          source={require('@/assets/icons/play.png')}
+                          style={{ width: 24, height: 24 }}
+                          tintColor="#1877F2"
+                          contentFit="contain"
+                        />
+                      </View>
+                    </View>
+
+                    {video.caption && (
+                      <View style={{ padding: 8, backgroundColor: isDarkMode ? '#242526' : '#FFFFFF' }}>
+                        <Text
+                          style={{
+                            fontSize: 12,
+                            fontFamily: 'Inter-Regular',
+                            color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                          }}
+                          numberOfLines={2}
+                        >
+                          {video.caption}
+                        </Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          )}
         </View>
       </ScrollView>
 
@@ -760,6 +925,15 @@ const SchoolPageAndroid: React.FC = () => {
         onClose={() => setPreviewModalVisible(false)}
         imageUrl={previewImageUrl}
         isDarkMode={isDarkMode}
+      />
+
+      {/* Animated network banner overlay */}
+      <NetworkBanner
+        forceVisible={networkError}
+        onRetry={() => {
+          setNetworkError(false);
+          fetchSchoolData();
+        }}
       />
 
       <StatusBar style={isDarkMode ? 'light' : 'dark'} />

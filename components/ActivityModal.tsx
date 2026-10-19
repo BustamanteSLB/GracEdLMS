@@ -10,6 +10,7 @@ import {
   View,
   ActivityIndicator,
   Pressable,
+  ToastAndroid
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AttachIcon from '@/assets/icons/attach.svg';
@@ -79,7 +80,7 @@ interface Activity {
   description?: string;
   visibleDate: string;
   deadline: string;
-  quarter: string;
+  term: string;
   points: number | null;
   createdBy: User;
   subject: Subject;
@@ -310,8 +311,8 @@ const ActivityModal: React.FC<ActivityModalProps> = ({
       
       setActivities(activitiesWithDetails);
     } catch (err) {
-      console.error('Error fetching activities:', err);
-      Alert.alert('Error', 'Failed to load activities.');
+      console.error('Error fetching activities:', err); 
+      ToastAndroid.show('Failed to load activities.', ToastAndroid.SHORT);
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -478,10 +479,10 @@ const ActivityModal: React.FC<ActivityModalProps> = ({
           try {
             await apiClient.delete(`/activities/${activity._id}`);
             fetchActivities();
-            Alert.alert('Success', 'Activity deleted successfully.');
+            ToastAndroid.show('Activity deleted successfully.', ToastAndroid.SHORT);
           } catch (err) {
             console.error('Delete Activity error:', err);
-            Alert.alert('Error', 'Failed to delete activity.');
+            ToastAndroid.show('Failed to delete activity.', ToastAndroid.SHORT);
           }
         }
           },
@@ -542,7 +543,7 @@ const ActivityModal: React.FC<ActivityModalProps> = ({
       }
     } catch (err) {
       console.log('Document picking cancelled or failed.', err);
-      Alert.alert('Error', 'Failed to pick documents.');
+      ToastAndroid.show('Failed to pick documents.', ToastAndroid.SHORT);
     }
   }, []);
 
@@ -631,11 +632,11 @@ const ActivityModal: React.FC<ActivityModalProps> = ({
       fetchActivities();
       setViewActModalVisible(false);
       setSubmissionFiles([]);
-      Alert.alert('Success', 'Activity turned in successfully!');
+      ToastAndroid.show('Activity turned in successfully!', ToastAndroid.SHORT);
     } catch (error: any) {
       console.error('Turn In Activity error:', error);
       const msg = error.response?.data?.message || error.message || 'Failed to turn in activity.';
-      Alert.alert('Error', msg);
+      ToastAndroid.show(msg, ToastAndroid.SHORT);
     } finally {
       setIsSubmitting(false);
     }
@@ -650,11 +651,11 @@ const ActivityModal: React.FC<ActivityModalProps> = ({
       fetchActivities();
       setViewActModalVisible(false);
       setSubmissionFiles([]);
-      Alert.alert('Success', 'Activity turn-in undone successfully!');
+      ToastAndroid.show('Activity turn-in undone successfully!', ToastAndroid.SHORT);
     } catch (error: any) {
       console.error('Undo Turn In Activity error:', error);
       const msg = error.response?.data?.message || error.message || 'Failed to undo turn-in.';
-      Alert.alert('Error', msg);
+      ToastAndroid.show(msg, ToastAndroid.SHORT);
     } finally {
       setIsUndoingSubmission(false);
     }
@@ -764,7 +765,7 @@ const ActivityModal: React.FC<ActivityModalProps> = ({
                 </Text>
               </View>
               <Text className={`font-inter_semibold text-sm mb-1 ${isDarkMode ? 'text-[#9CA3AF]' : 'text-gray-700'}`}>
-                {activity.subject.gradeLevel} • {activity.quarter}
+                {activity.subject.gradeLevel} • {activity.term === '1' ? '1st Term' : activity.term === '2' ? '2nd Term': '3rd Term'}
               </Text>
               <Text className={`font-inter_regular text-sm mb-1 ${isDarkMode ? 'text-[#6B7280]' : 'text-gray-500'}`}>
                 By {creatorName}

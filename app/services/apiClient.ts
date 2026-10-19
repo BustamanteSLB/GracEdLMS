@@ -1,11 +1,12 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
+import { getToken } from '@/app/utils/tokenStorage';
 
 // !! REPLACE WITH YOUR ACTUAL BACKEND URL !!
 // For Android emulator, if backend is on localhost: 'http://10.0.2.2:PORT'
 // For iOS simulator, if backend is on localhost: 'http://localhost:PORT'
 // For physical device, use your computer's local network IP: 'http://YOUR_COMPUTER_IP:PORT'
-const API_BASE_URL = 'http://192.168.100.5:5000/api/v1';
+// Domain example: https://api.domain.xyz/api/v1
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -29,16 +30,15 @@ apiClient.interceptors.request.use(
       return config;
     }
 
-    // Prefer token from apiClient defaults if set by AuthContext, fallback to AsyncStorage
-    // This handles cases where AuthContext might not have updated AsyncStorage yet.
+    // Prefer token from apiClient defaults if set by AuthContext, fallback to secure token storage
     if (!config.headers.Authorization) {
-        const token = await AsyncStorage.getItem('userToken');
-        console.log('API Client: Token from AsyncStorage:', token ? 'Token found' : 'No token found');
+        const token = await getToken();
+        console.log('API Client: Token from storage:', token ? 'Token found' : 'No token found');
         if (token) {
           config.headers.Authorization = `Bearer ${token}`;
           console.log('API Client: Authorization header set.');
         } else {
-          console.log('API Client: No token found in AsyncStorage, Authorization header not set.');
+          console.log('API Client: No token found in storage, Authorization header not set.');
         }
     } else {
       console.log('API Client: Authorization header already exists.');
@@ -59,7 +59,7 @@ apiClient.interceptors.response.use(
       // Log observed 401, but let the calling function (e.g., in AuthContext) handle the logout logic
       console.warn('API Client: Intercepted a 401 Unauthorized error.');
       console.log('API Client: 401 Error Details:', error.response);
-      // No automatic AsyncStorage.removeItem here, as AuthContext.logout will handle it.
+      // No automatic token clear here — AuthContext.logout handles secure storage cleanup.
     }
     return Promise.reject(error);
   }

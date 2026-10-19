@@ -1,4 +1,4 @@
-import { Alert, Keyboard, KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, TouchableOpacity, useColorScheme, View } from 'react-native'
+import { Alert, Keyboard, KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, ToastAndroid, TouchableOpacity, useColorScheme, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Image } from "expo-image";
 import { cssInterop } from "nativewind";
@@ -46,7 +46,7 @@ const SignInAndroid = () => {
     setIsLoggingIn(true);
     try {
       await login(identifier, password);
-      Alert.alert('Success', 'Login successful!');
+      ToastAndroid.show('Login successful!', ToastAndroid.SHORT);
     } catch (error: any) {
       const backendErrorMessage = error.response?.data?.message || error.message || 'An unknown login error occurred';
       

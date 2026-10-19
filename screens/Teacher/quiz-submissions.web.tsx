@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -20,8 +20,12 @@ import { cssInterop } from 'nativewind';
 import CheckIcon from '@/assets/icons/check.svg';
 import CloseIcon from '@/assets/icons/close.svg';
 import DownIcon from '@/assets/icons/down.svg';
+import NetworkBanner from '@/components/NetworkBanner.web';
 
 cssInterop(Image, { className: "style" });
+
+// Pagination constant
+const ITEMS_PER_PAGE = 10;
 
 interface Question {
   _id: string;
@@ -82,26 +86,63 @@ const QuizSubmissionsWeb = () => {
   } | null>(null);
   const [gradeInput, setGradeInput] = useState('');
 
-  useFocusEffect(
-    useCallback(() => {
-      fetchSubmissions();
-    }, [quizId])
-  );
+  // Pagination state
+  const [displayedCount, setDisplayedCount] = useState(ITEMS_PER_PAGE);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const listRef = useRef<any>(null);
 
-  const fetchSubmissions = async () => {
+  // Network banner state
+  const [forceNetworkBannerVisible, setForceNetworkBannerVisible] = useState(false);
+
+  const fetchSubmissions = useCallback(async () => {
+    if (!quizId) return;
     setLoading(true);
     try {
       const response = await apiClient.get(`/quizzes/${quizId}/submissions`);
       setQuiz(response.data.data.quiz);
       setSubmissions(response.data.data.submissions);
+      setDisplayedCount(ITEMS_PER_PAGE);
+      setForceNetworkBannerVisible(false);
       document.title = `${response.data.data.quiz.title} - Submissions`;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching submissions:', error);
       window.alert('Failed to load submissions');
+
+      const isNetworkError =
+        !error?.response ||
+        error?.code === 'ECONNABORTED' ||
+        error?.message?.toLowerCase().includes('network') ||
+        error?.message?.toLowerCase().includes('timeout');
+      if (isNetworkError) {
+        setForceNetworkBannerVisible(true);
+      }
     } finally {
       setLoading(false);
     }
-  };
+  }, [quizId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchSubmissions();
+    }, [fetchSubmissions])
+  );
+
+  // Paginated submissions for display
+  const displayedSubmissions = useMemo(() => {
+    return submissions.slice(0, displayedCount);
+  }, [submissions, displayedCount]);
+
+  const hasMore = displayedCount < submissions.length;
+
+  // Infinite scroll handler
+  const loadMore = useCallback(() => {
+    if (isLoadingMore || !hasMore) return;
+    setIsLoadingMore(true);
+    setTimeout(() => {
+      setDisplayedCount(prev => Math.min(prev + ITEMS_PER_PAGE, submissions.length));
+      setIsLoadingMore(false);
+    }, 350);
+  }, [isLoadingMore, hasMore, submissions.length]);
 
   const handleGradeEssay = async (accept: boolean) => {
     if (!selectedAnswer) return;
@@ -410,9 +451,40 @@ const QuizSubmissionsWeb = () => {
     </View>
   );
 
+  const ListFooterComponent = () => (
+    <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+      {isLoadingMore ? (
+        <>
+          <ActivityIndicator size="small" color="#3B82F6" />
+          <Text style={{
+            marginTop: 8,
+            fontSize: 12,
+            fontFamily: 'Inter-Regular',
+            color: isDarkMode ? '#9CA3AF' : '#6B7280',
+          }}>
+            Loading more submissions...
+          </Text>
+        </>
+      ) : !hasMore && submissions.length > ITEMS_PER_PAGE ? (
+        <Text style={{
+          fontSize: 12,
+          fontFamily: 'Inter-Regular',
+          color: isDarkMode ? '#6B7280' : '#9CA3AF',
+        }}>
+          All {submissions.length} submissions loaded
+        </Text>
+      ) : null}
+    </View>
+  );
+
   if (loading) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB' }}>
+        <NetworkBanner
+          forceVisible={forceNetworkBannerVisible}
+          onRetry={fetchSubmissions}
+          onDismiss={() => setForceNetworkBannerVisible(false)}
+        />
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
           <ActivityIndicator size="large" color="#3B82F6" />
           <Text style={{
@@ -429,14 +501,29 @@ const QuizSubmissionsWeb = () => {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB' }} edges={['top', 'bottom']}>
+      <NetworkBanner
+        forceVisible={forceNetworkBannerVisible}
+        onRetry={fetchSubmissions}
+        onDismiss={() => setForceNetworkBannerVisible(false)}
+      />
+
       <FlatList
-        data={submissions}
+        ref={listRef}
+        data={displayedSubmissions}
         renderItem={renderSubmission}
         keyExtractor={(item) => item._id}
         ListHeaderComponent={ListHeaderComponent}
         ListEmptyComponent={ListEmptyComponent}
+        ListFooterComponent={ListFooterComponent}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.5}
         contentContainerStyle={{ padding: 20, flexGrow: 1 }}
         showsVerticalScrollIndicator={false}
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={10}
+        removeClippedSubviews={true}
+        keyboardShouldPersistTaps="handled"
       />
 
       {/* Grading Modal */}

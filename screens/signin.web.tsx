@@ -2,7 +2,7 @@ import { ActivityIndicator, Text, TextInput, TouchableOpacity, useColorScheme, u
 import { SafeAreaView } from 'react-native-safe-area-context'
 import React, { useState, useCallback, useEffect } from 'react'
 import { StatusBar } from 'expo-status-bar'
-import { Image } from "expo-image";
+import { Image, ImageBackground } from "expo-image";
 import { cssInterop } from "nativewind";
 import { useRouter } from 'expo-router'
 import { useDarkMode } from '../contexts/DarkModeContext';
@@ -22,14 +22,14 @@ const MemoizedLoginIcon = React.memo(LoginIcon);
 const ShowPasswordIcon = React.memo(() => {
   const { isDarkMode } = useDarkMode();
   return (
-    <Image
+    <ImageBackground
       tintColor={isDarkMode ? '#E0E0E0' : 'black'}
       style={{width: 20, height: 20}}
       source={require('@/assets/icons/show_password.png')}
       contentFit="contain"
       cachePolicy="memory-disk"
       priority="low"
-      alt="Show password icon"
+      accessibilityLabel="Show password icon"
     />
   );
 });
@@ -45,7 +45,7 @@ const HidePasswordIcon = React.memo(() => {
       contentFit="contain"
       cachePolicy="memory-disk"
       priority="low"
-      alt="Hide password icon"
+      accessibilityLabel="Hide password icon"
     />
   );
 });
@@ -63,7 +63,7 @@ const LogoSection = React.memo(({ isDarkMode, width }: { isDarkMode: boolean, wi
         contentFit="contain"
         cachePolicy="memory-disk"
         priority="high"
-        alt="GCCS Logo"
+        accessibilityLabel="GCCS Logo"
       />
       <Text className={`text-2xl font-pbold mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-white'}`}>
         GracEdLMS
@@ -93,8 +93,8 @@ const DeferredBackgroundImage = React.memo(() => {
 
   return (
     <Image
-      source={require('../assets/images/poster.jpg')}
-      style={{
+      source={require('@/assets/images/poster.jpg')}
+      style={{ 
         position: 'absolute',
         top: 0,
         left: 0,
@@ -105,8 +105,8 @@ const DeferredBackgroundImage = React.memo(() => {
       }}
       contentFit="cover"
       cachePolicy="memory-disk"
-      priority="low"
-      alt="Background decorative image"
+      priority="high"
+      accessibilityLabel="Background decorative image"
     />
   );
 });

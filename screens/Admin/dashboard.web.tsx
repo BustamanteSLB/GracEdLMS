@@ -73,6 +73,7 @@ interface AdminAnalyticsData {
   };
 }
 
+// Admin Dashboard
 const DBWeb: React.FC = () => {
   document.title = 'Dashboard - GracEdLMS';
   const colorScheme = useColorScheme();
@@ -194,8 +195,7 @@ const DBWeb: React.FC = () => {
   }
 
   const QuickStat = ({ icon: Icon, iconSource, iconTint, label, value, color, onPress }: QuickStatProps) => (
-    <TouchableOpacity
-      onPress={onPress}
+    <View
       className={`p-4 rounded-lg mr-3 ${isDarkMode ? 'bg-[#3A3B3C]' : 'bg-gray-50'} hover:opacity-80`}
       style={{ minWidth: 120, width: width * 0.22 }}
     >
@@ -209,6 +209,7 @@ const DBWeb: React.FC = () => {
               style={{ width: 24, height: 24 }}
               tintColor={iconTint || color}
               contentFit="contain"
+              accessibilityLabel='Icon'
             />
           ) : null}
         </View>
@@ -219,7 +220,7 @@ const DBWeb: React.FC = () => {
           {label}
         </Text>
       </View>
-    </TouchableOpacity>
+    </View>
   );
 
   // Facebook-style header
@@ -232,6 +233,7 @@ const DBWeb: React.FC = () => {
               source={{ uri: user.profilePicture }}
               className="w-10 h-10 rounded-full mr-3"
               contentFit="cover"
+              accessibilityLabel='Admin profile picture'
             />
           ) : (
             <View className="w-10 h-10 rounded-full bg-blue-500 items-center justify-center mr-3">
@@ -263,6 +265,7 @@ const DBWeb: React.FC = () => {
               source={require('@/assets/icons/filter.png')} 
               style={{ width: 16, height: 16 }}
               tintColor="#8B5CF6"
+              accessibilityLabel='Filter icon'
             />
           </View>
           <View>
@@ -593,6 +596,7 @@ const DBWeb: React.FC = () => {
                     source={{ uri: student.profilePicture }}
                     className="w-10 h-10 rounded-full mr-3"
                     contentFit="cover"
+                    accessibilityLabel='Student profile picture'
                   />
                   ) : (
                   <View className="w-10 h-10 rounded-full bg-green-500 items-center justify-center mr-3">

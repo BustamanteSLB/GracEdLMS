@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+// quizzes.web.tsx
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,11 +11,11 @@ import {
   Platform,
   Modal,
   useColorScheme,
-  VirtualizedList,
+  FlatList,
 } from 'react-native';
 import apiClient from '@/app/services/apiClient';
 import { useAuth } from '@/contexts/AuthContext';
-import { useRouter, useFocusEffect } from 'expo-router'; // Add useFocusEffect
+import { useRouter, useFocusEffect } from 'expo-router';
 import ContextMenu from '@/components/ContextMenu';
 import DeleteIcon from '@/assets/icons/delete.svg';
 import MoreVertIcon from '@/assets/icons/more_vert.svg';
@@ -25,6 +26,7 @@ import { cssInterop } from 'nativewind';
 import { RadioButton, RadioButtonGroup } from '@/components/RadioButton';
 import Checkbox from 'expo-checkbox';
 import Dropdown, { DropdownItem } from '@/components/Dropdown';
+import NetworkBanner from '@/components/NetworkBanner.web';
 
 cssInterop(Image, { className: "style" });
 
@@ -70,12 +72,16 @@ interface Quiz {
   sectionDescription?: string;
   questions: Question[];
   timeLimit?: number;
-  quarter: string;
+  term: string;
   quizPoints: number;
   status: 'draft' | 'published' | 'archived' | 'graded' | 'closed';
+  shuffleQuestions?: boolean;
   createdAt: string;
   updatedAt: string;
 }
+
+// Pagination constant
+const ITEMS_PER_PAGE = 10;
 
 // Teacher's Quizzes Page
 const QuizzesWeb = () => {
@@ -90,8 +96,13 @@ const QuizzesWeb = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSubject, setSelectedSubject] = useState<string>('');
   const [selectedStatus, setSelectedStatus] = useState<string>('');
-  const [selectedQuarter, setSelectedQuarter] = useState<string>('');
-  
+  const [selectedTerm, setSelectedTerm] = useState<string>('');
+
+  // Pagination state
+  const [displayedCount, setDisplayedCount] = useState(ITEMS_PER_PAGE);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const listRef = useRef<any>(null);
+
   // Modal states
   const [addEditModalVisible, setAddEditModalVisible] = useState(false);
   const [selectedQuiz, setSelectedQuiz] = useState<Quiz | null>(null);
@@ -105,6 +116,9 @@ const QuizzesWeb = () => {
   // Image Preview states
   const [imagePreviewModal, setImagePreviewModal] = useState(false);
   const [selectedPreviewImage, setSelectedPreviewImage] = useState<string | null>(null);
+
+  // Network banner state
+  const [forceNetworkBannerVisible, setForceNetworkBannerVisible] = useState(false);
 
   // Memoized dropdown options
   const subjectFilterOptions: DropdownItem[] = useMemo(() => {
@@ -127,31 +141,57 @@ const QuizzesWeb = () => {
     { label: 'All Statuses', value: '' },
     { label: 'Draft', value: 'draft' },
     { label: 'Published', value: 'published' },
-    { label: 'Archived', value: 'archived' },
     { label: 'Graded', value: 'graded' },
     { label: 'Closed', value: 'closed' },
   ], []);
 
-  const quarterFilterOptions: DropdownItem[] = useMemo(() => [
-    { label: 'All Quarters', value: '' },
-    { label: 'First Quarter', value: 'First Quarter' },
-    { label: 'Second Quarter', value: 'Second Quarter' },
-    { label: '3rd Quarter', value: '3rd Quarter' },
-    { label: '4th Quarter', value: '4th Quarter' },
+  const termFilterOptions: DropdownItem[] = useMemo(() => [
+    { label: 'All Terms', value: '' },
+    { label: '1st Term', value: '1' },
+    { label: '2nd Term', value: '2' },
+    { label: '3rd Term', value: '3' },
   ], []);
+
+  // Paginated quizzes for display
+  const displayedQuizzes = useMemo(() => {
+    return quizzes.slice(0, displayedCount);
+  }, [quizzes, displayedCount]);
+
+  const hasMore = displayedCount < quizzes.length;
+
+  // Reset pagination when filters/search change
+  useEffect(() => {
+    setDisplayedCount(ITEMS_PER_PAGE);
+    try {
+      listRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+    } catch (e) {
+      // ignore
+    }
+  }, [selectedSubject, selectedStatus, selectedTerm, searchQuery]);
+
+  // Infinite scroll handler
+  const loadMore = useCallback(() => {
+    if (isLoadingMore || !hasMore) return;
+
+    setIsLoadingMore(true);
+    setTimeout(() => {
+      setDisplayedCount(prev => Math.min(prev + ITEMS_PER_PAGE, quizzes.length));
+      setIsLoadingMore(false);
+    }, 350);
+  }, [isLoadingMore, hasMore, quizzes.length]);
 
   // Replace the initial useEffect with useFocusEffect
   useFocusEffect(
     useCallback(() => {
       fetchQuizzes();
       fetchSubjects();
-    }, [selectedSubject, selectedStatus, selectedQuarter, searchQuery])
+    }, [selectedSubject, selectedStatus, selectedTerm, searchQuery])
   );
   
   // A cleaner pattern for both focus and state changes:
   useEffect(() => {
     fetchQuizzes();
-  }, [selectedSubject, selectedStatus, selectedQuarter]);
+  }, [selectedSubject, selectedStatus, selectedTerm]);
 
   // This ensures a refresh happens specifically when navigating back to this screen
   useFocusEffect(
@@ -168,13 +208,23 @@ const QuizzesWeb = () => {
       const params = new URLSearchParams();
       if (selectedSubject) params.append('subject', selectedSubject);
       if (selectedStatus) params.append('status', selectedStatus);
-      if (selectedQuarter) params.append('quarter', selectedQuarter);
+      if (selectedTerm) params.append('term', selectedTerm);
       if (searchQuery) params.append('search', searchQuery);
 
       const response = await apiClient.get(`/quizzes?${params.toString()}`);
       setQuizzes(response.data.data || []);
-    } catch (error) {
+      setDisplayedCount(ITEMS_PER_PAGE);
+      setForceNetworkBannerVisible(false);
+    } catch (error: any) {
       console.log('Error fetching quizzes:', error);
+      const isNetworkError =
+        !error?.response ||
+        error?.code === 'ECONNABORTED' ||
+        error?.message?.toLowerCase().includes('network') ||
+        error?.message?.toLowerCase().includes('timeout');
+      if (isNetworkError) {
+        setForceNetworkBannerVisible(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -203,11 +253,11 @@ const QuizzesWeb = () => {
 
   const handleDeleteQuiz = async (quizId: string) => {
     const confirmDelete = Platform.OS === 'web' 
-      ? window.confirm('Are you sure you want to delete this quiz? This action cannot be undone.')
+      ? window.confirm('Do you want to delete this quiz? You can restore it later.')
       : await new Promise(resolve => {
           Alert.alert(
             'Delete Quiz',
-            'Are you sure you want to delete this quiz? This action cannot be undone.',
+            'Do you want to delete this quiz? You can restore it later.',
             [
               { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
               { text: 'Delete', style: 'destructive', onPress: () => resolve(true) }
@@ -341,6 +391,17 @@ const QuizzesWeb = () => {
       onPress: () => contextMenuQuiz && handleEditQuiz(contextMenuQuiz),
     },
     {
+      label: "Download PDF",
+      icon: (
+        <Image
+          source={require("@/assets/icons/download.png")}
+          style={{ width: 20, height: 20, marginRight: 8 }}
+          tintColor={isDarkMode ? "#E0E0E0" : "#333"}
+        />
+      ),
+      onPress: () => contextMenuQuiz && handleDownloadQuizPdf(contextMenuQuiz),
+    },
+    {
       label: 'Preview',
       icon: (
         <Image
@@ -417,7 +478,8 @@ const QuizzesWeb = () => {
           backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
           borderRadius: 12,
           padding: 16,
-          marginBottom: 12,
+          marginTop: 16,
+          marginHorizontal: 16,
           borderWidth: 1,
           borderColor: isDarkMode ? '#333333' : '#E5E7EB',
           shadowColor: '#000',
@@ -479,7 +541,7 @@ const QuizzesWeb = () => {
                   marginBottom: 8,
                 }}
               >
-                {item.subject?.subjectName || 'No Subject'} • {item.quarter}
+                {item.subject?.subjectName || 'No Subject'} • {`${item.term === '1' ? '1st Term' : item.term === '2' ? '2nd Term' : '3rd Term'}`}
               </Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
                 <View
@@ -505,6 +567,7 @@ const QuizzesWeb = () => {
                   color: isDarkMode ? '#9CA3AF' : '#6B7280' 
                 }}>
                   {item.questions.length} questions • {item.quizPoints} points
+                  {item.shuffleQuestions ? ' • Shuffled' : ''}
                 </Text>
               </View>
               <Text style={{ 
@@ -529,205 +592,240 @@ const QuizzesWeb = () => {
     );
   };
 
-  // VirtualizedList required functions
-  const getItem = (data: Quiz[], index: number) => data[index];
-  const getItemCount = (data: Quiz[]) => data.length;
-  const keyExtractor = (item: Quiz, index: number) => item._id;
-
-  return (
-    <View style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB' }}>
-      {/* Header */}
-      <View
-        style={{
-          backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
-          paddingHorizontal: 20,
-          paddingTop: 20,
-          paddingBottom: 16,
-          borderBottomWidth: 1,
-          borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
-        }}
-      >
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text
-            style={{
-              fontSize: 24,
-              fontFamily: 'Inter-Bold',
-              color: isDarkMode ? '#F9FAFB' : '#111827',
-            }}
+  // ---- List header (scrolls with content) ----
+  const listHeader = (
+    <View
+      style={{
+        backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
+        paddingHorizontal: 20,
+        paddingTop: 20,
+        paddingBottom: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
+      }}
+    >
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Text
+          style={{
+            fontSize: 24,
+            fontFamily: 'Inter-Bold',
+            color: isDarkMode ? '#F9FAFB' : '#111827',
+          }}
+        >
+          Quizzes
+        </Text>
+        <TouchableOpacity
+          onPress={handleCreateQuiz}
+          style={{
+            backgroundColor: '#3B82F6',
+            paddingHorizontal: 16,
+            paddingVertical: 8,
+            borderRadius: 8,
+            flexDirection: 'row',
+            alignItems: 'center',
+          }}
+        >
+          <Image
+            source={require('@/assets/icons/plus.png')}
+            style={{ width: 20, height: 20, marginRight: 8 }}
+            tintColor="white"
+          />
+          <Text 
+            className={`font-psemibold ${isDarkMode ? 'text-[#E0E0E0]' : 'text-white'}`}
           >
-            Quizzes
+            Create Quiz
           </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Filters */}
+      <View style={{ marginTop: 16 }}>
+        <View style={{ flexDirection: 'row', marginBottom: 12 }}>
+          <View style={{ flex: 1, marginRight: 8 }}>
+            <TextInput
+              placeholder="Search quizzes..."
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              style={{
+                backgroundColor: isDarkMode ? '#2A2A2A' : '#F3F4F6',
+                borderRadius: 8,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                color: isDarkMode ? '#E0E0E0' : '#111827',
+                fontFamily: 'Inter-Regular',
+              }}
+              placeholderTextColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
+            />
+          </View>
           <TouchableOpacity
-            onPress={handleCreateQuiz}
+            onPress={fetchQuizzes}
             style={{
-              backgroundColor: '#3B82F6',
+              backgroundColor: '#10B981',
               paddingHorizontal: 16,
               paddingVertical: 8,
               borderRadius: 8,
-              flexDirection: 'row',
-              alignItems: 'center',
             }}
           >
-            <Image
-              source={require('@/assets/icons/plus.png')}
-              style={{ width: 20, height: 20, marginRight: 8 }}
-              tintColor="white"
-            />
             <Text 
               className={`font-psemibold ${isDarkMode ? 'text-[#E0E0E0]' : 'text-white'}`}
             >
-              Create Quiz
+              Search
             </Text>
           </TouchableOpacity>
         </View>
 
-        {/* Filters */}
-        <View style={{ marginTop: 16 }}>
-          <View style={{ flexDirection: 'row', marginBottom: 12 }}>
-            <View style={{ flex: 1, marginRight: 8 }}>
-              <TextInput
-                placeholder="Search quizzes..."
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                style={{
-                  backgroundColor: isDarkMode ? '#2A2A2A' : '#F3F4F6',
-                  borderRadius: 8,
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                  color: isDarkMode ? '#E0E0E0' : '#111827',
-                  fontFamily: 'Inter-Regular',
-                }}
-                placeholderTextColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
-              />
-            </View>
-            <TouchableOpacity
-              onPress={fetchQuizzes}
-              style={{
-                backgroundColor: '#10B981',
-                paddingHorizontal: 16,
-                paddingVertical: 8,
-                borderRadius: 8,
-              }}
-            >
-              <Text 
-                className={`font-psemibold ${isDarkMode ? 'text-[#E0E0E0]' : 'text-white'}`}
-              >
-                Search
-              </Text>
-            </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          {/* Subject Dropdown */}
+          <View style={{ flex: 1 }}>
+            <Text style={{ 
+              fontSize: 12, 
+              fontFamily: 'Inter-Medium',
+              color: isDarkMode ? '#E0E0E0' : '#6B7280', 
+              marginBottom: 4 
+            }}>
+              Subject
+            </Text>
+            <Dropdown
+              data={subjectFilterOptions}
+              selectedValue={selectedSubject}
+              onValueChange={setSelectedSubject}
+              placeholder="All Subjects"
+            />
           </View>
 
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            {/* Subject Dropdown - REPLACED PICKER */}
-            <View style={{ flex: 1 }}>
-              <Text style={{ 
-                fontSize: 12, 
-                fontFamily: 'Inter-Medium',
-                color: isDarkMode ? '#E0E0E0' : '#6B7280', 
-                marginBottom: 4 
-              }}>
-                Subject
-              </Text>
-              <Dropdown
-                data={subjectFilterOptions}
-                selectedValue={selectedSubject}
-                onValueChange={setSelectedSubject}
-                placeholder="All Subjects"
-              />
-            </View>
+          {/* Status Dropdown */}
+          <View style={{ flex: 1 }}>
+            <Text style={{ 
+              fontSize: 12, 
+              fontFamily: 'Inter-Medium',
+              color: isDarkMode ? '#E0E0E0' : '#6B7280',
+              marginBottom: 4 
+            }}>
+              Status
+            </Text>
+            <Dropdown
+              data={statusFilterOptions}
+              selectedValue={selectedStatus}
+              onValueChange={setSelectedStatus}
+              placeholder="All Statuses"
+            />
+          </View>
 
-            {/* Status Dropdown - REPLACED PICKER */}
-            <View style={{ flex: 1 }}>
-              <Text style={{ 
-                fontSize: 12, 
-                fontFamily: 'Inter-Medium',
-                color: isDarkMode ? '#E0E0E0' : '#6B7280',
-                marginBottom: 4 
-              }}>
-                Status
-              </Text>
-              <Dropdown
-                data={statusFilterOptions}
-                selectedValue={selectedStatus}
-                onValueChange={setSelectedStatus}
-                placeholder="All Statuses"
-              />
-            </View>
-
-            {/* Quarter Dropdown - REPLACED PICKER */}
-            <View style={{ flex: 1 }}>
-              <Text style={{ 
-                fontSize: 12, 
-                fontFamily: 'Inter-Medium',
-                color: isDarkMode ? '#E0E0E0' : '#6B7280',
-                marginBottom: 4 
-              }}>
-                Quarter
-              </Text>
-              <Dropdown
-                data={quarterFilterOptions}
-                selectedValue={selectedQuarter}
-                onValueChange={setSelectedQuarter}
-                placeholder="All Quarters"
-              />
-            </View>
+          {/* Term Dropdown */}
+          <View style={{ flex: 1 }}>
+            <Text style={{ 
+              fontSize: 12, 
+              fontFamily: 'Inter-Medium',
+              color: isDarkMode ? '#E0E0E0' : '#6B7280',
+              marginBottom: 4 
+            }}>
+              Term
+            </Text>
+            <Dropdown
+              data={termFilterOptions}
+              selectedValue={selectedTerm}
+              onValueChange={setSelectedTerm}
+              placeholder="All Terms"
+            />
           </View>
         </View>
       </View>
+    </View>
+  );
 
-      {/* Content */}
-      <View style={{ flex: 1, padding: 20 }}>
-        {loading ? (
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <ActivityIndicator size="large" color="#3B82F6" />
-            <Text style={{ 
-              marginTop: 16, 
-              fontFamily: 'Inter-Regular',
-              color: isDarkMode ? '#9CA3AF' : '#6B7280' 
-            }}>
-              Loading quizzes...
-            </Text>
-          </View>
-        ) : quizzes.length > 0 ? (
-          <VirtualizedList
-            data={quizzes}
-            renderItem={renderQuizItem}
-            keyExtractor={keyExtractor}
-            getItem={getItem}
-            getItemCount={getItemCount}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingBottom: 20 }}
-            initialNumToRender={10}
-            maxToRenderPerBatch={10}
-            windowSize={10}
-            removeClippedSubviews={true}
-            extraData={isDarkMode}
-          />
-        ) : (
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <Image
-              source={require('@/assets/images/quiz.png')}
-              style={{ width: 64, height: 64, marginBottom: 16 }}
-            />
-            <Text style={{ 
-              fontSize: 18, 
-              fontFamily: 'Inter-SemiBold',
-              color: isDarkMode ? '#9CA3AF' : '#6B7280', 
-              marginBottom: 8 
-            }}>
-              No quizzes found
-            </Text>
-            <Text style={{ 
-              fontSize: 14, 
-              fontFamily: 'Inter-Regular',
-              color: isDarkMode ? '#6B7280' : '#9CA3AF', 
-              textAlign: 'center' 
-            }}>
-              Create your first quiz to get started
-            </Text>
-          </View>
-        )}
-      </View>
+  // ---- Empty state ----
+  const listEmpty = (
+    <View style={{ justifyContent: 'center', alignItems: 'center', padding: 40, minHeight: 300 }}>
+      <Image
+        source={require('@/assets/images/quiz.png')}
+        style={{ width: 64, height: 64, marginBottom: 16 }}
+      />
+      <Text style={{ 
+        fontSize: 18, 
+        fontFamily: 'Inter-SemiBold',
+        color: isDarkMode ? '#9CA3AF' : '#6B7280', 
+        marginBottom: 8,
+        textAlign: 'center',
+      }}>
+        No quizzes found
+      </Text>
+      <Text style={{ 
+        fontSize: 14, 
+        fontFamily: 'Inter-Regular',
+        color: isDarkMode ? '#6B7280' : '#9CA3AF', 
+        textAlign: 'center' 
+      }}>
+        Create your first quiz to get started
+      </Text>
+    </View>
+  );
+
+  // ---- Footer (loading more / end of list) ----
+  const listFooter = (
+    <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+      {isLoadingMore ? (
+        <>
+          <ActivityIndicator size="small" color="#3B82F6" />
+          <Text style={{
+            marginTop: 8,
+            fontSize: 12,
+            fontFamily: 'Inter-Regular',
+            color: isDarkMode ? '#9CA3AF' : '#6B7280',
+          }}>
+            Loading more quizzes...
+          </Text>
+        </>
+      ) : !hasMore && quizzes.length > ITEMS_PER_PAGE ? (
+        <Text style={{
+          fontSize: 12,
+          fontFamily: 'Inter-Regular',
+          color: isDarkMode ? '#6B7280' : '#9CA3AF',
+        }}>
+          All {quizzes.length} quizzes loaded
+        </Text>
+      ) : null}
+    </View>
+  );
+
+  return (
+    <View style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB' }}>
+      <NetworkBanner
+        forceVisible={forceNetworkBannerVisible}
+        onRetry={fetchQuizzes}
+        onDismiss={() => setForceNetworkBannerVisible(false)}
+      />
+
+      {loading ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color="#3B82F6" />
+          <Text style={{ 
+            marginTop: 16, 
+            fontFamily: 'Inter-Regular',
+            color: isDarkMode ? '#9CA3AF' : '#6B7280' 
+          }}>
+            Loading quizzes...
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          ref={listRef}
+          data={displayedQuizzes}
+          renderItem={renderQuizItem}
+          keyExtractor={(item) => item._id}
+          showsVerticalScrollIndicator={false}
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.5}
+          ListHeaderComponent={listHeader}
+          ListEmptyComponent={listEmpty}
+          ListFooterComponent={listFooter}
+          contentContainerStyle={{ paddingBottom: 20, flexGrow: 1 }}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={10}
+          removeClippedSubviews={true}
+          keyboardShouldPersistTaps="handled"
+        />
+      )}
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       {/* Context Menu */}
       <ContextMenu
@@ -854,7 +952,7 @@ const QuizzesWeb = () => {
                     fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280' 
                   }}>
-                    Quarter: {selectedQuiz.quarter}
+                    Term: {selectedQuiz.term === '1' ? '1st Term' : selectedQuiz.term === '2' ? '2nd Term' : '3rd Term'}
                   </Text>
                   <Text style={{ 
                     fontSize: 14, 
@@ -976,7 +1074,6 @@ const QuizzesWeb = () => {
                         )}
                       </View>
                     ) : question.type === 'multiple_answers' ? (
-                      // For multiple answers, use Expo Checkbox
                       <View>
                         {question.options.map((option, optionIndex) => (
                           <View
@@ -1015,7 +1112,6 @@ const QuizzesWeb = () => {
                         ))}
                       </View>
                     ) : (
-                      // For single choice questions (multiple_choice, true_false), use RadioButton
                       <View>
                         {question.options.map((option, optionIndex) => (
                           <RadioButton
@@ -1127,3 +1223,40 @@ const QuizzesWeb = () => {
 };
 
 export default QuizzesWeb;
+
+const handleDownloadQuizPdf = async (quiz: Quiz) => {
+  try {
+    if (Platform.OS !== "web") {
+      Alert.alert("Unsupported", "PDF download is currently available on web only.");
+      return;
+    }
+
+    const response = await apiClient.get(`/quizzes/${quiz._id}/download-pdf`, {
+      responseType: "blob",
+    });
+
+    const blob = new Blob([response.data], { type: "application/pdf" });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    const safeFileName = `${quiz.title || "quiz"}`
+      .replace(/[^a-z0-9]+/gi, "_")
+      .replace(/^_+|_+$/g, "")
+      .toLowerCase();
+
+    link.href = url;
+    link.download = `${safeFileName}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error("Error downloading quiz PDF:", error);
+    const message = "Failed to download quiz PDF";
+    if (Platform.OS === "web") {
+      window.alert(message);
+    } else {
+      Alert.alert("Error", message);
+    }
+  }
+};

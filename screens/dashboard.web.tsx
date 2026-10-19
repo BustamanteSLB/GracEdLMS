@@ -8,6 +8,7 @@ import { useRouter } from 'expo-router';
 import { useDarkMode } from '../contexts/DarkModeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import apiClient from '@/app/services/apiClient';
+import NetworkBanner from '@/components/NetworkBanner.web';
 
 // Icons
 import ActivityIcon from '@/assets/icons/activity.svg';
@@ -143,6 +144,7 @@ const DBWeb: React.FC = () => {
   const [analyticsData, setAnalyticsData] = useState<StudentAnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [networkError, setNetworkError] = useState(false);
   const [isPortrait, setIsPortrait] = useState(true);
   const { width, height } = Dimensions.get('window');
 
@@ -159,11 +161,17 @@ const DBWeb: React.FC = () => {
     };
   }, []);
 
+  const isNetworkError = (err: any) =>
+    err?.message?.toLowerCase?.().includes('network') ||
+    err?.status === 0 ||
+    !err?.response;
+
   // Fetch analytics data
   const fetchAnalytics = async () => {
     try {
       setLoading(true);
       setError(null);
+      setNetworkError(false);
 
       const response = await apiClient.get('/analytics/student-dashboard');
       
@@ -174,6 +182,7 @@ const DBWeb: React.FC = () => {
       }
     } catch (err: any) {
       console.error('Error fetching analytics:', err);
+      if (isNetworkError(err)) setNetworkError(true);
       setError(err.response?.data?.message || 'Failed to load dashboard data');
     } finally {
       setLoading(false);
@@ -425,6 +434,15 @@ const DBWeb: React.FC = () => {
               </TouchableOpacity>
             </View>
           </FeedCard>
+
+          {/* Animated network banner overlay */}
+          <NetworkBanner
+            forceVisible={networkError}
+            onRetry={() => {
+              setNetworkError(false);
+              fetchAnalytics();
+            }}
+          />
         </SafeAreaView>
       );
     }
@@ -865,6 +883,15 @@ const DBWeb: React.FC = () => {
             </FeedCard>
           </View>
         </ScrollView>
+
+        {/* Animated network banner overlay */}
+        <NetworkBanner
+          forceVisible={networkError}
+          onRetry={() => {
+            setNetworkError(false);
+            fetchAnalytics();
+          }}
+        />
         
         <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       </View>
@@ -905,6 +932,16 @@ const DBWeb: React.FC = () => {
           </TouchableOpacity>
         ))}
       </View>
+
+      {/* Animated network banner overlay */}
+      <NetworkBanner
+        forceVisible={networkError}
+        onRetry={() => {
+          setNetworkError(false);
+          fetchAnalytics();
+        }}
+      />
+
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} backgroundColor={colorScheme === 'dark' ? 'black' : 'white'}/>
     </SafeAreaView>
   );

@@ -9,6 +9,7 @@ import {
   TouchableOpacity,
   View,
   ActivityIndicator,
+  ToastAndroid,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -331,7 +332,7 @@ const DiscussionComments: React.FC<DiscussionCommentsProps> = ({
     } catch (error) {
       console.error('Error submitting:', error);
       const message = 'Failed to submit.';
-      isWeb ? window.alert(`Error: ${message}`) : Alert.alert('Error', message);
+      isWeb ? window.alert(`Error: ${message}`) : ToastAndroid.show(message, ToastAndroid.SHORT);
     }
   };
 
@@ -409,7 +410,7 @@ const DiscussionComments: React.FC<DiscussionCommentsProps> = ({
         const message = Platform.OS === 'web' 
           ? 'Failed to delete reply. Please try again.' 
           : 'Failed to delete reply';
-        Platform.OS === 'web' ? window.alert(`Error: ${message}`) : Alert.alert('Error', message);
+        Platform.OS === 'web' ? window.alert(`Error: ${message}`) : ToastAndroid.show(message, ToastAndroid.SHORT);
       }
     }
   };
@@ -420,9 +421,15 @@ const DiscussionComments: React.FC<DiscussionCommentsProps> = ({
   const canDeleteComment = (comment: Comment): boolean => 
     user && isAuthenticated ? comment.author._id === user._id : false;
 
-  const canHideComment = (): boolean => 
-    user && isAuthenticated ? user.role === 'Admin' : false;
+  const canHideComment = (): boolean => {
+    if (!user || !isAuthenticated || !discussion) return false;
 
+    const isAdmin = user.role === 'Admin';
+    const isTeacherOwnPost =
+      user.role === 'Teacher' && discussion.author._id === user._id;
+
+    return isAdmin || isTeacherOwnPost;
+  };
   const canEditReply = (reply: Reply): boolean => 
     user && isAuthenticated ? reply.author._id === user._id : false;
 
@@ -432,10 +439,10 @@ const DiscussionComments: React.FC<DiscussionCommentsProps> = ({
     return reply.author._id === user._id;
   };
 
-  const canHideReply = (): boolean => 
-    user && isAuthenticated ? user.role === 'Admin' : false;
-
-    // Handle toggle hide comment
+  const canHideReply = (): boolean => {
+    if (!user || !isAuthenticated) return false;
+    return user.role === 'Admin';
+  };
   const handleToggleHideComment = async (commentId: string) => {
     if (!discussion) return;
     try {
@@ -446,7 +453,6 @@ const DiscussionComments: React.FC<DiscussionCommentsProps> = ({
     }
   };
 
-  // Handle toggle hide reply
   const handleToggleHideReply = async (commentId: string, replyId: string) => {
     if (!discussion) return;
     try {
@@ -477,7 +483,7 @@ const DiscussionComments: React.FC<DiscussionCommentsProps> = ({
         <View key={reply._id} style={{ marginBottom: 12 }}>
           <View style={{ padding: 12, backgroundColor: isDarkMode ? '#2A2A2A' : '#F0F0F0', borderRadius: 8 }}>
             <Text className={`font-inter_regular text-sm italic ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-              This reply has been hidden by a moderator
+              This reply has been hidden by a teacher or moderator.
             </Text>
           </View>
         </View>
@@ -563,12 +569,12 @@ const DiscussionComments: React.FC<DiscussionCommentsProps> = ({
     console.log(`Comment ${comment._id} isHidden:`, comment.isHidden, 'User role:', user?.role);
     
     // Show hidden message for non-admins
-    if (comment.isHidden && user?.role !== 'Admin') {
+    if (comment.isHidden && !canHideComment()) {
       return (
         <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: isDarkMode ? '#2A2A2A' : '#F0F0F0' }}>
           <View style={{ padding: 16, backgroundColor: isDarkMode ? '#2A2A2A' : '#F0F0F0', borderRadius: 12 }}>
             <Text className={`font-inter_regular italic ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-              This comment has been hidden by a moderator
+              This comment has been hidden by a teacher or moderator.
             </Text>
           </View>
         </View>
@@ -596,7 +602,7 @@ const DiscussionComments: React.FC<DiscussionCommentsProps> = ({
                   {getFullName(comment.author)}
                 </Text>
                 {comment.isEdited && (<Text className='font-inter_regular text-xs ml-2 text-purple-600'>• Edited</Text>)}
-                {comment.isHidden && user?.role === 'Admin' && (
+                {comment.isHidden && (user?.role === 'Admin' || canHideComment()) && (
                   <Text className='font-inter_regular text-xs ml-2 text-red-500'>• Hidden</Text>
                 )}
               </View>
@@ -716,4 +722,8 @@ const DiscussionComments: React.FC<DiscussionCommentsProps> = ({
 };
 
 export default React.memo(DiscussionComments);
+
+
+
+
 

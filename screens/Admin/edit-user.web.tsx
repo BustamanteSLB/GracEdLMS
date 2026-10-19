@@ -1,5 +1,5 @@
 import { View, Text, useColorScheme, TextInput, Alert, ActivityIndicator, Keyboard, TouchableOpacity, Platform } from 'react-native'
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useDarkMode } from '../../contexts/DarkModeContext';
 import { StatusBar } from 'expo-status-bar';
@@ -12,6 +12,7 @@ import apiClient, { ApiResponse } from '@/app/services/apiClient';
 import { User } from '@/app/types';
 import * as ImagePicker from 'expo-image-picker';
 import Dropdown, { DropdownItem } from '@/components/Dropdown';
+import NetworkBanner from '@/components/NetworkBanner.web';
 
 cssInterop(Image, { className: "style" });
 
@@ -66,6 +67,9 @@ const EditUserWeb = () => {
 
   const [isSecure, setSecure] = useState(true);
   const [isConfirmSecure, setConfirmSecure] = useState(true);
+
+  // Network banner state
+  const [forceNetworkBannerVisible, setForceNetworkBannerVisible] = useState(false);
 
   const toggleSecure = () => setSecure(prev => !prev);
   const toggleConfirmSecure = () => setConfirmSecure(prev => !prev);
@@ -234,51 +238,63 @@ const EditUserWeb = () => {
   };
 
   // Fetch user data on component mount or ID change
-  useEffect(() => {
-    const fetchUserData = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const response = await apiClient.get(`/users/${id}`);
-        const fetchedData: UserData = response.data.data;
-        setUserData(fetchedData);
-
-        // Populate form fields with fetched data
-        setProfilePicture(fetchedData.profilePicture || '');
-        setUserId(fetchedData.userId || '');
-        setUsername(fetchedData.username || '');
-        setFirstName(fetchedData.firstName || '');
-        setMiddleName(fetchedData.middleName || '');
-        setLastName(fetchedData.lastName || '');
-        setEmail(fetchedData.email || '');
-        
-        // Handle phone number - remove +63 prefix if present for display
-        const phoneNum = fetchedData.phoneNumber || '';
-        if (phoneNum.startsWith('+63')) {
-          setPhoneNumber(phoneNum.substring(3));
-        } else {
-          setPhoneNumber(phoneNum);
-        }
-        
-        setAddress(fetchedData.address || '');
-        setSex(fetchedData.sex || 'Male');
-        setStatus(fetchedData.status || 'active');
-        setRole(fetchedData.role || 'Student');
-      } catch (err: any) {
-        console.error('Error fetching user data:', err.response?.data || err.message);
-        setError(err.response?.data?.message || 'Failed to fetch user data.');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    if (id) {
-      fetchUserData();
-    } else {
+  const fetchUserData = useCallback(async () => {
+    if (!id) {
       setError('No user ID provided.');
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await apiClient.get(`/users/${id}`);
+      const fetchedData: UserData = response.data.data;
+      setUserData(fetchedData);
+
+      // Populate form fields with fetched data
+      setProfilePicture(fetchedData.profilePicture || '');
+      setUserId(fetchedData.userId || '');
+      setUsername(fetchedData.username || '');
+      setFirstName(fetchedData.firstName || '');
+      setMiddleName(fetchedData.middleName || '');
+      setLastName(fetchedData.lastName || '');
+      setEmail(fetchedData.email || '');
+      
+      // Handle phone number - remove +63 prefix if present for display
+      const phoneNum = fetchedData.phoneNumber || '';
+      if (phoneNum.startsWith('+63')) {
+        setPhoneNumber(phoneNum.substring(3));
+      } else {
+        setPhoneNumber(phoneNum);
+      }
+      
+      setAddress(fetchedData.address || '');
+      setSex(fetchedData.sex || 'Male');
+      setStatus(fetchedData.status || 'active');
+      setRole(fetchedData.role || 'Student');
+
+      setForceNetworkBannerVisible(false);
+    } catch (err: any) {
+      console.error('Error fetching user data:', err.response?.data || err.message);
+      setError(err.response?.data?.message || 'Failed to fetch user data.');
+
+      const isNetworkError =
+        !err?.response ||
+        err?.code === 'ECONNABORTED' ||
+        err?.message?.toLowerCase().includes('network') ||
+        err?.message?.toLowerCase().includes('timeout');
+      if (isNetworkError) {
+        setForceNetworkBannerVisible(true);
+      }
+    } finally {
       setLoading(false);
     }
   }, [id]);
+
+  useEffect(() => {
+    fetchUserData();
+  }, [fetchUserData]);
 
   const handleEditUser = async () => {
     Keyboard.dismiss();
@@ -308,9 +324,19 @@ const EditUserWeb = () => {
       const response = await apiClient.put(`/users/${id}`, updatedData);
       successMessages.push('User details updated successfully!');
       setUserData(response.data.data);
+      setForceNetworkBannerVisible(false);
     } catch (err: any) {
       console.error('Error updating user details:', err.response?.data || err.message);
       errorMessages.push(err.response?.data?.message || 'Failed to update user details.');
+
+      const isNetworkError =
+        !err?.response ||
+        err?.code === 'ECONNABORTED' ||
+        err?.message?.toLowerCase().includes('network') ||
+        err?.message?.toLowerCase().includes('timeout');
+      if (isNetworkError) {
+        setForceNetworkBannerVisible(true);
+      }
     }
 
     // 2. Conditionally update password
@@ -356,6 +382,11 @@ const EditUserWeb = () => {
   if (loading) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' }}>
+        <NetworkBanner
+          forceVisible={forceNetworkBannerVisible}
+          onRetry={fetchUserData}
+          onDismiss={() => setForceNetworkBannerVisible(false)}
+        />
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
           <ActivityIndicator size="large" color="#3B82F6" />
           <Text style={{
@@ -374,6 +405,11 @@ const EditUserWeb = () => {
   if (error && !userData) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' }}>
+        <NetworkBanner
+          forceVisible={forceNetworkBannerVisible}
+          onRetry={fetchUserData}
+          onDismiss={() => setForceNetworkBannerVisible(false)}
+        />
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
           <Text style={{
             fontFamily: 'Inter-Regular',
@@ -390,6 +426,12 @@ const EditUserWeb = () => {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' }}>
+      <NetworkBanner
+        forceVisible={forceNetworkBannerVisible}
+        onRetry={fetchUserData}
+        onDismiss={() => setForceNetworkBannerVisible(false)}
+      />
+
       <ScrollView 
         contentContainerStyle={{
           flexGrow: 1,
@@ -657,17 +699,17 @@ const EditUserWeb = () => {
               />
             </View>
 
-            {/* Sex and Role Row - UPDATED WITH DROPDOWNS */}
+            {/* Gender and Role Row - UPDATED WITH DROPDOWNS */}
             <View style={{ flexDirection: 'row', gap: 12 }}>
               <View style={{ flex: 1 }}>
                 <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                  Sex
+                  Gender
                 </Text>
                 <Dropdown
                   data={sexOptions}
                   selectedValue={sex}
                   onValueChange={(value) => setSex(value as 'Male' | 'Female' | 'Other')}
-                  placeholder="Select Sex"
+                  placeholder="Select Gender"
                 />
               </View>
 

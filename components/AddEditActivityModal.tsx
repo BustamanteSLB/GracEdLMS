@@ -50,7 +50,7 @@ interface Activity {
   description?: string;
   visibleDate: string;
   deadline: string;
-  quarter: string;
+  term: string;
   points: number | null;
   createdBy: User;
   attachmentPath?: string | null;
@@ -90,7 +90,7 @@ const AddEditActivityModal: React.FC<AddEditActivityModalProps> = ({
   const [deadline, setDeadline] = useState<Date>(
     editActivity?.deadline ? new Date(editActivity.deadline) : new Date()
   );
-  const [quarter, setQuarter] = useState(editActivity?.quarter || 'First Quarter');
+  const [term, setTerm] = useState(editActivity?.term || '1');
   const [description, setDescription] = useState(editActivity?.description || '');
   const [points, setPoints] = useState(
     editActivity && editActivity.points !== null ? String(editActivity.points) : ''
@@ -109,19 +109,17 @@ const AddEditActivityModal: React.FC<AddEditActivityModalProps> = ({
   const [showDeadlineDatePicker, setShowDeadlineDatePicker] = useState(false);
   const [showDeadlineTimePicker, setShowDeadlineTimePicker] = useState(false);
 
-  // Quarter dropdown items
-  const quarterItemsWeb: DropdownItem[] = [
-    { label: 'First Quarter', value: 'First Quarter' },
-    { label: 'Second Quarter', value: 'Second Quarter' },
-    { label: 'Third Quarter', value: '3rd Quarter' },
-    { label: 'Fourth Quarter', value: '4th Quarter' },
+  // Term dropdown items
+  const termItemsWeb: DropdownItem[] = [
+    { label: '1st Term', value: '1' },
+    { label: '2nd Term', value: '2' },
+    { label: '3rd Term', value: '3' },
   ];
 
-  const quarterItemsMobile: DropdownMobileItem[] = [
-    { label: 'First Quarter', value: 'First Quarter' },
-    { label: 'Second Quarter', value: 'Second Quarter' },
-    { label: 'Third Quarter', value: '3rd Quarter' },
-    { label: 'Fourth Quarter', value: '4th Quarter' },
+  const termItemsMobile: DropdownMobileItem[] = [
+    { label: '1st Term', value: '1' },
+    { label: '2nd Term', value: '2' },
+    { label: '3rd Term', value: '3' },
   ];
 
   // Reset form when modal opens/closes
@@ -130,7 +128,7 @@ const AddEditActivityModal: React.FC<AddEditActivityModalProps> = ({
       setTitle(editActivity.title);
       setVisibleDate(new Date(editActivity.visibleDate));
       setDeadline(new Date(editActivity.deadline));
-      setQuarter(editActivity.quarter || 'First Quarter');
+      setTerm(editActivity.term || '1');
       setDescription(editActivity.description || '');
       setPoints(editActivity.points !== null ? String(editActivity.points) : '');
       setFile(null);
@@ -142,7 +140,7 @@ const AddEditActivityModal: React.FC<AddEditActivityModalProps> = ({
       setTitle('');
       setVisibleDate(new Date());
       setDeadline(new Date());
-      setQuarter('First Quarter');
+      setTerm('1');
       setDescription('');
       setPoints('');
       setFile(null);
@@ -267,8 +265,8 @@ const AddEditActivityModal: React.FC<AddEditActivityModalProps> = ({
       return;
     }
 
-    if (!quarter.trim()) {
-      showAlert('Validation Error', 'Quarter is required.');
+    if (!term.trim()) {
+      showAlert('Validation Error', 'Term is required.');
       return;
     }
 
@@ -299,7 +297,7 @@ const AddEditActivityModal: React.FC<AddEditActivityModalProps> = ({
       formData.append('title', title.trim());
       formData.append('visibleDate', visibleDate.toISOString());
       formData.append('deadline', deadline.toISOString());
-      formData.append('quarter', quarter.trim());
+      formData.append('term', term.trim());
       formData.append('description', description.trim());
       formData.append('allowLateSubmissions', String(allowLateSubmissions));
       
@@ -604,7 +602,7 @@ const AddEditActivityModal: React.FC<AddEditActivityModalProps> = ({
                 </View>
               </View>
 
-              {/* Quarter Picker */}
+              {/* Term Picker */}
               <View style={{ marginBottom: 16 }}>
                 <Text
                   style={{
@@ -614,14 +612,14 @@ const AddEditActivityModal: React.FC<AddEditActivityModalProps> = ({
                     marginBottom: 8,
                   }}
                 >
-                  Quarter <Text style={{ color: '#EF4444' }}>*</Text>
+                  Term <Text style={{ color: '#EF4444' }}>*</Text>
                 </Text>
                 {isWeb ? (
                   <Dropdown
-                    selectedValue={quarter}
-                    onValueChange={(value) => setQuarter(value)}
-                    data={quarterItemsWeb}
-                    placeholder="Select Quarter"
+                    selectedValue={term}
+                    onValueChange={(value) => setTerm(value)}
+                    data={termItemsWeb}
+                    placeholder="Select Term"
                     style={{
                       backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
                       borderRadius: 8,
@@ -636,10 +634,10 @@ const AddEditActivityModal: React.FC<AddEditActivityModalProps> = ({
                   />
                 ) : (
                   <DropdownMobile
-                    selectedValue={quarter}
-                    onValueChange={(value) => setQuarter(value)}
-                    items={quarterItemsMobile}
-                    placeholder="Select Quarter"
+                    selectedValue={term}
+                    onValueChange={(value) => setTerm(value)}
+                    items={termItemsMobile}
+                    placeholder="Select Term"
                     buttonStyle={{
                       backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
                       borderRadius: 8,

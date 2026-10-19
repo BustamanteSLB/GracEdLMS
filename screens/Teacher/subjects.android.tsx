@@ -1,3 +1,4 @@
+// subjects.android.tsx
 import apiClient from '@/app/services/apiClient';
 import { Subject } from '@/app/types/index';
 import { useAuth } from '@/contexts/AuthContext';
@@ -6,7 +7,7 @@ import { Image } from 'expo-image';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { cssInterop } from 'nativewind';
-import React, { useCallback, useEffect, useState, useMemo, memo } from 'react';
+import React, { useCallback, useEffect, useState, useMemo, memo, useRef } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -18,6 +19,7 @@ import {
   TouchableOpacity,
   useColorScheme,
   View,
+  ToastAndroid,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlashList } from '@shopify/flash-list';
@@ -26,24 +28,32 @@ import DownIcon from '@/assets/icons/down.svg';
 import MoreVertIcon from '@/assets/icons/more_vert.svg';
 import DeleteIcon from '@/assets/icons/delete.svg';
 import * as DocumentPicker from 'expo-document-picker';
+import {
+  formatSubjectDisplay,
+  normalizeClassCodeInput,
+} from '@/app/utils/subjectUtils';
+import NetworkBanner from '@/components/NetworkBanner.android';
 
 cssInterop(Image, { className: 'style' });
 
+// Pagination constant
+const ITEMS_PER_PAGE = 10;
+
 interface SubjectForm {
   subjectName: string;
+  classCode: string;
   description: string;
   gradeLevel: string;
   section: string;
   schoolYear: string;
   teachers: Array<{
     teacherId: string;
-    quarters?: {
-      firstQuarter: boolean;
-      secondQuarter: boolean;
-      thirdQuarter: boolean;
-      fourthQuarter: boolean;
+    terms?: {
+      1: boolean;
+      2: boolean;
+      3: boolean;
     };
-    isAssignedToAllQuarters: boolean;
+    isAssignedToAllTerms: boolean;
   }>;
 }
 
@@ -99,7 +109,8 @@ const SubjectItem = memo<{
         backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
         borderRadius: 12,
         padding: 16,
-        marginBottom: 12,
+        marginTop: 16,
+        marginHorizontal: 16,
         borderWidth: 1,
         borderColor: isDarkMode ? '#333333' : '#E5E7EB',
         shadowColor: '#000',
@@ -152,7 +163,7 @@ const SubjectItem = memo<{
               }}
               numberOfLines={1}
             >
-              {item.subjectName}
+              {formatSubjectDisplay(item)}
             </Text>
             <Text
               style={{
@@ -214,6 +225,11 @@ const SubjectsAndroid: React.FC = () => {
   const [selectedGradeLevel, setSelectedGradeLevel] = useState<string>('');
   const [selectedSchoolYear, setSelectedSchoolYear] = useState<string>('');
 
+  // Pagination state
+  const [displayedCount, setDisplayedCount] = useState(ITEMS_PER_PAGE);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const listRef = useRef<any>(null);
+
   // Actions modal states
   const [actionsModalVisible, setActionsModalVisible] = useState(false);
   const [actionsModalSubject, setActionsModalSubject] = useState<Subject | null>(null);
@@ -225,10 +241,12 @@ const SubjectsAndroid: React.FC = () => {
 
   // Form fields
   const [subjectName, setSubjectName] = useState('');
+  const [classCode, setClassCode] = useState('');
   const [description, setDescription] = useState('');
   const [gradeLevel, setGradeLevel] = useState('');
   const [section, setSection] = useState('');
   const [schoolYear, setSchoolYear] = useState('');
+  const [activeSchoolYear, setActiveSchoolYear] = useState<string | null>(null);
   const [teacherIdentifier, setTeacherIdentifier] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -236,6 +254,9 @@ const SubjectsAndroid: React.FC = () => {
   // Sections state
   const [sections, setSections] = useState<Section[]>([]);
   const [loadingSections, setLoadingSections] = useState(false);
+
+  // Network banner state
+  const [forceNetworkBannerVisible, setForceNetworkBannerVisible] = useState(false);
 
   const isTeacher = user?.role === 'Teacher';
 
@@ -260,7 +281,7 @@ const SubjectsAndroid: React.FC = () => {
     { label: 'Grade 6', value: 'Grade 6' },
   ], []);
 
-  const schoolYearOptions = useMemo(() => {
+  const allSchoolYearOptions = useMemo(() => {
     const currentYear = new Date().getFullYear();
     const options = [{ label: 'Select School Year', value: '' }];
     
@@ -279,6 +300,16 @@ const SubjectsAndroid: React.FC = () => {
     return options;
   }, []);
 
+  const schoolYearFormOptions = useMemo(() => {
+    if (!activeSchoolYear) {
+      return allSchoolYearOptions;
+    }
+
+    const displayYear =
+      isEditing && schoolYear ? schoolYear : activeSchoolYear;
+    return [{ label: displayYear, value: displayYear }];
+  }, [activeSchoolYear, allSchoolYearOptions, isEditing, schoolYear]);
+
   const schoolYearFilterOptions = useMemo(() => {
     const currentYear = new Date().getFullYear();
     const options = [{ label: 'All School Years', value: '' }];
@@ -296,6 +327,15 @@ const SubjectsAndroid: React.FC = () => {
     }
     
     return options;
+  }, []);
+
+  const fetchActiveSchoolYear = useCallback(async () => {
+    try {
+      const response = await apiClient.get('/subjects/active-school-year');
+      setActiveSchoolYear(response.data.data?.activeSchoolYear || null);
+    } catch (error) {
+      console.error('Failed to fetch active school year:', error);
+    }
   }, []);
 
   // Fetch sections for the selected grade and school year
@@ -362,9 +402,20 @@ const SubjectsAndroid: React.FC = () => {
       });
       
       setSubjects(teacherSubjects);
-    } catch (error) {
+      setDisplayedCount(ITEMS_PER_PAGE);
+      setForceNetworkBannerVisible(false);
+    } catch (error: any) {
       console.error('Failed to fetch teacher subjects:', error);
-      Alert.alert('Error', 'Failed to load your subjects.');
+      ToastAndroid.show('Failed to load your subjects.', ToastAndroid.SHORT);
+
+      const isNetworkError =
+        !error?.response ||
+        error?.code === 'ECONNABORTED' ||
+        error?.message?.toLowerCase().includes('network') ||
+        error?.message?.toLowerCase().includes('timeout');
+      if (isNetworkError) {
+        setForceNetworkBannerVisible(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -375,14 +426,22 @@ const SubjectsAndroid: React.FC = () => {
     useCallback(() => {
       if (isTeacher) {
         fetchTeacherSubjects();
+        fetchActiveSchoolYear();
       }
-    }, [fetchTeacherSubjects, isTeacher])
+    }, [fetchTeacherSubjects, fetchActiveSchoolYear, isTeacher])
   );
+
+  useEffect(() => {
+    if (modalVisible && activeSchoolYear && !isEditing) {
+      setSchoolYear(activeSchoolYear);
+    }
+  }, [modalVisible, activeSchoolYear, isEditing]);
 
   // Filter subjects
   const filteredSubjects = useMemo(() => {
     return subjects.filter((subject) => {
       const matchesSearch = subject.subjectName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                           subject.classCode?.toLowerCase().includes(searchQuery.toLowerCase()) ||
                            subject.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
                            subject.section?.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesGradeLevel = !selectedGradeLevel || subject.gradeLevel === selectedGradeLevel;
@@ -391,6 +450,34 @@ const SubjectsAndroid: React.FC = () => {
       return matchesSearch && matchesGradeLevel && matchesSchoolYear;
     });
   }, [subjects, searchQuery, selectedGradeLevel, selectedSchoolYear]);
+
+  // Paginated subjects for display
+  const displayedSubjects = useMemo(() => {
+    return filteredSubjects.slice(0, displayedCount);
+  }, [filteredSubjects, displayedCount]);
+
+  const hasMore = displayedCount < filteredSubjects.length;
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setDisplayedCount(ITEMS_PER_PAGE);
+    try {
+      listRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+    } catch (e) {
+      // ignore
+    }
+  }, [searchQuery, selectedGradeLevel, selectedSchoolYear]);
+
+  // Infinite scroll handler
+  const loadMore = useCallback(() => {
+    if (isLoadingMore || !hasMore) return;
+
+    setIsLoadingMore(true);
+    setTimeout(() => {
+      setDisplayedCount(prev => Math.min(prev + ITEMS_PER_PAGE, filteredSubjects.length));
+      setIsLoadingMore(false);
+    }, 350);
+  }, [isLoadingMore, hasMore, filteredSubjects.length]);
 
   // Handlers
   const handleAddSubject = useCallback(() => {
@@ -404,20 +491,22 @@ const SubjectsAndroid: React.FC = () => {
     setIsEditing(false);
     setCurrentSubject(null);
     setSubjectName('');
+    setClassCode('');
     setDescription('');
     setGradeLevel('');
     setSection('');
-    setSchoolYear('');
+    setSchoolYear(activeSchoolYear || '');
     setTeacherIdentifier(user?.email || '');
     setSelectedImage(null);
     setSections([]);
     setModalVisible(true);
-  }, [subjects.length, user?.email]);
+  }, [subjects.length, user?.email, activeSchoolYear]);
 
   const handleEditSubject = useCallback((subject: Subject) => {
     setIsEditing(true);
     setCurrentSubject(subject);
     setSubjectName(subject.subjectName);
+    setClassCode(subject.classCode || '');
     setDescription(subject.description || '');
     setGradeLevel(subject.gradeLevel || '');
     setSection(subject.section || '');
@@ -445,10 +534,10 @@ const SubjectsAndroid: React.FC = () => {
             try {
               await apiClient.delete(`/subjects/${subjectId}`);
               await fetchTeacherSubjects();
-              Alert.alert('Success', 'Subject deleted successfully.');
+              ToastAndroid.show('Subject deleted successfully.', ToastAndroid.SHORT);
             } catch (error) {
               console.error('Failed to delete subject:', error);
-              Alert.alert('Error', 'Failed to delete subject.');
+              ToastAndroid.show('Failed to delete subject.', ToastAndroid.SHORT);
             }
           }
         }
@@ -467,8 +556,19 @@ const SubjectsAndroid: React.FC = () => {
       return;
     }
 
+    if (!classCode.trim()) {
+      Alert.alert('Validation Error', 'Class code is required.');
+      return;
+    }
+
+    if (classCode.trim().length > 12) {
+      Alert.alert('Validation Error', 'Class code must be at most 12 characters.');
+      return;
+    }
+
     const formData: SubjectForm = {
       subjectName: subjectName.trim(),
+      classCode: classCode.trim().toUpperCase(),
       description: description.trim(),
       gradeLevel: gradeLevel.trim(),
       section: section.trim(),
@@ -476,12 +576,11 @@ const SubjectsAndroid: React.FC = () => {
       teachers: [
         {
           teacherId: teacherIdentifier.trim() || user?.email || user?._id || '',
-          isAssignedToAllQuarters: true,
-          quarters: {
-            firstQuarter: true,
-            secondQuarter: true,
-            thirdQuarter: true,
-            fourthQuarter: true,
+          isAssignedToAllTerms: true,
+          terms: {
+            1: true,
+            2: true,
+            3: true,
           }
         }
       ],
@@ -489,17 +588,19 @@ const SubjectsAndroid: React.FC = () => {
 
     try {
       if (isEditing && currentSubject) {
-        await apiClient.put(`/subjects/${currentSubject._id}`, formData);
+        const response = await apiClient.put(`/subjects/${currentSubject._id}`, formData);
         if (selectedImage) {
           await handleUploadImage(currentSubject._id);
         }
-        Alert.alert('Success', 'Subject updated successfully.');
+        const updated = response.data.data;
+        ToastAndroid.show(`${formatSubjectDisplay(updated || { classCode: formData.classCode, subjectName: formData.subjectName })} successfully updated.`, ToastAndroid.SHORT);
       } else {
         const response = await apiClient.post('/subjects', formData);
         if (selectedImage && response.data.data?._id) {
           await handleUploadImage(response.data.data._id);
         }
-        Alert.alert('Success', 'Subject created successfully.');
+        const created = response.data.data;
+        ToastAndroid.show(`${formatSubjectDisplay(created)} successfully created.`, ToastAndroid.SHORT);
       }
       setModalVisible(false);
       setSelectedImage(null);
@@ -508,13 +609,19 @@ const SubjectsAndroid: React.FC = () => {
     } catch (error: any) {
       console.error('Failed to save subject:', error.response?.data || error.message);
       const backendErrorMessage = error.response?.data?.message;
-      if (backendErrorMessage && backendErrorMessage.includes('Duplicate field value entered') && backendErrorMessage.includes('subjectName')) {
+      if (
+        backendErrorMessage?.includes('Class code already exists') ||
+        (backendErrorMessage?.includes('Duplicate field value entered') &&
+          backendErrorMessage?.includes('classCode'))
+      ) {
+        Alert.alert('Error', 'Class code already exists. Please use a different code.');
+      } else if (backendErrorMessage && backendErrorMessage.includes('Duplicate field value entered') && backendErrorMessage.includes('subjectName')) {
         Alert.alert('Error', 'Subject name already exists. Please use a different name.');
       } else {
-        Alert.alert('Error', backendErrorMessage || 'Failed to save subject.');
+        ToastAndroid.show(backendErrorMessage || 'Failed to save subject.', ToastAndroid.SHORT);
       }
     }
-  }, [subjectName, schoolYear, section, description, gradeLevel, teacherIdentifier, user?.email, user?._id, isEditing, currentSubject, selectedImage, fetchTeacherSubjects]);
+  }, [subjectName, classCode, schoolYear, section, description, gradeLevel, teacherIdentifier, user?.email, user?._id, isEditing, currentSubject, selectedImage, fetchTeacherSubjects]);
 
   // Image handlers
   const handlePickImage = useCallback(async () => {
@@ -530,7 +637,7 @@ const SubjectsAndroid: React.FC = () => {
       }
     } catch (error) {
       console.error('Error picking image:', error);
-      Alert.alert('Error', 'Failed to pick image');
+      ToastAndroid.show('Failed to pick image.', ToastAndroid.SHORT);
     }
   }, []);
 
@@ -550,7 +657,7 @@ const SubjectsAndroid: React.FC = () => {
       });
     } catch (error: any) {
       console.error('Error uploading image:', error);
-      Alert.alert('Error', error.response?.data?.message || 'Failed to upload image');
+      ToastAndroid.show(error.response?.data?.message || 'Failed to upload image.', ToastAndroid.SHORT);
     } finally {
       setUploadingImage(false);
     }
@@ -568,11 +675,11 @@ const SubjectsAndroid: React.FC = () => {
           onPress: async () => {
             try {
               await apiClient.delete(`/subjects/${subjectId}/delete-image`);
-              Alert.alert('Success', 'Subject image deleted successfully');
+              ToastAndroid.show('Subject image deleted successfully.', ToastAndroid.SHORT);
               await fetchTeacherSubjects();
             } catch (error: any) {
               console.error('Error deleting image:', error);
-              Alert.alert('Error', error.response?.data?.message || 'Failed to delete image');
+              ToastAndroid.show(error.response?.data?.message || 'Failed to delete image.', ToastAndroid.SHORT);
             }
           }
         }
@@ -612,10 +719,228 @@ const SubjectsAndroid: React.FC = () => {
 
   const keyExtractor = useCallback((item: Subject) => item._id, []);
 
+  // ---- List header (scrolls with content now) ----
+  const listHeader = (
+    <View
+      style={{
+        backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
+        paddingHorizontal: 20,
+        paddingTop: 16,
+        paddingBottom: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
+      }}
+    >
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+        <View>
+          <Text
+            style={{
+              fontSize: 24,
+              fontFamily: 'Inter-Bold',
+              color: isDarkMode ? '#F9FAFB' : '#111827',
+            }}
+          >
+            My Subjects
+          </Text>
+          <Text style={{ 
+            fontSize: 14, 
+            fontFamily: 'Inter-Regular',
+            color: isDarkMode ? '#9CA3AF' : '#6B7280',
+            marginTop: 4 
+          }}>
+            Showing {displayedSubjects.length} of {filteredSubjects.length} subjects
+          </Text>
+        </View>
+        
+        {/* Buttons Container */}
+        <View style={{ flexDirection: 'row', gap: 4 }}>
+          {/* Add Subject Button */}
+          <TouchableOpacity
+            onPress={handleAddSubject}
+            style={{
+              backgroundColor: '#3B82F6',
+              padding: 8,
+              borderRadius: 8,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Image
+              source={require('@/assets/icons/plus.png')}
+              style={{ width: 24, height: 24 }}
+              tintColor="white"
+            />
+          </TouchableOpacity>
+          {/* Refresh Button */}
+          <TouchableOpacity
+            onPress={fetchTeacherSubjects}
+            disabled={loading}
+            style={{
+              backgroundColor: '#EF4444',
+              padding: 8,
+              borderRadius: 8,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Image
+              source={require('@/assets/icons/refresh.png')}
+              style={{ width: 24, height: 24 }}
+              tintColor="white"
+            />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Filters */}
+      <View style={{ marginTop: 16 }}>
+        <View style={{ flexDirection: 'row', marginBottom: 12 }}>
+          <View style={{ flex: 1, marginRight: 8 }}>
+            <TextInput
+              placeholder="Search subjects..."
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              style={{
+                backgroundColor: isDarkMode ? '#2A2A2A' : '#F3F4F6',
+                borderRadius: 8,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                color: isDarkMode ? '#E0E0E0' : '#111827',
+                fontFamily: 'Inter-Regular',
+              }}
+              placeholderTextColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
+            />
+          </View>
+          <TouchableOpacity
+            onPress={fetchTeacherSubjects}
+            style={{
+              backgroundColor: '#10B981',
+              paddingHorizontal: 16,
+              paddingVertical: 8,
+              borderRadius: 8,
+            }}
+          >
+            <Text style={{ 
+              color: 'white', 
+              fontFamily: 'Inter-SemiBold' 
+            }}>
+              Search
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          {/* Grade Level Filter */}
+          <View style={{ flex: 1 }}>
+            <Text style={{ 
+              fontSize: 12, 
+              fontFamily: 'Inter-Medium',
+              color: isDarkMode ? '#E0E0E0' : '#6B7280', 
+              marginBottom: 4 
+            }}>
+              Grade Level
+            </Text>
+            <DropdownMobile
+              label="Grade Level"
+              selectedValue={selectedGradeLevel}
+              onValueChange={setSelectedGradeLevel}
+              items={gradeLevelFilterOptions}
+              placeholder="All Grade Levels"
+              buttonRightIcon={DownIcon}
+            />
+          </View>
+
+          {/* School Year Filter */}
+          <View style={{ flex: 1 }}>
+            <Text style={{ 
+              fontSize: 12, 
+              fontFamily: 'Inter-Medium',
+              color: isDarkMode ? '#E0E0E0' : '#6B7280', 
+              marginBottom: 4 
+            }}>
+              School Year
+            </Text>
+            <DropdownMobile
+              label="School Year"
+              selectedValue={selectedSchoolYear}
+              onValueChange={setSelectedSchoolYear}
+              items={schoolYearFilterOptions}
+              placeholder="All School Years"
+              buttonRightIcon={DownIcon}
+            />
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+
+  // ---- Empty state ----
+  const listEmpty = (
+    <View style={{ justifyContent: 'center', alignItems: 'center', padding: 40, minHeight: 300 }}>
+      <Image
+        source={require('@/assets/images/online-course.png')}
+        style={{ width: 64, height: 64, marginBottom: 16 }}
+      />
+      <Text style={{ 
+        fontSize: 18, 
+        fontFamily: 'Inter-SemiBold',
+        color: isDarkMode ? '#9CA3AF' : '#6B7280', 
+        marginBottom: 8,
+        textAlign: 'center',
+      }}>
+        No subjects found
+      </Text>
+      <Text style={{ 
+        fontSize: 14, 
+        fontFamily: 'Inter-Regular',
+        color: isDarkMode ? '#6B7280' : '#9CA3AF', 
+        textAlign: 'center' 
+      }}>
+        {searchQuery || selectedGradeLevel || selectedSchoolYear
+          ? 'Try adjusting your filters'
+          : 'Create your first subject to get started'}
+      </Text>
+    </View>
+  );
+
+  // ---- Footer (loading more / end of list) ----
+  const listFooter = (
+    <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+      {isLoadingMore ? (
+        <>
+          <ActivityIndicator size="small" color="#3B82F6" />
+          <Text style={{
+            marginTop: 8,
+            fontSize: 12,
+            fontFamily: 'Inter-Regular',
+            color: isDarkMode ? '#9CA3AF' : '#6B7280',
+          }}>
+            Loading more subjects...
+          </Text>
+        </>
+      ) : !hasMore && filteredSubjects.length > ITEMS_PER_PAGE ? (
+        <Text style={{
+          fontSize: 12,
+          fontFamily: 'Inter-Regular',
+          color: isDarkMode ? '#6B7280' : '#9CA3AF',
+        }}>
+          All {filteredSubjects.length} subjects loaded
+        </Text>
+      ) : null}
+    </View>
+  );
+
   // Loading state
   if (isLoading || loading) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB', justifyContent: 'center', alignItems: 'center' }} edges={['top', 'bottom']}>
+        <NetworkBanner
+          forceVisible={forceNetworkBannerVisible}
+          onRetry={fetchTeacherSubjects}
+          onDismiss={() => setForceNetworkBannerVisible(false)}
+        />
         <ActivityIndicator size="large" color="#3B82F6" />
         <Text style={{ 
           marginTop: 16, 
@@ -676,200 +1001,29 @@ const SubjectsAndroid: React.FC = () => {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB' }} edges={['left', 'right']}>
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+
+      <NetworkBanner
+        forceVisible={forceNetworkBannerVisible}
+        onRetry={fetchTeacherSubjects}
+        onDismiss={() => setForceNetworkBannerVisible(false)}
+      />
       
-      {/* Header */}
-      <View
-        style={{
-          backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
-          paddingHorizontal: 20,
-          paddingTop: 16,
-          paddingBottom: 16,
-          borderBottomWidth: 1,
-          borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
-        }}
-      >
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <View>
-            <Text
-              style={{
-                fontSize: 24,
-                fontFamily: 'Inter-Bold',
-                color: isDarkMode ? '#F9FAFB' : '#111827',
-              }}
-            >
-              My Subjects
-            </Text>
-            <Text style={{ 
-              fontSize: 14, 
-              fontFamily: 'Inter-Regular',
-              color: isDarkMode ? '#9CA3AF' : '#6B7280',
-              marginTop: 4 
-            }}>
-              Showing {filteredSubjects.length} of {subjects.length} subjects
-            </Text>
-          </View>
-          
-          {/* Buttons Container */}
-          <View style={{ flexDirection: 'row', gap: 4 }}>
-            {/* Add Subject Button */}
-            <TouchableOpacity
-              onPress={handleAddSubject}
-              style={{
-                backgroundColor: '#3B82F6',
-                padding: 8,
-                borderRadius: 8,
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Image
-                source={require('@/assets/icons/plus.png')}
-                style={{ width: 24, height: 24 }}
-                tintColor="white"
-              />
-            </TouchableOpacity>
-            {/* Refresh Button */}
-            <TouchableOpacity
-              onPress={fetchTeacherSubjects}
-              disabled={loading}
-              style={{
-                backgroundColor: '#EF4444',
-                padding: 8,
-                borderRadius: 8,
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Image
-                source={require('@/assets/icons/refresh.png')}
-                style={{ width: 24, height: 24 }}
-                tintColor="white"
-              />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Filters */}
-        <View style={{ marginTop: 16 }}>
-          <View style={{ flexDirection: 'row', marginBottom: 12 }}>
-            <View style={{ flex: 1, marginRight: 8 }}>
-              <TextInput
-                placeholder="Search subjects..."
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                style={{
-                  backgroundColor: isDarkMode ? '#2A2A2A' : '#F3F4F6',
-                  borderRadius: 8,
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                  color: isDarkMode ? '#E0E0E0' : '#111827',
-                  fontFamily: 'Inter-Regular',
-                }}
-                placeholderTextColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
-              />
-            </View>
-            <TouchableOpacity
-              onPress={fetchTeacherSubjects}
-              style={{
-                backgroundColor: '#10B981',
-                paddingHorizontal: 16,
-                paddingVertical: 8,
-                borderRadius: 8,
-              }}
-            >
-              <Text style={{ 
-                color: 'white', 
-                fontFamily: 'Inter-SemiBold' 
-              }}>
-                Search
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            {/* Grade Level Filter */}
-            <View style={{ flex: 1 }}>
-              <Text style={{ 
-                fontSize: 12, 
-                fontFamily: 'Inter-Medium',
-                color: isDarkMode ? '#E0E0E0' : '#6B7280', 
-                marginBottom: 4 
-              }}>
-                Grade Level
-              </Text>
-              <DropdownMobile
-                label="Grade Level"
-                selectedValue={selectedGradeLevel}
-                onValueChange={setSelectedGradeLevel}
-                items={gradeLevelFilterOptions}
-                placeholder="All Grade Levels"
-                buttonRightIcon={DownIcon}
-              />
-            </View>
-
-            {/* School Year Filter */}
-            <View style={{ flex: 1 }}>
-              <Text style={{ 
-                fontSize: 12, 
-                fontFamily: 'Inter-Medium',
-                color: isDarkMode ? '#E0E0E0' : '#6B7280', 
-                marginBottom: 4 
-              }}>
-                School Year
-              </Text>
-              <DropdownMobile
-                label="School Year"
-                selectedValue={selectedSchoolYear}
-                onValueChange={setSelectedSchoolYear}
-                items={schoolYearFilterOptions}
-                placeholder="All School Years"
-                buttonRightIcon={DownIcon}
-              />
-            </View>
-          </View>
-        </View>
-      </View>
-
-      {/* Content */}
-      <View style={{ flex: 1, padding: 20 }}>
-        {filteredSubjects.length > 0 ? (
-          <FlashList
-            data={filteredSubjects}
-            renderItem={renderSubjectItem}
-            keyExtractor={keyExtractor}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingBottom: 20 }}
-            extraData={isDarkMode}
-          />
-        ) : (
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <Image
-              source={require('@/assets/images/online-course.png')}
-              style={{ width: 64, height: 64, marginBottom: 16 }}
-            />
-            <Text style={{ 
-              fontSize: 18, 
-              fontFamily: 'Inter-SemiBold',
-              color: isDarkMode ? '#9CA3AF' : '#6B7280', 
-              marginBottom: 8 
-            }}>
-              No subjects found
-            </Text>
-            <Text style={{ 
-              fontSize: 14, 
-              fontFamily: 'Inter-Regular',
-              color: isDarkMode ? '#6B7280' : '#9CA3AF', 
-              textAlign: 'center' 
-            }}>
-              {searchQuery || selectedGradeLevel || selectedSchoolYear
-                ? 'Try adjusting your filters'
-                : 'Create your first subject to get started'}
-            </Text>
-          </View>
-        )}
-      </View>
+      {/* Entire screen is now scrollable via FlashList */}
+      <FlashList
+        ref={listRef}
+        data={displayedSubjects}
+        renderItem={renderSubjectItem}
+        keyExtractor={keyExtractor}
+        showsVerticalScrollIndicator={false}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.5}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={listEmpty}
+        ListFooterComponent={listFooter}
+        contentContainerStyle={{ paddingBottom: 20, flexGrow: 1 }}
+        extraData={isDarkMode}
+        keyboardShouldPersistTaps="handled"
+      />
 
       {/* Actions Modal */}
       <Modal
@@ -1164,6 +1318,42 @@ const SubjectsAndroid: React.FC = () => {
                 </Text>
               </TouchableOpacity>
 
+              {/* Class Code */}
+              <Text style={{
+                fontSize: 14,
+                fontFamily: 'Inter-SemiBold',
+                color: isDarkMode ? '#E0E0E0' : '#111827',
+                marginBottom: 8,
+              }}>
+                Class Code: <Text style={{ color: '#EF4444' }}>*</Text>
+              </Text>
+              <TextInput
+                style={{
+                  fontFamily: 'Inter-Regular',
+                  borderWidth: 1,
+                  borderRadius: 8,
+                  padding: 12,
+                  marginBottom: 4,
+                  backgroundColor: isDarkMode ? '#2A2A2A' : '#FFFFFF',
+                  borderColor: isDarkMode ? '#6B7280' : '#D1D5DB',
+                  color: isDarkMode ? '#E0E0E0' : '#111827',
+                }}
+                placeholder="e.g. SCIBIOG06"
+                placeholderTextColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
+                value={classCode}
+                onChangeText={(text) => setClassCode(normalizeClassCodeInput(text))}
+                maxLength={12}
+                autoCapitalize="characters"
+              />
+              <Text style={{
+                fontFamily: 'Inter-Regular',
+                fontSize: 12,
+                marginBottom: 16,
+                color: isDarkMode ? '#9CA3AF' : '#6B7280',
+              }}>
+                Max 12 characters. Letters and numbers only.
+              </Text>
+
               {/* Subject Name */}
               <Text style={{
                 fontSize: 14,
@@ -1197,7 +1387,7 @@ const SubjectsAndroid: React.FC = () => {
                 color: isDarkMode ? '#E0E0E0' : '#111827',
                 marginBottom: 8,
               }}>
-                Grade Level:
+                Grade Level: <Text style={{ color: '#EF4444' }}>*</Text>
               </Text>
               <View style={{ marginBottom: 16 }}>
                 <DropdownMobile
@@ -1219,16 +1409,27 @@ const SubjectsAndroid: React.FC = () => {
               }}>
                 School Year: <Text style={{ color: '#EF4444' }}>*</Text>
               </Text>
-              <View style={{ marginBottom: 16 }}>
+              <View style={{ marginBottom: 4 }}>
                 <DropdownMobile
                   label="School Year"
                   selectedValue={schoolYear}
                   onValueChange={setSchoolYear}
-                  items={schoolYearOptions}
+                  items={schoolYearFormOptions}
                   placeholder="Select School Year"
                   buttonRightIcon={DownIcon}
+                  disabled={!!activeSchoolYear}
                 />
               </View>
+              {activeSchoolYear && (
+                <Text style={{
+                  fontFamily: 'Inter-Regular',
+                  fontSize: 12,
+                  marginBottom: 16,
+                  color: isDarkMode ? '#9CA3AF' : '#6B7280',
+                }}>
+                  School year is set by the administrator to {activeSchoolYear}.
+                </Text>
+              )}
 
               {/* Section */}
               <Text style={{
@@ -1340,13 +1541,13 @@ const SubjectsAndroid: React.FC = () => {
             }}>
               <TouchableOpacity
                 onPress={handleSubmit}
-                disabled={uploadingImage || !section || !subjectName.trim() || !schoolYear.trim()}
+                disabled={uploadingImage || !section || !subjectName.trim() || !schoolYear.trim() || !classCode.trim()}
                 style={{
                   flex: 1,
                   padding: 14,
                   borderRadius: 8,
                   alignItems: 'center',
-                  backgroundColor: (!section || !subjectName.trim() || !schoolYear.trim()) ? '#9CA3AF' : '#3B82F6',
+                  backgroundColor: (!section || !subjectName.trim() || !schoolYear.trim() || !classCode.trim()) ? '#9CA3AF' : '#3B82F6',
                 }}
               >
                 {uploadingImage ? (

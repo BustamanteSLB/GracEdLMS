@@ -266,7 +266,7 @@ const AddEventWeb: React.FC<AddEventWebProps> = ({
                   marginBottom: 8,
                 }}
               >
-                Event Title *
+                Event Title <Text className="text-red-500">*</Text>
               </Text>
               <TextInput
                 style={{
@@ -297,7 +297,7 @@ const AddEventWeb: React.FC<AddEventWebProps> = ({
                   marginBottom: 8,
                 }}
               >
-                Event Header *
+                Event Header <Text className="text-red-500">*</Text>
               </Text>
               <TextInput
                 style={{
@@ -328,7 +328,7 @@ const AddEventWeb: React.FC<AddEventWebProps> = ({
                   marginBottom: 8,
                 }}
               >
-                Event Details *
+                Event Details <Text className="text-red-500">*</Text>
               </Text>
               <TextInput
                 style={{
@@ -381,7 +381,7 @@ const AddEventWeb: React.FC<AddEventWebProps> = ({
                   marginBottom: 12,
                 }}
               >
-                📅 When
+                📅 When <Text className="text-red-500">*</Text>
               </Text>
 
               {/* All Day Checkbox - NEW */}
@@ -642,7 +642,7 @@ const AddEventWeb: React.FC<AddEventWebProps> = ({
                   marginBottom: 8,
                 }}
               >
-                Event Type *
+                Event Type <Text className="text-red-500">*</Text>
               </Text>
               {isWeb ? (
                 <Dropdown
@@ -671,7 +671,7 @@ const AddEventWeb: React.FC<AddEventWebProps> = ({
                   marginBottom: 8,
                 }}
               >
-                Priority Level *
+                Priority Level <Text className="text-red-500">*</Text>
               </Text>
               {isWeb ? (
                 <Dropdown
@@ -700,7 +700,7 @@ const AddEventWeb: React.FC<AddEventWebProps> = ({
                   marginBottom: 8,
                 }}
               >
-                Who can see this? *
+                Who can see this? <Text className="text-red-500">*</Text>
               </Text>
               {isWeb ? (
                 <Dropdown

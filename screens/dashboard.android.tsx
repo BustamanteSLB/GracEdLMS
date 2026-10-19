@@ -1,4 +1,5 @@
-import { Text, TouchableOpacity, useColorScheme, View, ScrollView, Platform, Dimensions, ActivityIndicator } from 'react-native';
+// Student's Dashboard
+import { Text, TouchableOpacity, useColorScheme, View, ScrollView, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from "expo-image";
 import { cssInterop } from "nativewind";
@@ -8,11 +9,13 @@ import { useRouter } from 'expo-router';
 import { useDarkMode } from '../contexts/DarkModeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import apiClient from '@/app/services/apiClient';
+import NetworkBanner from '@/components/NetworkBanner.android';
 
 // Icons
 import ActivityIcon from '@/assets/icons/activity.svg';
 import CalendarIcon from '@/assets/icons/calendar_month.svg';
 import CoursesIcon from '@/assets/icons/course_book.svg';
+import DisconnectedIcon from '@/assets/icons/disconnected.svg';
 import GradesIcon from '@/assets/icons/grades.svg';
 import InstitutionIcon from '@/assets/icons/institution.svg';
 import ProfileIcon from '@/assets/icons/account.svg';
@@ -100,7 +103,7 @@ interface StudentAnalyticsData {
     author: {
       firstName: string;
       lastName: string;
-      profilePicture?: string; // Added profilePicture as optional
+      profilePicture?: string;
     };
   }>;
   events: Array<{
@@ -142,27 +145,26 @@ const DBAndroid: React.FC = () => {
   const [analyticsData, setAnalyticsData] = useState<StudentAnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isPortrait, setIsPortrait] = useState(true);
-  const { width, height } = Dimensions.get('window');
+  const [networkError, setNetworkError] = useState(false);
 
-  useEffect(() => {
-    const updateOrientation = () => {
-      setIsPortrait(height >= width);
-    };
-    
-    const subscription = Dimensions.addEventListener('change', updateOrientation);
-    updateOrientation();
-    
-    return () => {
-      subscription.remove();
-    };
-  }, []);
+  // Responsive layout (matches teacher dashboard)
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+  const horizontalPadding = 32;
+  const columnGap = 12;
+  const feedCardWidth = isLandscape ? (width - horizontalPadding - columnGap) / 2 : undefined;
+
+  const isNetworkError = (err: any) =>
+    err?.message?.toLowerCase?.().includes('network') ||
+    err?.status === 0 ||
+    !err?.response;
 
   // Fetch analytics data
   const fetchAnalytics = async () => {
     try {
       setLoading(true);
       setError(null);
+      setNetworkError(false);
 
       const response = await apiClient.get('/analytics/student-dashboard');
       
@@ -173,6 +175,7 @@ const DBAndroid: React.FC = () => {
       }
     } catch (err: any) {
       console.error('Error fetching analytics:', err);
+      if (isNetworkError(err)) setNetworkError(true);
       setError(err.response?.data?.message || 'Failed to load dashboard data');
     } finally {
       setLoading(false);
@@ -257,13 +260,15 @@ const DBAndroid: React.FC = () => {
   );
 
   // Facebook-style card component
-  const FeedCard = ({ children, className = "", ...props }: { 
+  const FeedCard = ({ children, className = "", style, ...props }: { 
     children: React.ReactNode; 
     className?: string;
+    style?: object;
     [key: string]: any;
   }) => (
     <View 
       className={`${isDarkMode ? 'bg-[#242526]' : 'bg-white'} rounded-lg shadow-sm border ${isDarkMode ? 'border-[#3A3B3C]' : 'border-gray-200'} mb-4 ${className}`}
+      style={style}
       {...props}
     >
       {children}
@@ -280,11 +285,11 @@ const DBAndroid: React.FC = () => {
   }) => (
     <TouchableOpacity
       onPress={onPress}
-      className={`p-4 rounded-lg mr-3 ${isDarkMode ? 'bg-[#3A3B3C]' : 'bg-gray-50'} hover:opacity-80`}
-      style={{ 
-        minWidth: 130, // Increased minimum width
-        width: Math.max(130, width * 0.25), // Increased percentage and ensure minimum
-      }}
+      className={`p-4 rounded-lg ${isLandscape ? '' : 'mr-3'} ${isDarkMode ? 'bg-[#3A3B3C]' : 'bg-gray-50'} hover:opacity-80`}
+      style={isLandscape
+        ? { flex: 1 }
+        : { minWidth: 130, width: Math.max(130, width * 0.25) }
+      }
     >
       <View className="items-center">
         <View className="w-12 h-12 rounded-full items-center justify-center mb-2" style={{ backgroundColor: color + '20' }}>
@@ -427,6 +432,15 @@ const DBAndroid: React.FC = () => {
               </TouchableOpacity>
             </View>
           </FeedCard>
+
+          {/* Animated network banner overlay */}
+          <NetworkBanner
+            forceVisible={networkError}
+            onRetry={() => {
+              setNetworkError(false);
+              fetchAnalytics();
+            }}
+          />
         </SafeAreaView>
       );
     }
@@ -440,52 +454,88 @@ const DBAndroid: React.FC = () => {
           className="flex-1"
           contentContainerStyle={{ paddingBottom: 20 }}
         >
-          {/* Quick Stats Row */}
-          <View className="py-4">
-            <ScrollView 
-              horizontal 
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ 
-                paddingHorizontal: 16,
-                paddingRight: 32 // Extra padding at the end to ensure last item is fully visible
-              }}
-              className="flex-row"
-            >
-              <QuickStat
-                icon={CoursesIcon}
-                label="Subjects"
-                value={analyticsData?.enrolledSubjects.count || 0}
-                color="#1877F2"
-                onPress={() => router.push('/(students)/subjects')}
-              />
-              <QuickStat
-                icon={CalendarIcon}
-                label="Due Today"
-                value={analyticsData?.summary.totalDuesToday || 0}
-                color="#F5A623"
-                onPress={() => router.push('/(students)/activity')}
-              />
-              <QuickStat
-                icon={CompletedIcon}
-                label="Completed"
-                value={analyticsData?.summary.totalCompleted || 0}
-                color="#42B883"
-                onPress={() => router.push('/(students)/grades')}
-              />
-              <QuickStat
-                icon={EventIcon}
-                label="Events"
-                value={analyticsData?.summary.eventsToday || 0}
-                color="#8B5CF6"
-                onPress={() => router.push('/(students)/calendar-screen')}
-              />
-            </ScrollView>
+          {/* Quick Stats Row - responsive: horizontal in portrait, row of 4 in landscape */}
+          <View className="py-4 px-4">
+            {isLandscape ? (
+              <View className="flex-row" style={{ gap: columnGap }}>
+                <QuickStat
+                  icon={CoursesIcon}
+                  label="Subjects"
+                  value={analyticsData?.enrolledSubjects.count || 0}
+                  color="#1877F2"
+                  onPress={() => router.push('/(students)/subjects')}
+                />
+                <QuickStat
+                  icon={CalendarIcon}
+                  label="Due Today"
+                  value={analyticsData?.summary.totalDuesToday || 0}
+                  color="#F5A623"
+                  onPress={() => router.push('/(students)/activity')}
+                />
+                <QuickStat
+                  icon={CompletedIcon}
+                  label="Completed"
+                  value={analyticsData?.summary.totalCompleted || 0}
+                  color="#42B883"
+                  onPress={() => router.push('/(students)/grades')}
+                />
+                <QuickStat
+                  icon={EventIcon}
+                  label="Events"
+                  value={analyticsData?.summary.eventsToday || 0}
+                  color="#8B5CF6"
+                  onPress={() => router.push('/(students)/calendar-screen')}
+                />
+              </View>
+            ) : (
+              <ScrollView 
+                horizontal 
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ 
+                  paddingRight: 16,
+                }}
+                className="flex-row"
+              >
+                <QuickStat
+                  icon={CoursesIcon}
+                  label="Subjects"
+                  value={analyticsData?.enrolledSubjects.count || 0}
+                  color="#1877F2"
+                  onPress={() => router.push('/(students)/subjects')}
+                />
+                <QuickStat
+                  icon={CalendarIcon}
+                  label="Due Today"
+                  value={analyticsData?.summary.totalDuesToday || 0}
+                  color="#F5A623"
+                  onPress={() => router.push('/(students)/activity')}
+                />
+                <QuickStat
+                  icon={CompletedIcon}
+                  label="Completed"
+                  value={analyticsData?.summary.totalCompleted || 0}
+                  color="#42B883"
+                  onPress={() => router.push('/(students)/grades')}
+                />
+                <QuickStat
+                  icon={EventIcon}
+                  label="Events"
+                  value={analyticsData?.summary.eventsToday || 0}
+                  color="#8B5CF6"
+                  onPress={() => router.push('/(students)/calendar-screen')}
+                />
+              </ScrollView>
+            )}
           </View>
 
-          <View className="px-4">
+          {/* Feed cards - two columns in landscape */}
+          <View
+            className={`px-4 ${isLandscape ? 'flex-row flex-wrap' : ''}`}
+            style={isLandscape ? { gap: columnGap } : undefined}
+          >
             {/* Due Today Feed Card */}
             {analyticsData?.duesToday?.totalCount && analyticsData.duesToday.totalCount > 0 ? (
-              <FeedCard>
+              <FeedCard style={feedCardWidth ? { width: feedCardWidth } : undefined}>
                 <View className={`p-4 border-b ${isDarkMode ? 'border-[#3A3B3C]' : 'border-gray-300'}`}>
                   <View className="flex-row items-center justify-between">
                     <View className="flex-row items-center">
@@ -568,7 +618,7 @@ const DBAndroid: React.FC = () => {
                 </View>
               </FeedCard>
             ) : (
-              <FeedCard>
+              <FeedCard style={feedCardWidth ? { width: feedCardWidth } : undefined}>
                 <View className="p-6 items-center">
                   <View className="w-16 h-16 rounded-full bg-green-100 dark:bg-green-900 items-center justify-center mb-4">
                     <CompletedIcon width={32} height={32} fill="#42B883" />
@@ -584,7 +634,7 @@ const DBAndroid: React.FC = () => {
             )}
 
             {/* Progress Overview */}
-            <FeedCard>
+            <FeedCard style={feedCardWidth ? { width: feedCardWidth } : undefined}>
               <View className={`p-4 border-b ${isDarkMode ? 'border-[#3A3B3C]' : 'border-gray-300'}`}>
                 <View className="flex-row items-center">
                   <View className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900 items-center justify-center mr-3">
@@ -646,7 +696,7 @@ const DBAndroid: React.FC = () => {
 
             {/* Latest Announcements */}
             {analyticsData?.announcements && analyticsData.announcements.length > 0 && (
-              <FeedCard>
+              <FeedCard style={feedCardWidth ? { width: feedCardWidth } : undefined}>
                 <View className={`p-4 border-b ${isDarkMode ? 'border-[#3A3B3C]' : 'border-gray-300'}`}>
                   <View className="flex-row items-center justify-between">
                     <View className="flex-row items-center">
@@ -669,7 +719,6 @@ const DBAndroid: React.FC = () => {
                   {analyticsData.announcements.slice(0, 3).map((announcement, index) => (
                     <View key={index} className={`p-4 border-b ${isDarkMode ? 'border-[#3A3B3C]' : 'border-gray-300'} last:border-b-0`}>
                       <View className="flex-row items-start">
-                        {/* Author Profile Picture */}
                         {announcement.author.profilePicture ? (
                           <Image
                             source={{ uri: announcement.author.profilePicture }}
@@ -718,7 +767,7 @@ const DBAndroid: React.FC = () => {
 
             {/* Today's Events */}
             {analyticsData?.events && analyticsData.events.length > 0 && (
-              <FeedCard>
+              <FeedCard style={feedCardWidth ? { width: feedCardWidth } : undefined}>
                 <View className="p-4 border-b border-gray-100 dark:border-[#3A3B3C]">
                   <View className="flex-row items-center">
                     <View className="w-8 h-8 rounded-full bg-purple-100 dark:bg-purple-900 items-center justify-center mr-3">
@@ -772,7 +821,7 @@ const DBAndroid: React.FC = () => {
 
             {/* Recent Grades */}
             {analyticsData?.recentGrades && analyticsData.recentGrades.length > 0 && (
-              <FeedCard>
+              <FeedCard style={feedCardWidth ? { width: feedCardWidth } : undefined}>
                 <View className={`p-4 border-b ${isDarkMode ? 'border-[#3A3B3C]' : 'border-gray-300'}`}>
                   <View className="flex-row items-center justify-between">
                     <View className="flex-row items-center">
@@ -829,7 +878,7 @@ const DBAndroid: React.FC = () => {
             )}
 
             {/* Quick Actions */}
-            <FeedCard>
+            <FeedCard style={feedCardWidth ? { width: feedCardWidth } : undefined}>
               <View className={`p-4 border-b ${isDarkMode ? 'border-[#3A3B3C]' : 'border-gray-300'}`}>
                 <View className="flex-row items-center">
                   <View className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900 items-center justify-center mr-3">
@@ -870,6 +919,15 @@ const DBAndroid: React.FC = () => {
             </FeedCard>
           </View>
         </ScrollView>
+
+        {/* Animated network banner overlay */}
+        <NetworkBanner
+          forceVisible={networkError}
+          onRetry={() => {
+            setNetworkError(false);
+            fetchAnalytics();
+          }}
+        />
         
         <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       </View>
@@ -878,7 +936,7 @@ const DBAndroid: React.FC = () => {
 
   // Original dashboard for non-students
   return (
-    <SafeAreaView className={`flex-1 justify-center ${isPortrait ? 'items-center' : 'items-start'} ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
+    <SafeAreaView className={`flex-1 justify-center ${!isLandscape ? 'items-center' : 'items-start'} ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
       <Text className={`text-left self-start font-inter_bold ml-[12px] mt-[12px] ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'} sm:text-sm md:text-base lg:text-lg`} ellipsizeMode='tail' numberOfLines={1}>
         Welcome, {user.firstName}! Your role is: {user.role}
       </Text>
@@ -888,7 +946,7 @@ const DBAndroid: React.FC = () => {
             key={index}
             className={
               `min-h-[125px] rounded-[10px] flex-row m-[12px] p-[12px]
-              ${isPortrait ? 'w-auto' : 'w-[300px]'}
+              ${!isLandscape ? 'w-auto' : 'w-[300px]'}
               ${isDarkMode ? 'bg-[#1E1E1E] shadow-none' : 'bg-white shadow-md'}`
             } 
             onPress={item.onPress}
@@ -910,6 +968,16 @@ const DBAndroid: React.FC = () => {
           </TouchableOpacity>
         ))}
       </View>
+
+      {/* Animated network banner overlay */}
+      <NetworkBanner
+        forceVisible={networkError}
+        onRetry={() => {
+          setNetworkError(false);
+          fetchAnalytics();
+        }}
+      />
+
       <StatusBar style={isDarkMode ? 'light' : 'dark'} />
     </SafeAreaView>
   );

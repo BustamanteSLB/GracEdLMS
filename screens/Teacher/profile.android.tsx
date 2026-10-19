@@ -1,3 +1,4 @@
+// profile.android.tsx
 import { Text, ScrollView, View, useColorScheme, ActivityIndicator, RefreshControl, TouchableOpacity, useWindowDimensions } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import React, { useCallback, useEffect, useState } from 'react'
@@ -7,6 +8,7 @@ import { Image, ImageBackground } from 'expo-image'
 import { cssInterop } from 'nativewind'
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'expo-router'
+import NetworkBanner from '@/components/NetworkBanner.android'
 
 const ProfileAndroid: React.FC = () => {
   const colorScheme = useColorScheme();
@@ -19,16 +21,29 @@ const ProfileAndroid: React.FC = () => {
   cssInterop(ImageBackground, { className: "style" });
 
   const [refreshing, setRefreshing] = useState(false);
+  const [networkError, setNetworkError] = useState(false);
 
-  // Mobile is always portrait for this design
-  const isPortrait = true;
+  // Determine layout: landscape if width > height and width >= 768
+  const isPortrait = height > width || width < 768;
+
+  const isNetworkError = (err: any) =>
+    err?.message?.toLowerCase?.().includes('network') ||
+    err?.status === 0 ||
+    !err?.response;
 
   // Function to refresh user data
   const onRefresh = useCallback(async () => {
     if (isLoggingOut) return;
     setRefreshing(true);
-    await fetchCurrentUser();
-    setRefreshing(false);
+    setNetworkError(false);
+    try {
+      await fetchCurrentUser();
+    } catch (error: any) {
+      console.error('Refresh error:', error);
+      if (isNetworkError(error)) setNetworkError(true);
+    } finally {
+      setRefreshing(false);
+    }
   }, [fetchCurrentUser, isLoggingOut]);
 
   useEffect(() => {
@@ -51,6 +66,13 @@ const ProfileAndroid: React.FC = () => {
             Loading Profile...
           </Text>
         </View>
+        <NetworkBanner
+          forceVisible={networkError}
+          onRetry={() => {
+            setNetworkError(false);
+            onRefresh();
+          }}
+        />
       </SafeAreaView>
     );
   }
@@ -80,7 +102,6 @@ const ProfileAndroid: React.FC = () => {
     }
   };
 
-  // Function to get status color based on User model status field
   const getStatusColor = (status: string) => {
     switch (status?.toLowerCase()) {
       case 'active': return '#10B981';
@@ -92,7 +113,6 @@ const ProfileAndroid: React.FC = () => {
     }
   };
 
-  // Function to get status display text
   const getStatusText = (status: string) => {
     switch (status?.toLowerCase()) {
       case 'active': return 'ACTIVE';
@@ -104,7 +124,6 @@ const ProfileAndroid: React.FC = () => {
     }
   };
 
-  // Function to get status indicator color for the profile picture
   const getStatusIndicatorColor = (status: string) => {
     switch (status?.toLowerCase()) {
       case 'active': return '#10B981';
@@ -187,8 +206,8 @@ const ProfileAndroid: React.FC = () => {
           elevation: 12,
           overflow: 'hidden',
           width: '100%',
-          maxWidth: 400,
-          minHeight: 600,
+          maxWidth: isPortrait ? 400 : 800,
+          minHeight: isPortrait ? 600 : 400,
         }}>
           {/* Header with School Branding */}
           <View style={{
@@ -225,7 +244,7 @@ const ProfileAndroid: React.FC = () => {
                 fontFamily: 'Inter-Regular',
                 color: 'rgba(255, 255, 255, 0.8)',
               }}>
-                Teacher Identification Card
+                Faculty Identification Card
               </Text>
             </View>
             <TouchableOpacity
@@ -254,14 +273,15 @@ const ProfileAndroid: React.FC = () => {
           {/* Main Content */}
           <View style={{
             padding: 20,
-            flexDirection: 'column',
-            alignItems: 'center',
+            flexDirection: isPortrait ? 'column' : 'row',
+            alignItems: isPortrait ? 'center' : 'flex-start',
           }}>
             {/* Profile Section */}
             <View style={{
               alignItems: 'center',
-              marginBottom: 20,
-              width: '100%',
+              marginRight: isPortrait ? 0 : 24,
+              marginBottom: isPortrait ? 20 : 0,
+              minWidth: isPortrait ? '100%' : 200,
             }}>
               {/* Profile Picture */}
               <View style={{
@@ -269,9 +289,9 @@ const ProfileAndroid: React.FC = () => {
                 marginBottom: 16,
               }}>
                 <View style={{
-                  width: 120,
-                  height: 120,
-                  borderRadius: 60,
+                  width: isPortrait ? 120 : 140,
+                  height: isPortrait ? 120 : 140,
+                  borderRadius: isPortrait ? 60 : 70,
                   backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
                   padding: 4,
                 }}>
@@ -280,7 +300,7 @@ const ProfileAndroid: React.FC = () => {
                     style={{ 
                       width: '100%', 
                       height: '100%', 
-                      borderRadius: 56,
+                      borderRadius: isPortrait ? 56 : 66,
                     }}
                     contentFit="cover"
                   />
@@ -302,7 +322,7 @@ const ProfileAndroid: React.FC = () => {
 
               {/* Name and ID */}
               <Text style={{
-                fontSize: 18,
+                fontSize: isPortrait ? 18 : 20,
                 fontFamily: 'Inter-Bold',
                 color: isDarkMode ? '#E4E6EA' : '#1C1E21',
                 textAlign: 'center',
@@ -432,7 +452,7 @@ const ProfileAndroid: React.FC = () => {
 
               {/* Action Buttons */}
               <View style={{
-                flexDirection: 'column',
+                flexDirection: isPortrait ? 'column' : 'row',
                 gap: 12,
               }}>
                 <TouchableOpacity
@@ -445,6 +465,7 @@ const ProfileAndroid: React.FC = () => {
                     flexDirection: 'row',
                     alignItems: 'center',
                     justifyContent: 'center',
+                    flex: isPortrait ? undefined : 1,
                   }}
                 >
                   <Image
@@ -473,6 +494,7 @@ const ProfileAndroid: React.FC = () => {
                     flexDirection: 'row',
                     alignItems: 'center',
                     justifyContent: 'center',
+                    flex: isPortrait ? undefined : 1,
                     opacity: refreshing ? 0.6 : 1,
                   }}
                 >
@@ -541,6 +563,15 @@ const ProfileAndroid: React.FC = () => {
           </Text>
         )}
       </ScrollView>
+
+      {/* Animated network banner overlay */}
+      <NetworkBanner
+        forceVisible={networkError}
+        onRetry={() => {
+          setNetworkError(false);
+          onRefresh();
+        }}
+      />
 
       <StatusBar style={isDarkMode ? 'light' : 'dark'} />
     </View>

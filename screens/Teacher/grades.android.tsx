@@ -1,8 +1,9 @@
-import { Text, View, useColorScheme, ActivityIndicator, ScrollView, TouchableOpacity, TextInput, Modal, Platform, Alert, Pressable } from 'react-native'
+// grades.android.tsx
+import { Text, View, useColorScheme, ActivityIndicator, ScrollView, TouchableOpacity, TextInput, Modal, Platform, Alert, Pressable, ToastAndroid } from 'react-native'
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { SafeAreaView } from 'react-native-safe-area-context'
-import React, { useEffect, useState, useMemo, useCallback } from 'react'
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { StatusBar } from 'expo-status-bar'
 import { useDarkMode } from '@/contexts/DarkModeContext'
 import { Image } from 'expo-image'
@@ -12,9 +13,12 @@ import { useAuth } from '@/contexts/AuthContext'
 import { FlashList } from '@shopify/flash-list';
 import DropdownMobile, { DropdownMobileItem } from '@/components/DropdownMobile'
 import MoreVertIcon from '@/assets/icons/more_vert.svg'
-import DeleteIcon from '@/assets/icons/delete.svg'
+import NetworkBanner from '@/components/NetworkBanner.android'
 
 cssInterop(Image, { className: "style" });
+
+// Pagination constant
+const ITEMS_PER_PAGE = 10;
 
 interface User {
   _id: string;
@@ -40,13 +44,12 @@ interface Subject {
   subjectImage?: string;
   teachers: Array<{
     teacher: User;
-    quarters: {
-      firstQuarter: boolean;
-      secondQuarter: boolean;
-      thirdQuarter: boolean;
-      fourthQuarter: boolean;
+    terms: {
+      1: boolean;
+      2: boolean;
+      3: boolean;
     };
-    isAssignedToAllQuarters: boolean;
+    isAssignedToAllTerms: boolean;
   }>;
   section: string;
   gradeLevel?: string;
@@ -62,7 +65,7 @@ interface Activity {
   visibleDate: string;
   deadline: string;
   points: number | null;
-  quarter: string;
+  term: string;
   activityType?: 'written' | 'performance';
   createdBy: User;
   subject: Subject;
@@ -104,7 +107,7 @@ interface Quiz {
   sectionDescription?: string;
   questions: any[];
   timeLimit?: number;
-  quarter: string;
+  term: string;
   quizPoints: number;
   status: 'draft' | 'published' | 'archived' | 'graded' | 'closed';
   quizSubmissions: QuizSubmission[];
@@ -117,7 +120,7 @@ interface GradeItem {
   title: string;
   type: 'activity' | 'quiz';
   points: number;
-  quarter: string;
+  term: string;
   subject: Subject;
   createdAt: string;
   data: Activity | Quiz;
@@ -136,7 +139,7 @@ const exportGradesToCSV = async (
   gradeLevel: string,
   section: string,
   schoolYear: string,
-  quarter: string,
+  term: string,
   gradeItems: GradeItem[],
   gradeTableData: StudentGradeRow[],
   getUserFullName: (user: User) => string
@@ -175,7 +178,7 @@ const exportGradesToCSV = async (
       [`Subject: ${subjectName}`],
       [`Grade Level: ${gradeLevel} - ${section}`],
       [`School Year: ${schoolYear}`],
-      [`Quarter: ${quarter}`],
+      [`Term: ${term}`],
       [`Generated: ${new Date().toLocaleString()}`],
       [],
       headers,
@@ -184,7 +187,7 @@ const exportGradesToCSV = async (
       .map(row => row.map(cell => `"${cell}"`).join(','))
       .join('\n');
 
-    const fileName = `${subjectName.replace(/\s+/g, '_')}_${quarter.replace(/\s+/g, '_')}_Grades_${new Date().getTime()}.csv`;
+    const fileName = `${subjectName.replace(/\s+/g, '_')}_${term.replace(/\s+/g, '_')}_Grades_${new Date().getTime()}.csv`;
     const fileUri = `${FileSystem.documentDirectory}${fileName}`;
 
     await FileSystem.writeAsStringAsync(fileUri, csvContent, {
@@ -199,7 +202,7 @@ const exportGradesToCSV = async (
       });
       return true;
     } else {
-      Alert.alert('Error', 'Sharing is not available on this device');
+      ToastAndroid.show('Sharing is not available on this device.', ToastAndroid.SHORT);
       return false;
     }
   } catch (error) {
@@ -224,14 +227,22 @@ const GradesAndroid: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   
   const [selectedSubject, setSelectedSubject] = useState<string>('');
-  const [selectedQuarter, setSelectedQuarter] = useState<string>('First Quarter');
+  const [selectedTerm, setSelectedTerm] = useState<string>('1');
   const [selectedSchoolYear, setSelectedSchoolYear] = useState<string>('');
+
+  // Pagination state
+  const [displayedCount, setDisplayedCount] = useState(ITEMS_PER_PAGE);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const listRef = useRef<any>(null);
 
   const [previewModalVisible, setPreviewModalVisible] = useState(false);
   const [actionsModalVisible, setActionsModalVisible] = useState(false);
   const [actionsModalSubject, setActionsModalSubject] = useState<Subject | null>(null);
 
-  const quarters = ['First Quarter', 'Second Quarter', '3rd Quarter', '4th Quarter'];
+  // Network banner state
+  const [forceNetworkBannerVisible, setForceNetworkBannerVisible] = useState(false);
+
+  const terms = ['1', '2', '3'];
 
   const fetchTeacherData = async () => {
     if (!user || user.role !== 'Teacher') {
@@ -264,6 +275,7 @@ const GradesAndroid: React.FC = () => {
         setGrades([]);
         setQuizzes([]);
         setLoading(false);
+        setForceNetworkBannerVisible(false);
         return;
       }
 
@@ -279,6 +291,7 @@ const GradesAndroid: React.FC = () => {
         }
       }
       setSubjects(populatedSubjects);
+      setDisplayedCount(ITEMS_PER_PAGE);
 
       try {
         let allStudentsData: User[] = [];
@@ -310,7 +323,7 @@ const GradesAndroid: React.FC = () => {
             const activitiesWithSubject = activitiesResponse.data.data.map((activity: Activity) => ({
               ...activity,
               subject: subject,
-              quarter: activity.quarter || 'First Quarter',
+              term: activity.term || '1',
             }));
             teacherActivities.push(...activitiesWithSubject);
           }
@@ -376,9 +389,20 @@ const GradesAndroid: React.FC = () => {
       }
       setQuizzes(teacherQuizzes);
 
+      setForceNetworkBannerVisible(false);
+
     } catch (err: any) {
       console.error('Error fetching teacher data:', err);
       setError(err.response?.data?.message || err.message || 'Failed to fetch data');
+
+      const isNetworkError =
+        !err?.response ||
+        err?.code === 'ECONNABORTED' ||
+        err?.message?.toLowerCase().includes('network') ||
+        err?.message?.toLowerCase().includes('timeout');
+      if (isNetworkError) {
+        setForceNetworkBannerVisible(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -426,8 +450,8 @@ const GradesAndroid: React.FC = () => {
     activities
       .filter(activity => {
         const matchesSubject = activity.subject._id === currentSubject._id;
-        const matchesQuarter = activity.quarter === selectedQuarter;
-        return matchesSubject && matchesQuarter;
+        const matchesTerm = activity.term === selectedTerm;
+        return matchesSubject && matchesTerm;
       })
       .forEach(activity => {
         items.push({
@@ -435,7 +459,7 @@ const GradesAndroid: React.FC = () => {
           title: activity.title,
           type: 'activity',
           points: activity.points || 0,
-          quarter: activity.quarter,
+          term: activity.term,
           subject: activity.subject,
           createdAt: activity.createdAt,
           data: activity
@@ -445,9 +469,9 @@ const GradesAndroid: React.FC = () => {
     quizzes
       .filter(quiz => {
         const matchesSubject = quiz.subject._id === currentSubject._id;
-        const matchesQuarter = quiz.quarter === selectedQuarter;
+        const matchesTerm = quiz.term === selectedTerm;
         const isGradeable = quiz.status === 'published' || quiz.status === 'graded' || quiz.status === 'closed';
-        return matchesSubject && matchesQuarter && isGradeable;
+        return matchesSubject && matchesTerm && isGradeable;
       })
       .forEach(quiz => {
         items.push({
@@ -455,7 +479,7 @@ const GradesAndroid: React.FC = () => {
           title: quiz.title,
           type: 'quiz',
           points: quiz.quizPoints || 0,
-          quarter: quiz.quarter,
+          term: quiz.term,
           subject: quiz.subject,
           createdAt: quiz.createdAt,
           data: quiz
@@ -463,7 +487,7 @@ const GradesAndroid: React.FC = () => {
       });
 
     return items.sort((a, b) => a.title.localeCompare(b.title));
-  }, [activities, quizzes, currentSubject, selectedQuarter]);
+  }, [activities, quizzes, currentSubject, selectedTerm]);
 
   const subjectStudents = useMemo(() => {
     if (!currentSubject) return [];
@@ -553,6 +577,34 @@ const GradesAndroid: React.FC = () => {
     });
   }, [subjects, searchQuery, selectedSchoolYear]);
 
+  // Paginated subjects for display
+  const displayedSubjects = useMemo(() => {
+    return filteredSubjectOptions.slice(0, displayedCount);
+  }, [filteredSubjectOptions, displayedCount]);
+
+  const hasMore = displayedCount < filteredSubjectOptions.length;
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setDisplayedCount(ITEMS_PER_PAGE);
+    try {
+      listRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+    } catch (e) {
+      // ignore
+    }
+  }, [searchQuery, selectedSchoolYear]);
+
+  // Infinite scroll handler
+  const loadMore = useCallback(() => {
+    if (isLoadingMore || !hasMore) return;
+
+    setIsLoadingMore(true);
+    setTimeout(() => {
+      setDisplayedCount(prev => Math.min(prev + ITEMS_PER_PAGE, filteredSubjectOptions.length));
+      setIsLoadingMore(false);
+    }, 350);
+  }, [isLoadingMore, hasMore, filteredSubjectOptions.length]);
+
   const handleViewGrades = (subject: Subject) => {
     setSelectedSubject(subject._id);
     setPreviewModalVisible(true);
@@ -569,14 +621,14 @@ const GradesAndroid: React.FC = () => {
       currentSubject.gradeLevel || 'N/A',
       currentSubject.section,
       currentSubject.schoolYear || 'N/A',
-      selectedQuarter,
+      selectedTerm,
       getGradeItems,
       gradeTableData,
       getUserFullName
     );
 
     if (success) {
-      Alert.alert('Success', 'Grades exported successfully!');
+      ToastAndroid.show('Grades exported successfully!', ToastAndroid.SHORT);
     }
   };
 
@@ -595,8 +647,8 @@ const GradesAndroid: React.FC = () => {
   };
 
   const renderSubjectItem = useCallback(({ item }: { item: Subject }) => {
-    const activitiesCount = activities.filter(a => a.subject._id === item._id && a.quarter === selectedQuarter).length;
-    const quizzesCount = quizzes.filter(q => q.subject._id === item._id && q.quarter === selectedQuarter).length;
+    const activitiesCount = activities.filter(a => a.subject._id === item._id && a.term === selectedTerm).length;
+    const quizzesCount = quizzes.filter(q => q.subject._id === item._id && q.term === selectedTerm).length;
     const totalItems = activitiesCount + quizzesCount;
     const initials = item.subjectName.slice(0, 2).toUpperCase();
     const bgColor = getConsistentColor(item.subjectName);
@@ -604,7 +656,7 @@ const GradesAndroid: React.FC = () => {
     return (
       <TouchableOpacity
         onPress={() => handleViewGrades(item)}
-        className={`rounded-xl p-4 mb-3 ${isDarkMode ? 'bg-[#1E1E1E]' : 'bg-white'}`}
+        className={`rounded-xl p-4 mb-3 mx-3 ${isDarkMode ? 'bg-[#1E1E1E]' : 'bg-white'}`}
         style={{
           borderWidth: 1,
           borderColor: isDarkMode ? '#333333' : '#E5E7EB',
@@ -636,14 +688,14 @@ const GradesAndroid: React.FC = () => {
             <View className="flex-1 ml-3">
               <Text
                 className={`font-inter_bold text-lg mb-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}
-                numberOfLines={2}
+                ellipsizeMode='tail' numberOfLines={2}
               >
                 {item.subjectName}
               </Text>
-              <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#9CA3AF]' : 'text-gray-600'}`}>
+              <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#9CA3AF]' : 'text-gray-600'}`} ellipsizeMode='tail' numberOfLines={1}>
                 {item.gradeLevel} - {item.section} • S.Y. {item.schoolYear}
               </Text>
-              <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'} mt-1`}>
+              <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'} mt-1`} ellipsizeMode='tail' numberOfLines={1}>
                 {totalItems} items ({activitiesCount} activities, {quizzesCount} quizzes)
               </Text>
             </View>
@@ -658,94 +710,127 @@ const GradesAndroid: React.FC = () => {
         </View>
       </TouchableOpacity>
     );
-  }, [isDarkMode, activities, quizzes, selectedQuarter]);
+  }, [isDarkMode, activities, quizzes, selectedTerm]);
 
   const keyExtractor = useCallback((item: Subject) => item._id, []);
 
+  // ---- List header (scrolls with content now) ----
+  const listHeader = (
+    <View
+      className={`px-5 pt-5 pb-4 mb-3 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}
+      style={{
+        borderBottomWidth: 1,
+        borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
+      }}
+    >
+      <View className="flex-row justify-between items-center">
+        <Text
+          className={`font-inter_bold text-2xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}
+        >
+          Student Grades
+        </Text>
+        <TouchableOpacity
+          onPress={fetchTeacherData}
+          className="bg-[#EF4444] px-2 py-2 rounded-lg"
+        >
+          <Image
+            source={require('@/assets/icons/refresh.png')}
+            className="w-[24] h-[24]"
+            tintColor="white"
+          />
+        </TouchableOpacity>
+      </View>
+
+      <View className="mt-4">
+        <TextInput
+          placeholder="Search subjects..."
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          className={`rounded-lg px-3 py-3 mb-3 font-inter_regular ${
+            isDarkMode ? 'bg-[#2A2A2A] text-[#E0E0E0]' : 'bg-[#F3F4F6] text-black'
+          }`}
+          placeholderTextColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
+        />
+
+        <DropdownMobile
+          label="School Year"
+          selectedValue={selectedSchoolYear}
+          onValueChange={setSelectedSchoolYear}
+          items={schoolYearFilterOptions}
+          placeholder="All School Years"
+        />
+      </View>
+    </View>
+  );
+
+  // ---- Empty state ----
+  const listEmpty = (
+    <View className="justify-center items-center p-10" style={{ minHeight: 300 }}>
+      <Image
+        source={require('@/assets/images/score.png')}
+        className="w-16 h-16 mb-4"
+      />
+      <Text className={`font-inter_semibold text-lg ${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mb-2 text-center`}>
+        No subjects found
+      </Text>
+      <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-500' : 'text-gray-500'} text-center`}>
+        You don't have any assigned subjects yet
+      </Text>
+    </View>
+  );
+
+  // ---- Footer (loading more / end of list) ----
+  const listFooter = (
+    <View className="py-5 items-center">
+      {isLoadingMore ? (
+        <>
+          <ActivityIndicator size="small" color="#3B82F6" />
+          <Text className={`font-inter_regular text-xs mt-2 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+            Loading more subjects...
+          </Text>
+        </>
+      ) : !hasMore && filteredSubjectOptions.length > ITEMS_PER_PAGE ? (
+        <Text className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-500' : 'text-gray-500'}`}>
+          All {filteredSubjectOptions.length} subjects loaded
+        </Text>
+      ) : null}
+    </View>
+  );
+
   return (
     <SafeAreaView className={`flex-1 ${isDarkMode ? 'bg-[#0F0F0F]' : 'bg-[#F1F3F4]'}`} edges={['left', 'right']}>
-      <View className="flex-1">
-        {/* Header */}
-        <View
-          className={`px-5 pt-5 pb-4 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}
-          style={{
-            borderBottomWidth: 1,
-            borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
-          }}
-        >
-          <View className="flex-row justify-between items-center">
-            <Text
-              className={`font-inter_bold text-2xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}
-            >
-              Student Grades
-            </Text>
-            <TouchableOpacity
-              onPress={fetchTeacherData}
-              className="bg-[#EF4444] px-2 py-2 rounded-lg"
-            >
-              <Image
-                source={require('@/assets/icons/refresh.png')}
-                className="w-[24] h-[24]"
-                tintColor="white"
-              />
-            </TouchableOpacity>
-          </View>
+      <StatusBar style={isDarkMode ? 'light' : 'dark'} />
 
-          {/* Filters */}
-          <View className="mt-4">
-            <TextInput
-              placeholder="Search subjects..."
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              className={`rounded-lg px-3 py-3 mb-3 font-inter_regular ${
-                isDarkMode ? 'bg-[#2A2A2A] text-[#E0E0E0]' : 'bg-[#F3F4F6] text-black'
-              }`}
-              placeholderTextColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
-            />
-
-            <DropdownMobile
-              label="School Year"
-              selectedValue={selectedSchoolYear}
-              onValueChange={setSelectedSchoolYear}
-              items={schoolYearFilterOptions}
-              placeholder="All School Years"
-            />
-          </View>
+      <NetworkBanner
+        forceVisible={forceNetworkBannerVisible}
+        onRetry={fetchTeacherData}
+        onDismiss={() => setForceNetworkBannerVisible(false)}
+      />
+      
+      {loading ? (
+        <View className="flex-1 justify-center items-center">
+          <ActivityIndicator size="large" color="#3B82F6" />
+          <Text className={`font-inter_regular mt-4 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+            Loading grades...
+          </Text>
         </View>
-
-        {/* Content */}
-        <View className="flex-1 p-5">
-          {loading ? (
-            <View className="flex-1 justify-center items-center">
-              <ActivityIndicator size="large" color="#3B82F6" />
-              <Text className={`font-inter_regular mt-4 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                Loading grades...
-              </Text>
-            </View>
-          ) : filteredSubjectOptions.length > 0 ? (
-            <FlashList
-              data={filteredSubjectOptions}
-              renderItem={renderSubjectItem}
-              keyExtractor={keyExtractor}
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ paddingBottom: 20 }}
-            />
-          ) : (
-            <View className="flex-1 justify-center items-center">
-              <Image
-                source={require('@/assets/images/score.png')}
-                className="w-16 h-16 mb-4"
-              />
-              <Text className={`font-inter_semibold text-lg ${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mb-2`}>
-                No subjects found
-              </Text>
-              <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-500' : 'text-gray-500'} text-center`}>
-                You don't have any assigned subjects yet
-              </Text>
-            </View>
-          )}
-        </View>
-      </View>
+      ) : (
+        <FlashList
+          ref={listRef}
+          data={displayedSubjects}
+          renderItem={renderSubjectItem}
+          keyExtractor={keyExtractor}
+          showsVerticalScrollIndicator={false}
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.5}
+          ListHeaderComponent={listHeader}
+          ListEmptyComponent={listEmpty}
+          ListFooterComponent={listFooter}
+          contentContainerStyle={{ paddingBottom: 20, flexGrow: 1 }}
+          extraData={isDarkMode}
+          keyboardShouldPersistTaps="handled"
+        />
+      )}
 
       {/* Actions Modal */}
       <Modal
@@ -817,11 +902,11 @@ const GradesAndroid: React.FC = () => {
             }}
           >
             <View className="flex-row justify-between items-center mb-3">
-              <Text className={`font-inter_bold text-xl flex-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`} numberOfLines={1}>
+              <Text className={`font-inter_bold text-xl flex-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`} ellipsizeMode='tail' numberOfLines={1}>
                 Grades - {currentSubject?.subjectName}
               </Text>
             </View>
-            <View className="flex-row gap-2">
+            <SafeAreaView edges={['top', 'bottom']} className="flex-row gap-2">
               <TouchableOpacity
                 onPress={handleExportCSV}
                 className="bg-[#10B981] px-3 py-2 rounded-lg flex-row items-center flex-1"
@@ -839,7 +924,7 @@ const GradesAndroid: React.FC = () => {
               >
                 <Text className="text-white font-inter_medium text-sm">Close</Text>
               </TouchableOpacity>
-            </View>
+            </SafeAreaView>
           </View>
           
           {currentSubject && (
@@ -851,10 +936,10 @@ const GradesAndroid: React.FC = () => {
                   borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
                 }}
               >
-                <Text className={`font-inter_bold text-2xl mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                <Text className={`font-inter_bold text-2xl mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`} ellipsizeMode='tail' numberOfLines={1}>
                   {currentSubject.subjectName}
                 </Text>
-                <Text className={`font-inter_regular text-sm mb-4 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                <Text className={`font-inter_regular text-sm mb-4 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`} ellipsizeMode='tail' numberOfLines={1}>
                   {currentSubject.gradeLevel} - {currentSubject.section} • S.Y. {currentSubject.schoolYear}
                 </Text>
 
@@ -864,12 +949,12 @@ const GradesAndroid: React.FC = () => {
                   className="mb-4"
                 >
                   <View className="flex-row gap-2">
-                    {quarters.map((quarter) => {
-                      const isActive = quarter === selectedQuarter;
+                    {terms.map((term) => {
+                      const isActive = term === selectedTerm;
                       return (
                         <TouchableOpacity
-                          key={quarter}
-                          onPress={() => setSelectedQuarter(quarter)}
+                          key={term}
+                          onPress={() => setSelectedTerm(term)}
                           className={`px-4 py-2 rounded-full ${
                             isActive 
                               ? 'bg-[#3B82F6]' 
@@ -883,7 +968,7 @@ const GradesAndroid: React.FC = () => {
                                 : isDarkMode ? 'text-gray-400' : 'text-gray-600'
                             }`}
                           >
-                            {quarter}
+                            {term === '1' ? '1st Term' : term === '2' ? '2nd Term' : '3rd Term'}
                           </Text>
                         </TouchableOpacity>
                       );
@@ -908,7 +993,7 @@ const GradesAndroid: React.FC = () => {
                     className="w-25 h-25 opacity-50"
                   />
                   <Text className={`font-inter_regular mt-4 text-center ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                    No activities or quizzes found for {selectedQuarter}
+                    No activities or quizzes found for {selectedTerm === '1' ? '1st Term' : selectedTerm === '2' ? '2nd Term' : '3rd Term'}
                   </Text>
                 </View>
               ) : (
@@ -1088,8 +1173,6 @@ const GradesAndroid: React.FC = () => {
           )}
         </View>
       </Modal>
-
-      <StatusBar style={isDarkMode ? 'light' : 'dark'} />
     </SafeAreaView>
   );
 };

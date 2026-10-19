@@ -20,6 +20,7 @@ import CloseIcon from '@/assets/icons/close.svg'
 import ColoredCalendarIcon from '@/assets/icons/colored_calendar.svg'
 import ColoredTimeIcon from '@/assets/icons/colored_time.svg'
 import PlusIcon from '@/assets/icons/plus.svg'
+import NetworkBanner from '@/components/NetworkBanner.web'
 
 interface User {
   _id: string;
@@ -72,6 +73,9 @@ const CalendarWeb: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Network banner state
+  const [forceNetworkBannerVisible, setForceNetworkBannerVisible] = useState(false);
 
   // Date selection state
   const [selectedDate, setSelectedDate] = useState(dayjs());
@@ -133,10 +137,20 @@ const CalendarWeb: React.FC = () => {
 
       if (response.data.success) {
         setEvents(response.data.data);
+        setForceNetworkBannerVisible(false);
       }
     } catch (err: any) {
       console.error('Error fetching events:', err);
       setError(err.response?.data?.message || 'Failed to fetch events');
+
+      const isNetworkError =
+        !err?.response ||
+        err?.code === 'ECONNABORTED' ||
+        err?.message?.toLowerCase().includes('network') ||
+        err?.message?.toLowerCase().includes('timeout');
+      if (isNetworkError) {
+        setForceNetworkBannerVisible(true);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -157,12 +171,28 @@ const CalendarWeb: React.FC = () => {
 
       if (response.data.success) {
         setWeekEvents(response.data.data);
+        setForceNetworkBannerVisible(false);
       }
     } catch (err: any) {
       console.error('Error fetching week events:', err);
       setError(err.response?.data?.message || 'Failed to fetch events for week');
+
+      const isNetworkError =
+        !err?.response ||
+        err?.code === 'ECONNABORTED' ||
+        err?.message?.toLowerCase().includes('network') ||
+        err?.message?.toLowerCase().includes('timeout');
+      if (isNetworkError) {
+        setForceNetworkBannerVisible(true);
+      }
     }
   }, [selectedDate]);
+
+  // Retry both fetches (used by banner)
+  const retryFetch = useCallback(() => {
+    fetchEvents();
+    fetchWeekEvents();
+  }, [fetchEvents, fetchWeekEvents]);
 
   // Create event handler
   const handleCreateEvent = useCallback(async (eventData: EventFormData) => {
@@ -183,6 +213,15 @@ const CalendarWeb: React.FC = () => {
       console.error('Error creating event:', err);
       console.error('Error response:', err.response?.data);
       window.alert('Error: ' + (err.response?.data?.message || 'Failed to create event'));
+
+      const isNetworkError =
+        !err?.response ||
+        err?.code === 'ECONNABORTED' ||
+        err?.message?.toLowerCase().includes('network') ||
+        err?.message?.toLowerCase().includes('timeout');
+      if (isNetworkError) {
+        setForceNetworkBannerVisible(true);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -215,6 +254,15 @@ const CalendarWeb: React.FC = () => {
       console.error('Error updating event:', err);
       console.error('Error response:', err.response?.data);
       window.alert('Error: ' + (err.response?.data?.message || 'Failed to update event'));
+
+      const isNetworkError =
+        !err?.response ||
+        err?.code === 'ECONNABORTED' ||
+        err?.message?.toLowerCase().includes('network') ||
+        err?.message?.toLowerCase().includes('timeout');
+      if (isNetworkError) {
+        setForceNetworkBannerVisible(true);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -238,6 +286,15 @@ const CalendarWeb: React.FC = () => {
       } catch (err: any) {
         console.error('Error deleting event:', err);
         window.alert('Error: ' + (err.response?.data?.message || 'Failed to delete event'));
+
+        const isNetworkError =
+          !err?.response ||
+          err?.code === 'ECONNABORTED' ||
+          err?.message?.toLowerCase().includes('network') ||
+          err?.message?.toLowerCase().includes('timeout');
+        if (isNetworkError) {
+          setForceNetworkBannerVisible(true);
+        }
       } finally {
         setIsLoading(false);
       }
@@ -568,6 +625,12 @@ const CalendarWeb: React.FC = () => {
 
   return (
     <SafeAreaView className={`flex-1 ${isDarkMode ? 'bg-[#0F0F0F]' : 'bg-[#F1F3F4]'}`}>
+      <NetworkBanner
+        forceVisible={forceNetworkBannerVisible}
+        onRetry={retryFetch}
+        onDismiss={() => setForceNetworkBannerVisible(false)}
+      />
+
       <View className='flex-1 flex-row'>
         {/* Sidebar ONLY on width >= 768px (removed mobile full-width render) */}
         {showSidebar && (

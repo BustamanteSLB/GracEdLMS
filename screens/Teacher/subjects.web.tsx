@@ -1,3 +1,4 @@
+// subjects.web.tsx
 import apiClient from '@/app/services/apiClient';
 import { Subject } from '@/app/types/index';
 import ContextMenu from '@/components/ContextMenu';
@@ -7,7 +8,7 @@ import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { cssInterop } from 'nativewind';
-import React, { useCallback, useEffect, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -26,24 +27,32 @@ import MoreVertIcon from '@/assets/icons/more_vert.svg';
 import DeleteIcon from '@/assets/icons/delete.svg';
 import * as DocumentPicker from 'expo-document-picker';
 import Dropdown, { DropdownItem } from '@/components/Dropdown';
+import {
+  formatSubjectDisplay,
+  normalizeClassCodeInput,
+} from '@/app/utils/subjectUtils';
+import NetworkBanner from '@/components/NetworkBanner.web';
 
 cssInterop(Image, { className: 'style' });
 
+// Pagination constant
+const ITEMS_PER_PAGE = 10;
+
 interface SubjectForm {
   subjectName: string;
+  classCode: string;
   description: string;
   gradeLevel: string;
   section: string;
   schoolYear: string;
   teachers: Array<{
     teacherId: string;
-    quarters?: {
-      firstQuarter: boolean;
-      secondQuarter: boolean;
-      thirdQuarter: boolean;
-      fourthQuarter: boolean;
+    terms?: {
+      1: boolean;
+      2: boolean;
+      3: boolean;
     };
-    isAssignedToAllQuarters: boolean;
+    isAssignedToAllTerms: boolean;
   }>;
 }
 
@@ -79,8 +88,12 @@ const SubjectsWeb: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGradeLevel, setSelectedGradeLevel] = useState<string>('');
   const [selectedSchoolYear, setSelectedSchoolYear] = useState<string>('');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(10);
+
+  // Pagination state
+  const [displayedCount, setDisplayedCount] = useState(ITEMS_PER_PAGE);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const listRef = useRef<any>(null);
+
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
   const [selectedSubject, setSelectedSubject] = useState<Subject | null>(null);
@@ -88,10 +101,12 @@ const SubjectsWeb: React.FC = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [currentSubject, setCurrentSubject] = useState<Subject | null>(null);
   const [subjectName, setSubjectName] = useState('');
+  const [classCode, setClassCode] = useState('');
   const [description, setDescription] = useState('');
   const [gradeLevel, setGradeLevel] = useState('');
   const [section, setSection] = useState('');
   const [schoolYear, setSchoolYear] = useState('');
+  const [activeSchoolYear, setActiveSchoolYear] = useState<string | null>(null);
   const [teacherIdentifier, setTeacherIdentifier] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -99,6 +114,9 @@ const SubjectsWeb: React.FC = () => {
   // New state for sections
   const [sections, setSections] = useState<Section[]>([]);
   const [loadingSections, setLoadingSections] = useState(false);
+
+  // Network banner state
+  const [forceNetworkBannerVisible, setForceNetworkBannerVisible] = useState(false);
 
   const isTeacher = user?.role === 'Teacher';
 
@@ -123,7 +141,7 @@ const SubjectsWeb: React.FC = () => {
     { label: 'Grade 6', value: 'Grade 6' },
   ], []);
 
-  const schoolYearOptions: DropdownItem[] = useMemo(() => {
+  const allSchoolYearOptions: DropdownItem[] = useMemo(() => {
     const currentYear = new Date().getFullYear();
     const options: DropdownItem[] = [{ label: 'Select School Year', value: '' }];
     
@@ -141,6 +159,16 @@ const SubjectsWeb: React.FC = () => {
     
     return options;
   }, []);
+
+  const schoolYearFormOptions: DropdownItem[] = useMemo(() => {
+    if (!activeSchoolYear) {
+      return allSchoolYearOptions;
+    }
+
+    const displayYear =
+      isEditing && schoolYear ? schoolYear : activeSchoolYear;
+    return [{ label: displayYear, value: displayYear }];
+  }, [activeSchoolYear, allSchoolYearOptions, isEditing, schoolYear]);
 
   const schoolYearFilterOptions: DropdownItem[] = useMemo(() => {
     const currentYear = new Date().getFullYear();
@@ -161,12 +189,14 @@ const SubjectsWeb: React.FC = () => {
     return options;
   }, []);
 
-  const itemsPerPageOptions: DropdownItem[] = useMemo(() => [
-    { label: '5', value: '5' },
-    { label: '10', value: '10' },
-    { label: '20', value: '20' },
-    { label: '50', value: '50' },
-  ], []);
+  const fetchActiveSchoolYear = useCallback(async () => {
+    try {
+      const response = await apiClient.get('/subjects/active-school-year');
+      setActiveSchoolYear(response.data.data?.activeSchoolYear || null);
+    } catch (error) {
+      console.error('Failed to fetch active school year:', error);
+    }
+  }, []);
 
   // Fetch sections for the selected grade and school year
   const fetchSections = useCallback(async (grade?: string, year?: string) => {
@@ -233,9 +263,20 @@ const SubjectsWeb: React.FC = () => {
       });
       
       setSubjects(teacherSubjects);
-    } catch (error) {
+      setDisplayedCount(ITEMS_PER_PAGE);
+      setForceNetworkBannerVisible(false);
+    } catch (error: any) {
       console.error('Failed to fetch teacher subjects:', error);
       window.alert('Error: Failed to load your subjects.');
+
+      const isNetworkError =
+        !error?.response ||
+        error?.code === 'ECONNABORTED' ||
+        error?.message?.toLowerCase().includes('network') ||
+        error?.message?.toLowerCase().includes('timeout');
+      if (isNetworkError) {
+        setForceNetworkBannerVisible(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -244,13 +285,21 @@ const SubjectsWeb: React.FC = () => {
   useEffect(() => {
     if (isTeacher) {
       fetchTeacherSubjects();
+      fetchActiveSchoolYear();
     }
-  }, [fetchTeacherSubjects, isTeacher]);
+  }, [fetchTeacherSubjects, fetchActiveSchoolYear, isTeacher]);
+
+  useEffect(() => {
+    if (modalVisible && activeSchoolYear && !isEditing) {
+      setSchoolYear(activeSchoolYear);
+    }
+  }, [modalVisible, activeSchoolYear, isEditing]);
 
   // Filter subjects
   const filteredSubjects = useMemo(() => {
     return subjects.filter((subject) => {
       const matchesSearch = subject.subjectName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                           subject.classCode?.toLowerCase().includes(searchQuery.toLowerCase()) ||
                            subject.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
                            subject.section?.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesGradeLevel = !selectedGradeLevel || subject.gradeLevel === selectedGradeLevel;
@@ -260,71 +309,33 @@ const SubjectsWeb: React.FC = () => {
     });
   }, [subjects, searchQuery, selectedGradeLevel, selectedSchoolYear]);
 
-  // Pagination calculations
-  const totalPages = Math.ceil(filteredSubjects.length / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
-  const paginatedSubjects = filteredSubjects.slice(startIndex, endIndex);
+  // Paginated subjects for display
+  const displayedSubjects = useMemo(() => {
+    return filteredSubjects.slice(0, displayedCount);
+  }, [filteredSubjects, displayedCount]);
 
-  // Reset to page 1 when filters change
+  const hasMore = displayedCount < filteredSubjects.length;
+
+  // Reset pagination when filters change
   useEffect(() => {
-    setCurrentPage(1);
-  }, [searchQuery, selectedGradeLevel, selectedSchoolYear, itemsPerPage]);
-
-  // Pagination handlers
-  const goToPage = (page: number) => {
-    if (page >= 1 && page <= totalPages) {
-      setCurrentPage(page);
+    setDisplayedCount(ITEMS_PER_PAGE);
+    try {
+      listRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+    } catch (e) {
+      // ignore
     }
-  };
+  }, [searchQuery, selectedGradeLevel, selectedSchoolYear]);
 
-  const goToPreviousPage = () => {
-    if (currentPage > 1) {
-      setCurrentPage(currentPage - 1);
-    }
-  };
+  // Infinite scroll handler
+  const loadMore = useCallback(() => {
+    if (isLoadingMore || !hasMore) return;
 
-  const goToNextPage = () => {
-    if (currentPage < totalPages) {
-      setCurrentPage(currentPage + 1);
-    }
-  };
-
-  // Generate page numbers
-  const getPageNumbers = () => {
-    const pages: (number | string)[] = [];
-    const maxVisiblePages = 5;
-
-    if (totalPages <= maxVisiblePages) {
-      for (let i = 1; i <= totalPages; i++) {
-        pages.push(i);
-      }
-    } else {
-      if (currentPage <= 3) {
-        for (let i = 1; i <= 4; i++) {
-          pages.push(i);
-        }
-        pages.push('...');
-        pages.push(totalPages);
-      } else if (currentPage >= totalPages - 2) {
-        pages.push(1);
-        pages.push('...');
-        for (let i = totalPages - 3; i <= totalPages; i++) {
-          pages.push(i);
-        }
-      } else {
-        pages.push(1);
-        pages.push('...');
-        for (let i = currentPage - 1; i <= currentPage + 1; i++) {
-          pages.push(i);
-        }
-        pages.push('...');
-        pages.push(totalPages);
-      }
-    }
-
-    return pages;
-  };
+    setIsLoadingMore(true);
+    setTimeout(() => {
+      setDisplayedCount(prev => Math.min(prev + ITEMS_PER_PAGE, filteredSubjects.length));
+      setIsLoadingMore(false);
+    }, 350);
+  }, [isLoadingMore, hasMore, filteredSubjects.length]);
 
   // Handlers
   const handleAddSubject = () => {
@@ -335,10 +346,11 @@ const SubjectsWeb: React.FC = () => {
     setIsEditing(false);
     setCurrentSubject(null);
     setSubjectName('');
+    setClassCode('');
     setDescription('');
     setGradeLevel('');
     setSection('');
-    setSchoolYear('');
+    setSchoolYear(activeSchoolYear || '');
     setTeacherIdentifier(user?.email || '');
     setSelectedImage(null);
     setSections([]);
@@ -349,6 +361,7 @@ const SubjectsWeb: React.FC = () => {
     setIsEditing(true);
     setCurrentSubject(subject);
     setSubjectName(subject.subjectName);
+    setClassCode(subject.classCode || '');
     setDescription(subject.description || '');
     setGradeLevel(subject.gradeLevel || '');
     setSection(subject.section || '');
@@ -393,8 +406,19 @@ const SubjectsWeb: React.FC = () => {
       return;
     }
 
+    if (!classCode.trim()) {
+      window.alert('Error: Class code is required.');
+      return;
+    }
+
+    if (classCode.trim().length > 12) {
+      window.alert('Error: Class code must be at most 12 characters.');
+      return;
+    }
+
     const formData: SubjectForm = {
       subjectName: subjectName.trim(),
+      classCode: classCode.trim().toUpperCase(),
       description: description.trim(),
       gradeLevel: gradeLevel.trim(),
       section: section.trim(),
@@ -402,12 +426,11 @@ const SubjectsWeb: React.FC = () => {
       teachers: [
         {
           teacherId: teacherIdentifier.trim() || user?.email || user?._id || '',
-          isAssignedToAllQuarters: true,
-          quarters: {
-            firstQuarter: true,
-            secondQuarter: true,
-            thirdQuarter: true,
-            fourthQuarter: true,
+          isAssignedToAllTerms: true,
+          terms: {
+            1: true,
+            2: true,
+            3: true,
           }
         }
       ],
@@ -415,17 +438,21 @@ const SubjectsWeb: React.FC = () => {
 
     try {
       if (isEditing && currentSubject) {
-        await apiClient.put(`/subjects/${currentSubject._id}`, formData);
+        const response = await apiClient.put(`/subjects/${currentSubject._id}`, formData);
         if (selectedImage) {
           await handleUploadImage(currentSubject._id);
         }
-        window.alert('Success: Subject updated successfully.');
+        const updated = response.data.data;
+        window.alert(
+          `Success: ${formatSubjectDisplay(updated || { classCode: formData.classCode, subjectName: formData.subjectName })}`,
+        );
       } else {
         const response = await apiClient.post('/subjects', formData);
         if (selectedImage && response.data.data?._id) {
           await handleUploadImage(response.data.data._id);
         }
-        window.alert('Success: Subject created successfully.');
+        const created = response.data.data;
+        window.alert(`Success: ${formatSubjectDisplay(created)}`);
       }
       setModalVisible(false);
       setSelectedImage(null);
@@ -434,7 +461,13 @@ const SubjectsWeb: React.FC = () => {
     } catch (error: any) {
       console.error('Failed to save subject:', error.response?.data || error.message);
       const backendErrorMessage = error.response?.data?.message;
-      if (backendErrorMessage && backendErrorMessage.includes('Duplicate field value entered') && backendErrorMessage.includes('subjectName')) {
+      if (
+        backendErrorMessage?.includes('Class code already exists') ||
+        (backendErrorMessage?.includes('Duplicate field value entered') &&
+          backendErrorMessage?.includes('classCode'))
+      ) {
+        window.alert('Error: Class code already exists. Please use a different code.');
+      } else if (backendErrorMessage && backendErrorMessage.includes('Duplicate field value entered') && backendErrorMessage.includes('subjectName')) {
         window.alert('Error: Subject name already exists. Please use a different name.');
       } else {
         window.alert('Error: ' + (backendErrorMessage || 'Failed to save subject.'));
@@ -577,42 +610,6 @@ const SubjectsWeb: React.FC = () => {
     return colors[Math.abs(hash) % colors.length];
   };
 
-  // Loading state
-  if (isLoading || loading) {
-    return (
-      <SafeAreaView className={`flex-1 items-center justify-center ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-[#F9FAFB]'}`}>
-        <ActivityIndicator size="large" color="#3B82F6" />
-        <Text className={`mt-4 text-sm font-inter_regular ${isDarkMode ? 'text-[#9CA3AF]' : 'text-[#6B7280]'}`}>
-          Loading your subjects...
-        </Text>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
-      </SafeAreaView>
-    );
-  }
-
-  // Unauthorized access
-  if (!isTeacher) {
-    return (
-      <SafeAreaView className={`flex-1 ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-[#F9FAFB]'}`}>
-        <View className="flex-1 justify-center items-center p-5">
-          <Text className={`text-lg font-inter_semibold mb-4 ${isDarkMode ? 'text-[#9CA3AF]' : 'text-[#6B7280]'}`}>
-            Access Denied
-          </Text>
-          <Text className={`text-sm font-inter_regular text-center ${isDarkMode ? 'text-[#6B7280]' : 'text-[#9CA3AF]'}`}>
-            This page is only available for teachers.
-          </Text>
-          <TouchableOpacity
-            onPress={() => router.back()}
-            className="bg-[#3B82F6] rounded-lg px-6 py-3 mt-4"
-          >
-            <Text className="text-white font-inter_semibold">Go Back</Text>
-          </TouchableOpacity>
-        </View>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
-      </SafeAreaView>
-    );
-  }
-
   // Render subject item
   const renderSubjectItem = ({ item }: { item: Subject }) => {
     const initials = item.subjectName.slice(0, 2).toUpperCase();
@@ -629,7 +626,7 @@ const SubjectsWeb: React.FC = () => {
 
     return (
       <TouchableOpacity
-        className={`rounded-xl p-4 mb-3 border ${isDarkMode ? 'bg-[#1E1E1E] border-[#333333]' : 'bg-white border-[#E5E7EB]'}`}
+        className={`rounded-xl p-4 mb-3 mx-3 border ${isDarkMode ? 'bg-[#1E1E1E] border-[#333333]' : 'bg-white border-[#E5E7EB]'}`}
         style={{
           shadowColor: '#000',
           shadowOffset: { width: 0, height: 2 },
@@ -663,7 +660,7 @@ const SubjectsWeb: React.FC = () => {
                 className={`text-lg font-inter_bold mb-1 ${isDarkMode ? 'text-[#F9FAFB]' : 'text-[#111827]'}`}
                 numberOfLines={1}
               >
-                {item.subjectName}
+                {formatSubjectDisplay(item)}
               </Text>
               <Text className={`text-sm font-inter_semibold mb-1 ${isDarkMode ? 'text-[#9CA3AF]' : 'text-[#6B7280]'}`}>
                 {item.gradeLevel} - {item.section}
@@ -690,225 +687,212 @@ const SubjectsWeb: React.FC = () => {
     );
   };
 
+  // ---- List header (scrolls with content now) ----
+  const listHeader = (
+    <View className={`px-5 pt-5 pb-4 mb-3 border-b ${isDarkMode ? 'bg-[#1E1E1E] border-[#333333]' : 'bg-white border-[#E5E7EB]'}`}>
+      <View className="flex-row justify-between items-center">
+        <View>
+          <Text className={`text-2xl font-inter_bold ${isDarkMode ? 'text-[#F9FAFB]' : 'text-[#111827]'}`}>
+            My Subjects
+          </Text>
+          <Text className={`text-sm font-inter_regular mt-1 ${isDarkMode ? 'text-[#9CA3AF]' : 'text-[#6B7280]'}`}>
+            Showing {displayedSubjects.length} of {filteredSubjects.length} subjects
+          </Text>
+        </View>
+        
+        {/* Buttons Container */}
+        <View className="flex-row gap-1">
+          {/* Add Subject Button */}
+          <TouchableOpacity
+            onPress={handleAddSubject}
+            className="bg-[#3B82F6] px-2 py-2 rounded-lg flex-row items-center"
+          >
+            <Image
+              source={require('@/assets/icons/plus.png')}
+              className="w-[24] h-[24]"
+              tintColor="white"
+            />
+            {width >=768 && (
+              <Text className="text-white font-inter_semibold mx-2">
+                Add Subject
+              </Text>
+            )}
+          </TouchableOpacity>
+          {/* Refresh Button */}
+          <TouchableOpacity
+            onPress={fetchTeacherSubjects}
+            disabled={loading}
+            className="bg-[#EF4444] px-2 py-2 rounded-lg flex-row items-center"
+          >
+            <Image
+              source={require('@/assets/icons/refresh.png')}
+              className="w-[24] h-[24]"
+              tintColor="white"
+              style={{
+                transform: loading ? [{ rotate: '180deg' }] : [{ rotate: '0deg' }]
+              }}
+            />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Filters */}
+      <View className="mt-4">
+        <View className="flex-row mb-3">
+          <View className="flex-1 mr-2">
+            <TextInput
+              placeholder="Search subjects..."
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              className={`px-3 py-2.5 h-[45px] rounded-lg font-inter_regular ${
+                isDarkMode ? 'bg-[#2A2A2A] text-[#E0E0E0]' : 'bg-[#F3F4F6] text-[#111827]'
+              }`}
+              placeholderTextColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
+            />
+          </View>
+          <TouchableOpacity
+            onPress={fetchTeacherSubjects}
+            className="bg-[#10B981] px-4 py-2 rounded-lg mr-2 justify-center items-center h-[45px]"
+          >
+            <Text className="text-white font-inter_semibold">Search</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View className="flex-row gap-2">
+          {/* Grade Level Filter */}
+          <View className="flex-1">
+            <Text className={`text-xs font-inter_medium mb-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#6B7280]'}`}>
+              Grade Level
+            </Text>
+            <Dropdown
+              data={gradeLevelFilterOptions}
+              selectedValue={selectedGradeLevel}
+              onValueChange={setSelectedGradeLevel}
+              placeholder="All Grade Levels"
+            />
+          </View>
+
+          {/* School Year Filter */}
+          <View className="flex-1">
+            <Text className={`text-xs font-inter_medium mb-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#6B7280]'}`}>
+              School Year
+            </Text>
+            <Dropdown
+              data={schoolYearFilterOptions}
+              selectedValue={selectedSchoolYear}
+              onValueChange={setSelectedSchoolYear}
+              placeholder="All School Years"
+            />
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+
+  // ---- Empty state ----
+  const listEmpty = (
+    <View className="flex-1 justify-center items-center p-5" style={{ minHeight: 300 }}>
+      <Image
+        source={require('@/assets/images/online-course.png')}
+        className="w-[64] h-[64] mb-4"
+      />
+      <Text className={`text-lg font-inter_semibold mb-2 ${isDarkMode ? 'text-[#9CA3AF]' : 'text-[#6B7280]'}`}>
+        No subjects found
+      </Text>
+      <Text className={`text-sm font-inter_regular text-center ${isDarkMode ? 'text-[#6B7280]' : 'text-[#9CA3AF]'}`}>
+        {searchQuery || selectedGradeLevel || selectedSchoolYear
+          ? 'Try adjusting your filters'
+          : 'Create your first subject to get started'}
+      </Text>
+    </View>
+  );
+
+  // ---- Footer (loading more / end of list) ----
+  const listFooter = (
+    <View className="py-5 items-center">
+      {isLoadingMore ? (
+        <>
+          <ActivityIndicator size="small" color="#3B82F6" />
+          <Text className={`mt-2 text-xs font-inter_regular ${isDarkMode ? 'text-[#9CA3AF]' : 'text-[#6B7280]'}`}>
+            Loading more subjects...
+          </Text>
+        </>
+      ) : !hasMore && filteredSubjects.length > ITEMS_PER_PAGE ? (
+        <Text className={`text-xs font-inter_regular ${isDarkMode ? 'text-[#6B7280]' : 'text-[#9CA3AF]'}`}>
+          All {filteredSubjects.length} subjects loaded
+        </Text>
+      ) : null}
+    </View>
+  );
+
+  // Loading state
+  if (isLoading || loading) {
+    return (
+      <SafeAreaView className={`flex-1 items-center justify-center ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-[#F9FAFB]'}`}>
+        <NetworkBanner
+          forceVisible={forceNetworkBannerVisible}
+          onRetry={fetchTeacherSubjects}
+          onDismiss={() => setForceNetworkBannerVisible(false)}
+        />
+        <ActivityIndicator size="large" color="#3B82F6" />
+        <Text className={`mt-4 text-sm font-inter_regular ${isDarkMode ? 'text-[#9CA3AF]' : 'text-[#6B7280]'}`}>
+          Loading your subjects...
+        </Text>
+        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+      </SafeAreaView>
+    );
+  }
+
+  // Unauthorized access
+  if (!isTeacher) {
+    return (
+      <SafeAreaView className={`flex-1 ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-[#F9FAFB]'}`}>
+        <View className="flex-1 justify-center items-center p-5">
+          <Text className={`text-lg font-inter_semibold mb-4 ${isDarkMode ? 'text-[#9CA3AF]' : 'text-[#6B7280]'}`}>
+            Access Denied
+          </Text>
+          <Text className={`text-sm font-inter_regular text-center ${isDarkMode ? 'text-[#6B7280]' : 'text-[#9CA3AF]'}`}>
+            This page is only available for teachers.
+          </Text>
+          <TouchableOpacity
+            onPress={() => router.back()}
+            className="bg-[#3B82F6] rounded-lg px-6 py-3 mt-4"
+          >
+            <Text className="text-white font-inter_semibold">Go Back</Text>
+          </TouchableOpacity>
+        </View>
+        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+      </SafeAreaView>
+    );
+  }
+
   return (
     <View className={`flex-1 ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-[#F9FAFB]'}`}>
-      {/* Header */}
-      <View className={`px-5 pt-5 pb-4 border-b ${isDarkMode ? 'bg-[#1E1E1E] border-[#333333]' : 'bg-white border-[#E5E7EB]'}`}>
-        <View className="flex-row justify-between items-center">
-          <View>
-            <Text className={`text-2xl font-inter_bold ${isDarkMode ? 'text-[#F9FAFB]' : 'text-[#111827]'}`}>
-              My Subjects
-            </Text>
-            <Text className={`text-sm font-inter_regular mt-1 ${isDarkMode ? 'text-[#9CA3AF]' : 'text-[#6B7280]'}`}>
-              Showing {startIndex + 1}-{Math.min(endIndex, filteredSubjects.length)} of {filteredSubjects.length} subjects
-            </Text>
-          </View>
-          
-          {/* Buttons Container */}
-          <View className="flex-row gap-1">
-            {/* Add Subject Button */}
-            <TouchableOpacity
-              onPress={handleAddSubject}
-              className="bg-[#3B82F6] px-2 py-2 rounded-lg flex-row items-center"
-            >
-              <Image
-                source={require('@/assets/icons/plus.png')}
-                className="w-[24] h-[24]"
-                tintColor="white"
-              />
-              {width >=768 && (
-                <Text className="text-white font-inter_semibold mx-2">
-                  Add Subject
-                </Text>
-              )}
-            </TouchableOpacity>
-            {/* Refresh Button */}
-            <TouchableOpacity
-              onPress={fetchTeacherSubjects}
-              disabled={loading}
-              className="bg-[#EF4444] px-2 py-2 rounded-lg flex-row items-center"
-            >
-              <Image
-                source={require('@/assets/icons/refresh.png')}
-                className="w-[24] h-[24]"
-                tintColor="white"
-                style={{
-                  transform: loading ? [{ rotate: '180deg' }] : [{ rotate: '0deg' }]
-                }}
-              />
-            </TouchableOpacity>
-          </View>
-        </View>
+      <NetworkBanner
+        forceVisible={forceNetworkBannerVisible}
+        onRetry={fetchTeacherSubjects}
+        onDismiss={() => setForceNetworkBannerVisible(false)}
+      />
 
-        {/* Filters */}
-        <View className="mt-4">
-          <View className="flex-row mb-3">
-            <View className="flex-1 mr-2">
-              <TextInput
-                placeholder="Search subjects..."
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                className={`px-3 py-2.5 h-[45px] rounded-lg font-inter_regular ${
-                  isDarkMode ? 'bg-[#2A2A2A] text-[#E0E0E0]' : 'bg-[#F3F4F6] text-[#111827]'
-                }`}
-                placeholderTextColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
-              />
-            </View>
-            <TouchableOpacity
-              onPress={fetchTeacherSubjects}
-              className="bg-[#10B981] px-4 py-2 rounded-lg mr-2 justify-center items-center h-[45px]"
-            >
-              <Text className="text-white font-inter_semibold">Search</Text>
-            </TouchableOpacity>
-            <View style={{ width: 100 }}>
-              <Dropdown
-                data={itemsPerPageOptions}
-                selectedValue={itemsPerPage.toString()}
-                onValueChange={(value) => setItemsPerPage(parseInt(value))}
-                placeholder="Items per page"
-              />
-            </View>
-          </View>
-
-          <View className="flex-row gap-2">
-            {/* Grade Level Filter */}
-            <View className="flex-1">
-              <Text className={`text-xs font-inter_medium mb-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#6B7280]'}`}>
-                Grade Level
-              </Text>
-              <Dropdown
-                data={gradeLevelFilterOptions}
-                selectedValue={selectedGradeLevel}
-                onValueChange={setSelectedGradeLevel}
-                placeholder="All Grade Levels"
-              />
-            </View>
-
-            {/* School Year Filter */}
-            <View className="flex-1">
-              <Text className={`text-xs font-inter_medium mb-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#6B7280]'}`}>
-                School Year
-              </Text>
-              <Dropdown
-                data={schoolYearFilterOptions}
-                selectedValue={selectedSchoolYear}
-                onValueChange={setSelectedSchoolYear}
-                placeholder="All School Years"
-              />
-            </View>
-          </View>
-        </View>
-      </View>
-
-      {/* Content */}
-      <View className="flex-1">
-        {paginatedSubjects.length > 0 ? (
-          <FlatList
-            data={paginatedSubjects}
-            renderItem={renderSubjectItem}
-            keyExtractor={(item) => item._id}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ padding: 20 }}
-          />
-        ) : (
-          <View className="flex-1 justify-center items-center p-5">
-            <Image
-              source={require('@/assets/images/online-course.png')}
-              className="w-[64] h-[64] mb-4"
-            />
-            <Text className={`text-lg font-inter_semibold mb-2 ${isDarkMode ? 'text-[#9CA3AF]' : 'text-[#6B7280]'}`}>
-              No subjects found
-            </Text>
-            <Text className={`text-sm font-inter_regular text-center ${isDarkMode ? 'text-[#6B7280]' : 'text-[#9CA3AF]'}`}>
-              {searchQuery || selectedGradeLevel || selectedSchoolYear
-                ? 'Try adjusting your filters'
-                : 'Create your first subject to get started'}
-            </Text>
-          </View>
-        )}
-
-        {/* Pagination Controls */}
-        {totalPages > 1 && (
-          <View className={`px-5 py-4 border-t ${isDarkMode ? 'bg-[#1E1E1E] border-[#333333]' : 'bg-white border-[#E5E7EB]'}`}>
-            <View className="flex-row justify-between items-center">
-              {/* Previous Button */}
-              <TouchableOpacity
-                onPress={goToPreviousPage}
-                disabled={currentPage === 1}
-                className={`px-4 py-2 rounded-lg ${
-                  currentPage === 1
-                    ? isDarkMode ? 'bg-[#2A2A2A]' : 'bg-[#F3F4F6]'
-                    : 'bg-[#3B82F6]'
-                }`}
-              >
-                <Text className={`font-inter_semibold ${
-                  currentPage === 1
-                    ? isDarkMode ? 'text-[#6B7280]' : 'text-[#9CA3AF]'
-                    : 'text-white'
-                }`}>
-                  Previous
-                </Text>
-              </TouchableOpacity>
-
-              {/* Page Numbers */}
-              <View className="flex-row gap-2">
-                {getPageNumbers().map((page, index) => {
-                  if (page === '...') {
-                    return (
-                      <View key={`ellipsis-${index}`} className="px-3 py-2">
-                        <Text className={`font-inter_regular ${isDarkMode ? 'text-[#9CA3AF]' : 'text-[#6B7280]'}`}>
-                          ...
-                        </Text>
-                      </View>
-                    );
-                  }
-                  
-                  const isCurrentPage = page === currentPage;
-                  
-                  return (
-                    <TouchableOpacity
-                      key={page}
-                      onPress={() => goToPage(page as number)}
-                      className={`px-3 py-2 rounded-lg min-w-[40px] items-center ${
-                        isCurrentPage
-                          ? 'bg-[#3B82F6]'
-                          : isDarkMode ? 'bg-[#2A2A2A]' : 'bg-[#F3F4F6]'
-                      }`}
-                    >
-                      <Text className={`font-inter_semibold ${
-                        isCurrentPage
-                          ? 'text-white'
-                          : isDarkMode ? 'text-[#E0E0E0]' : 'text-[#111827]'
-                      }`}>
-                        {page}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              {/* Next Button */}
-              <TouchableOpacity
-                onPress={goToNextPage}
-                disabled={currentPage === totalPages}
-                className={`px-4 py-2 rounded-lg ${
-                  currentPage === totalPages
-                    ? isDarkMode ? 'bg-[#2A2A2A]' : 'bg-[#F3F4F6]'
-                    : 'bg-[#3B82F6]'
-                }`}
-              >
-                <Text className={`font-inter_semibold ${
-                  currentPage === totalPages
-                    ? isDarkMode ? 'text-[#6B7280]' : 'text-[#9CA3AF]'
-                    : 'text-white'
-                }`}>
-                  Next
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-      </View>
+      {/* Entire screen is now scrollable via FlatList */}
+      <FlatList
+        ref={listRef}
+        data={displayedSubjects}
+        renderItem={renderSubjectItem}
+        keyExtractor={(item) => item._id}
+        showsVerticalScrollIndicator={false}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.5}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={listEmpty}
+        ListFooterComponent={listFooter}
+        contentContainerStyle={{ paddingBottom: 20, flexGrow: 1 }}
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={10}
+        removeClippedSubviews={true}
+        keyboardShouldPersistTaps="handled"
+      />
 
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
 
@@ -942,7 +926,7 @@ const SubjectsWeb: React.FC = () => {
         <View className="flex-1 justify-center items-center p-4 bg-black/50">
           <View className={`rounded-xl p-6 w-full max-w-xl max-h-[85vh] ${isDarkMode ? 'bg-[#1E1E1E]' : 'bg-white'}`}>
             <Text className={`font-inter_bold text-xl text-center mb-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-              {isEditing ? 'Edit Subject' : 'Create New Subject'}
+              {isEditing ? 'Edit Subject' : 'Create New Subject'} <Text className="text-red-500">*</Text>
             </Text>
 
             <ScrollView showsVerticalScrollIndicator={false} className="flex-1">
@@ -988,15 +972,34 @@ const SubjectsWeb: React.FC = () => {
                 </Text>
               </TouchableOpacity>
 
-              {/* Subject Name */}
+              {/* Class Code */}
               <Text className={`font-inter_semibold ml-1 mt-2 mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                Subject Name:
+                Class Code <Text className="text-red-500">*</Text>
               </Text>
               <TextInput
                 className={`font-inter_regular border rounded-lg p-3 mb-2 ${
                   isDarkMode ? 'bg-[#2A2A2A] border-gray-600 text-white' : 'bg-white border-gray-300 text-black'
                 }`}
-                placeholder="Enter subject name"
+                placeholder="e.g. SCIBIOG06"
+                placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
+                value={classCode}
+                onChangeText={(text) => setClassCode(normalizeClassCodeInput(text))}
+                maxLength={12}
+                autoCapitalize="characters"
+              />
+              <Text className={`font-inter_regular text-xs mb-2 ml-1 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                Max 12 characters. Letters and numbers only.
+              </Text>
+
+              {/* Subject Name */}
+              <Text className={`font-inter_semibold ml-1 mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Subject Name <Text className="text-red-500">*</Text>
+              </Text>
+              <TextInput
+                className={`font-inter_regular border rounded-lg p-3 mb-2 ${
+                  isDarkMode ? 'bg-[#2A2A2A] border-gray-600 text-white' : 'bg-white border-gray-300 text-black'
+                }`}
+                placeholder="e.g. Science Biology 6"
                 placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
                 value={subjectName}
                 onChangeText={setSubjectName}
@@ -1004,7 +1007,7 @@ const SubjectsWeb: React.FC = () => {
 
               {/* Grade Level */}
               <Text className={`font-inter_semibold ml-1 mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                Grade Level:
+                Grade Level <Text className="text-red-500">*</Text>
               </Text>
               <View className="mb-2">
                 <Dropdown
@@ -1017,25 +1020,31 @@ const SubjectsWeb: React.FC = () => {
 
               {/* School Year */}
               <Text className={`font-inter_semibold ml-1 mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                School Year:
+                School Year <Text className="text-red-500">*</Text>
               </Text>
               <View className="mb-2">
                 <Dropdown
-                  data={schoolYearOptions}
+                  data={schoolYearFormOptions}
                   selectedValue={schoolYear}
                   onValueChange={setSchoolYear}
                   placeholder="Select School Year"
+                  enabled={!activeSchoolYear}
                 />
               </View>
+              {activeSchoolYear && (
+                <Text className={`font-inter_regular text-xs mb-2 ml-1 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                  School year is set by the administrator to {activeSchoolYear}.
+                </Text>
+              )}
 
               {/* Section - Now shows admin-created sections */}
               <Text className={`font-inter_semibold ml-1 mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                Section:
+                Section <Text className="text-red-500">*</Text>
               </Text>
               {!gradeLevel || !schoolYear ? (
                 <View className={`p-3 rounded-lg border ${
                   isDarkMode ? 'bg-[#2A2A2A] border-gray-600' : 'bg-gray-100 border-gray-300'
-                }`}>
+                } mb-2`}>
                   <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
                     Please select grade level and school year first
                   </Text>

@@ -251,36 +251,14 @@ const EditSchoolInfoModal: React.FC<EditSchoolInfoModalProps> = ({
               Statistics
             </Text>
 
-            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: isDarkMode ? '#D1D5DB' : '#6B7280', marginBottom: 4, fontFamily: 'Inter-Medium' }}>
-                  Students
-                </Text>
-                <TextInput
-                  style={{
-                    backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
-                    borderWidth: 1,
-                    borderColor: isDarkMode ? '#374151' : '#D1D5DB',
-                    borderRadius: 8,
-                    padding: 12,
-                    color: isDarkMode ? '#F9FAFB' : '#111827',
-                    fontFamily: 'Inter-Regular',
-                  }}
-                  value={formData.stats.studentsEnrolled}
-                  onChangeText={(text) =>
-                    setFormData({
-                      ...formData,
-                      stats: { ...formData.stats, studentsEnrolled: text },
-                    })
-                  }
-                  placeholder="200+"
-                  placeholderTextColor={isDarkMode ? '#6B7280' : '#9CA3AF'}
-                />
-              </View>
+            <Text style={{ color: isDarkMode ? '#D1D5DB' : '#6B7280', marginBottom: 8, fontFamily: 'Inter-Medium', fontSize: 12 }}>
+              Note: Students Enrolled and Dedicated Teachers are automatically calculated from active accounts and cannot be edited here.
+            </Text>
 
+            <View style={{ flexDirection: 'row', gap: 12 }}>
               <View style={{ flex: 1 }}>
                 <Text style={{ color: isDarkMode ? '#D1D5DB' : '#6B7280', marginBottom: 4, fontFamily: 'Inter-Medium' }}>
-                  Years
+                  Years of Excellence
                 </Text>
                 <TextInput
                   style={{
@@ -300,34 +278,6 @@ const EditSchoolInfoModal: React.FC<EditSchoolInfoModalProps> = ({
                     })
                   }
                   placeholder="30+"
-                  placeholderTextColor={isDarkMode ? '#6B7280' : '#9CA3AF'}
-                />
-              </View>
-            </View>
-
-            <View style={{ flexDirection: 'row', gap: 12 }}>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: isDarkMode ? '#D1D5DB' : '#6B7280', marginBottom: 4, fontFamily: 'Inter-Medium' }}>
-                  Teachers
-                </Text>
-                <TextInput
-                  style={{
-                    backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
-                    borderWidth: 1,
-                    borderColor: isDarkMode ? '#374151' : '#D1D5DB',
-                    borderRadius: 8,
-                    padding: 12,
-                    color: isDarkMode ? '#F9FAFB' : '#111827',
-                    fontFamily: 'Inter-Regular',
-                  }}
-                  value={formData.stats.dedicatedTeachers}
-                  onChangeText={(text) =>
-                    setFormData({
-                      ...formData,
-                      stats: { ...formData.stats, dedicatedTeachers: text },
-                    })
-                  }
-                  placeholder="10+"
                   placeholderTextColor={isDarkMode ? '#6B7280' : '#9CA3AF'}
                 />
               </View>

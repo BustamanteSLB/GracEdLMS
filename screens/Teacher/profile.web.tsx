@@ -7,6 +7,7 @@ import { Image } from 'expo-image'
 import { cssInterop } from 'nativewind'
 import { useAuth } from '@/contexts/AuthContext';
 import { router } from 'expo-router'
+import NetworkBanner from '@/components/NetworkBanner.web'
 
 const ProfileWeb: React.FC = () => {
   document.title = 'Profile - GracEdLMS';
@@ -18,17 +19,30 @@ const ProfileWeb: React.FC = () => {
   cssInterop(Image, { className: "style" });
 
   const [refreshing, setRefreshing] = useState(false);
+  const [networkError, setNetworkError] = useState(false);
 
   // Determine if we should use portrait layout
   const isSmallScreen = width < 768;
   const isPortrait = height > width || isSmallScreen;
 
+  const isNetworkError = (err: any) =>
+    err?.message?.toLowerCase?.().includes('network') ||
+    err?.status === 0 ||
+    !err?.response;
+
   // Function to refresh user data
   const onRefresh = useCallback(async () => {
     if (isLoggingOut) return;
     setRefreshing(true);
-    await fetchCurrentUser();
-    setRefreshing(false);
+    setNetworkError(false);
+    try {
+      await fetchCurrentUser();
+    } catch (error: any) {
+      console.error('Refresh error:', error);
+      if (isNetworkError(error)) setNetworkError(true);
+    } finally {
+      setRefreshing(false);
+    }
   }, [fetchCurrentUser, isLoggingOut]);
 
   useEffect(() => {
@@ -51,6 +65,13 @@ const ProfileWeb: React.FC = () => {
             Loading Profile...
           </Text>
         </View>
+        <NetworkBanner
+          forceVisible={networkError}
+          onRetry={() => {
+            setNetworkError(false);
+            onRefresh();
+          }}
+        />
       </SafeAreaView>
     );
   }
@@ -544,6 +565,15 @@ const ProfileWeb: React.FC = () => {
           </Text>
         )}
       </ScrollView>
+
+      {/* Animated network banner overlay */}
+      <NetworkBanner
+        forceVisible={networkError}
+        onRetry={() => {
+          setNetworkError(false);
+          onRefresh();
+        }}
+      />
 
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
     </SafeAreaView>

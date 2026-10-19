@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -24,6 +24,9 @@ import { useDarkMode } from '@/contexts/DarkModeContext';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import DownIcon from '@/assets/icons/down.svg';
+import TeacherQuizStudentPreview, {
+  StudentPreviewQuestion,
+} from '@/components/TeacherQuizStudentPreview';
 
 cssInterop(Image, { className: "style" });
 
@@ -44,8 +47,11 @@ interface Option {
 interface Question {
   _id?: string;
   text: string;
-  type: 'multiple_choice' | 'multiple_answers' | 'true_false';
+  type: 'multiple_choice' | 'multiple_answers' | 'true_false' | 'short_answer' | 'essay';
   options: Option[];
+  correctAnswers?: string[]; // For short answer
+  caseSensitive?: boolean; // For short answer
+  markOthersIncorrect?: boolean; // For short answer
   images?: string[];
   itemPoints: number;
   isRequired: boolean;
@@ -60,9 +66,10 @@ interface Quiz {
   sectionDescription?: string;
   questions: Question[];
   timeLimit?: number;
-  quarter: string;
+  term: string;
   quizPoints: number;
   status: 'draft' | 'published' | 'archived' | 'graded' | 'closed';
+  shuffleQuestions?: boolean;
 }
 
 const EditQuizAndroid = () => {
@@ -78,8 +85,9 @@ const EditQuizAndroid = () => {
     sectionHeader: '',
     sectionDescription: '',
     subject: '',
-    quarter: 'First Quarter',
+    term: '1',
     timeLimit: '',
+    shuffleQuestions: false,
   });
 
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -87,6 +95,7 @@ const EditQuizAndroid = () => {
   const [loading, setLoading] = useState(false);
   const [fetchingQuiz, setFetchingQuiz] = useState(true);
   const [previewMode, setPreviewMode] = useState(false);
+  const [studentPreviewMode, setStudentPreviewMode] = useState(false);
   const [selectedImages, setSelectedImages] = useState<{[key: number]: DocumentPicker.DocumentPickerAsset[]}>({});
   const [existingImageUrls, setExistingImageUrls] = useState<{[key: number]: string[]}>({});
   const [imagePreviewModal, setImagePreviewModal] = useState(false);
@@ -102,7 +111,7 @@ const EditQuizAndroid = () => {
   });
   const [generatingAI, setGeneratingAI] = useState(false);
 
-  const quarters = ['First Quarter', 'Second Quarter', '3rd Quarter', '4th Quarter'];
+  const terms = ['1', '2', '3'];
 
   // Fetch quiz and subjects
   useEffect(() => {
@@ -123,8 +132,9 @@ const EditQuizAndroid = () => {
         sectionHeader: quiz.sectionHeader || '',
         sectionDescription: quiz.sectionDescription || '',
         subject: quiz.subject._id,
-        quarter: quiz.quarter,
+        term: quiz.term,
         timeLimit: quiz.timeLimit?.toString() || '',
+        shuffleQuestions: quiz.shuffleQuestions ?? false,
       });
       setQuestions(quiz.questions);
       
@@ -164,6 +174,9 @@ const EditQuizAndroid = () => {
         { text: '', isCorrect: false },
         { text: '', isCorrect: false },
       ],
+      correctAnswers: [],
+      caseSensitive: false,
+      markOthersIncorrect: true,
       itemPoints: 1,
       isRequired: true,
       answer: '',
@@ -208,6 +221,15 @@ const EditQuizAndroid = () => {
           { text: 'True', isCorrect: false },
           { text: 'False', isCorrect: false },
         ];
+        question.correctAnswers = [];
+      } else if (value === 'short_answer') {
+        question.options = [];
+        question.correctAnswers = [];
+        question.caseSensitive = false;
+        question.markOthersIncorrect = true;
+      } else if (value === 'essay') {
+        question.options = [];
+        question.correctAnswers = [];
       } else if (value === 'multiple_choice' || value === 'multiple_answers') {
         if (question.options.length < 2) {
           question.options = [
@@ -215,10 +237,39 @@ const EditQuizAndroid = () => {
             { text: '', isCorrect: false },
           ];
         }
+        question.correctAnswers = [];
       }
       question.answer = value === 'multiple_answers' ? [] : '';
     }
     
+    setQuestions(updatedQuestions);
+  };
+
+  // Add correct answer for short answer questions
+  const addCorrectAnswer = (questionIndex: number) => {
+    const updatedQuestions = [...questions];
+    if (!updatedQuestions[questionIndex].correctAnswers) {
+      updatedQuestions[questionIndex].correctAnswers = [];
+    }
+    updatedQuestions[questionIndex].correctAnswers!.push('');
+    setQuestions(updatedQuestions);
+  };
+
+  // Remove correct answer
+  const removeCorrectAnswer = (questionIndex: number, answerIndex: number) => {
+    const updatedQuestions = [...questions];
+    if (updatedQuestions[questionIndex].correctAnswers) {
+      updatedQuestions[questionIndex].correctAnswers!.splice(answerIndex, 1);
+    }
+    setQuestions(updatedQuestions);
+  };
+
+  // Update correct answer
+  const updateCorrectAnswer = (questionIndex: number, answerIndex: number, value: string) => {
+    const updatedQuestions = [...questions];
+    if (updatedQuestions[questionIndex].correctAnswers) {
+      updatedQuestions[questionIndex].correctAnswers![answerIndex] = value;
+    }
     setQuestions(updatedQuestions);
   };
 
@@ -362,6 +413,29 @@ const EditQuizAndroid = () => {
     return questions.reduce((total, question) => total + question.itemPoints, 0);
   };
 
+  const studentPreviewQuestions = useMemo<StudentPreviewQuestion[]>(
+    () =>
+      questions.map((question, index) => ({
+        text: question.text,
+        type: question.type,
+        options: question.options.map((option) => ({ text: option.text })),
+        images: getAllImagesForQuestion(index).map((image) => image.url),
+        itemPoints: question.itemPoints,
+        caseSensitive: question.caseSensitive,
+      })),
+    [questions, selectedImages, existingImageUrls],
+  );
+
+  const toggleStudentPreviewMode = () => {
+    if (!studentPreviewMode && questions.length === 0) {
+      Alert.alert('Preview unavailable', 'Add at least one question to preview as a student.');
+      return;
+    }
+    setStudentPreviewMode(!studentPreviewMode);
+    setPreviewMode(false);
+    setAiGenerationMode(false);
+  };
+
   // Validate form
   const validateForm = () => {
     if (!formData.title.trim()) {
@@ -385,6 +459,20 @@ const EditQuizAndroid = () => {
       if (!question.text.trim()) {
         Alert.alert('Validation Error', `Question ${i + 1} is missing text`);
         return false;
+      }
+      
+      // Skip option validation for short answer and essay questions
+      if (question.type === 'short_answer') {
+        if (!question.correctAnswers || question.correctAnswers.length === 0 || !question.correctAnswers.some(ans => ans.trim())) {
+          Alert.alert('Validation Error', `Question ${i + 1} needs at least one correct answer`);
+          return false;
+        }
+        continue;
+      }
+      
+      if (question.type === 'essay') {
+        // Essay questions don't need options or correct answers
+        continue;
       }
       
       const validOptions = question.options.filter(opt => opt.text.trim());
@@ -440,11 +528,13 @@ const EditQuizAndroid = () => {
               formDataToSend.append('sectionHeader', formData.sectionHeader.trim());
               formDataToSend.append('sectionDescription', formData.sectionDescription.trim());
               formDataToSend.append('subject', formData.subject);
-              formDataToSend.append('quarter', formData.quarter);
+              formDataToSend.append('term', formData.term);
               
               if (formData.timeLimit && formData.timeLimit.trim()) {
                 formDataToSend.append('timeLimit', formData.timeLimit.trim());
               }
+
+              formDataToSend.append('shuffleQuestions', String(formData.shuffleQuestions));
 
               formDataToSend.append('questions', JSON.stringify(cleanedQuestions));
 
@@ -523,7 +613,7 @@ const EditQuizAndroid = () => {
               
               const asset = aiGenerationData.selectedFile;
               if (!asset) {
-                Alert.alert('Error', 'Please select a file before generating the AI quiz.');
+                Alert.alert('Error', 'File not found');
                 return;
               }
               formDataToSend.append('document', {
@@ -534,7 +624,7 @@ const EditQuizAndroid = () => {
 
               formDataToSend.append('subject', formData.subject);
               formDataToSend.append('title', formData.title || `AI Generated Quiz`);
-              formDataToSend.append('quarter', formData.quarter);
+              formDataToSend.append('term', formData.term);
               formDataToSend.append('numberOfQuestions', aiGenerationData.numberOfQuestions);
               formDataToSend.append('questionTypes', JSON.stringify(aiGenerationData.questionTypes));
               formDataToSend.append('difficulty', aiGenerationData.difficulty);
@@ -692,7 +782,9 @@ const EditQuizAndroid = () => {
             {[
               { value: 'multiple_choice', label: 'Multiple Choice' },
               { value: 'true_false', label: 'True/False' },
-              { value: 'multiple_answers', label: 'Multiple Answers' }
+              { value: 'multiple_answers', label: 'Multiple Answers' },
+              { value: 'short_answer', label: 'Short Answer' },
+              { value: 'essay', label: 'Essay (Manual Grading)' },
             ].map((type) => (
               <View key={type.value} style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Checkbox
@@ -809,7 +901,117 @@ const EditQuizAndroid = () => {
           label="True/False"
           labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontFamily: 'Inter-Regular', fontSize: 13 }}
         />
+        <RadioButton 
+          value="short_answer" 
+          label="Short Answer"
+          labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontFamily: 'Inter-Regular', fontSize: 13 }}
+        />
+        <RadioButton 
+          value="essay" 
+          label="Essay (Manual Grading)"
+          labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontFamily: 'Inter-Regular', fontSize: 13 }}
+        />
       </RadioButtonGroup>
+    </View>
+  );
+
+  // Render short answer options
+  const renderShortAnswerOptions = (question: Question, questionIndex: number) => (
+    <View style={{ marginBottom: 16 }}>
+      <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
+        List correct answer(s)
+      </Text>
+      
+      {question.correctAnswers && question.correctAnswers.map((answer, answerIndex) => (
+        <View key={answerIndex} style={{ 
+          flexDirection: 'row', 
+          alignItems: 'center', 
+          marginBottom: 8,
+          backgroundColor: isDarkMode ? '#2A2A2A' : '#F9FAFB',
+          borderRadius: 8,
+          padding: 12,
+        }}>
+          <Image
+            source={require('@/assets/icons/check.png')}
+            style={{ width: 16, height: 16, marginRight: 12 }}
+            tintColor="#10B981"
+          />
+          <TextInput
+            value={answer}
+            onChangeText={(text) => updateCorrectAnswer(questionIndex, answerIndex, text)}
+            placeholder={`Correct answer ${answerIndex + 1}`}
+            style={{
+              flex: 1,
+              padding: 8,
+              backgroundColor: isDarkMode ? '#121212' : '#FFFFFF',
+              borderRadius: 6,
+              color: isDarkMode ? '#E0E0E0' : '#111827',
+              marginRight: 8,
+              fontFamily: 'Inter-Regular',
+            }}
+            placeholderTextColor={isDarkMode ? '#9ca3af' : '#6B7280'}
+          />
+          <TouchableOpacity
+            onPress={() => removeCorrectAnswer(questionIndex, answerIndex)}
+            style={{ padding: 4 }}
+          >
+            <Image
+              source={require('@/assets/icons/close.png')}
+              style={{ width: 16, height: 16 }}
+              tintColor='#EF4444'
+            />
+          </TouchableOpacity>
+        </View>
+      ))}
+      
+      <TouchableOpacity
+        onPress={() => addCorrectAnswer(questionIndex)}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          padding: 8,
+          backgroundColor: isDarkMode ? '#2A2A2A' : '#F3F4F6',
+          borderRadius: 6,
+          borderWidth: 1,
+          borderColor: isDarkMode ? '#333333' : '#D1D5DB',
+          borderStyle: 'dashed',
+          marginBottom: 12,
+        }}
+      >
+        <Image
+          source={require('@/assets/icons/plus.png')}
+          style={{ width: 16, height: 16, marginRight: 8, tintColor: '#3B82F6' }}
+        />
+        <Text className='font-inter_regular text-sm text-[#3B82F6]'>
+          Add correct answer
+        </Text>
+      </TouchableOpacity>
+
+      {/* Case Sensitive Checkbox */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+        <Checkbox
+          value={question.caseSensitive || false}
+          onValueChange={(value) => updateQuestion(questionIndex, 'caseSensitive', value)}
+          color={question.caseSensitive ? '#3B82F6' : undefined}
+          style={{ marginRight: 8 }}
+        />
+        <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
+          Case sensitive
+        </Text>
+      </View>
+
+      {/* Mark Others Incorrect Checkbox */}
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <Checkbox
+          value={question.markOthersIncorrect !== false}
+          onValueChange={(value) => updateQuestion(questionIndex, 'markOthersIncorrect', value)}
+          color={question.markOthersIncorrect !== false ? '#3B82F6' : undefined}
+          style={{ marginRight: 8 }}
+        />
+        <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
+          Mark all other answers incorrect
+        </Text>
+      </View>
     </View>
   );
 
@@ -1029,7 +1231,29 @@ const EditQuizAndroid = () => {
       </View>
 
       {renderQuestionTypeSelector(question, index)}
-      {renderQuestionOptions(question, index)}
+      
+      {question.type === 'short_answer' 
+        ? renderShortAnswerOptions(question, index)
+        : question.type === 'essay'
+        ? (
+          <View style={{ 
+            marginBottom: 16,
+            backgroundColor: isDarkMode ? '#7C2D12' : '#FEF3C7',
+            borderRadius: 8,
+            padding: 12,
+            borderLeftWidth: 4,
+            borderLeftColor: '#F59E0B',
+          }}>
+            <Text className={`font-inter_semibold text-sm ${isDarkMode ? 'text-orange-300' : 'text-orange-700'}`}>
+              ℹ️ Essay Question - Manual Grading
+            </Text>
+            <Text className={`font-inter_regular text-xs mt-2 ${isDarkMode ? 'text-orange-200' : 'text-orange-600'}`}>
+              This question requires manual grading. Students will type their answer in a text box.
+            </Text>
+          </View>
+        )
+        : renderQuestionOptions(question, index)}
+      
       {renderImageUploadSection(index)}
 
       <View style={{ 
@@ -1100,7 +1324,7 @@ const EditQuizAndroid = () => {
         )}
         <View style={{ gap: 8 }}>
           <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-[#6B7280]'}`}>
-            Quarter: {formData.quarter}
+            Term: {formData.term}
           </Text>
           <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-[#6B7280]'}`}>
             Points: {calculateTotalPoints()}
@@ -1108,6 +1332,11 @@ const EditQuizAndroid = () => {
           {formData.timeLimit && (
             <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-[#6B7280]'}`}>
               Time: {formData.timeLimit} minutes
+            </Text>
+          )}
+          {formData.shuffleQuestions && (
+            <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-[#6B7280]'}`}>
+              Shuffled questions
             </Text>
           )}
         </View>
@@ -1153,7 +1382,73 @@ const EditQuizAndroid = () => {
           )}
 
           <View style={{ marginLeft: 8 }}>
-            {question.type === 'multiple_answers' ? (
+            {question.type === 'essay' ? (
+              <View>
+                <TextInput
+                  placeholder="Type your essay answer here..."
+                  editable={false}
+                  multiline
+                  numberOfLines={6}
+                  style={{
+                    backgroundColor: isDarkMode ? '#2A2A2A' : '#F9FAFB',
+                    borderRadius: 8,
+                    padding: 12,
+                    color: isDarkMode ? '#E0E0E0' : '#111827',
+                    fontFamily: 'Inter-Regular',
+                    minHeight: 150,
+                    textAlignVertical: 'top',
+                  }}
+                  placeholderTextColor={isDarkMode ? '#9ca3af' : '#6B7280'}
+                />
+                <View style={{
+                  backgroundColor: isDarkMode ? '#7C2D12' : '#FEF3C7',
+                  borderRadius: 8,
+                  padding: 12,
+                  marginTop: 12,
+                }}>
+                  <Text className={`font-inter_semibold text-sm ${isDarkMode ? 'text-orange-300' : 'text-orange-700'}`}>
+                    📝 Manual grading required
+                  </Text>
+                </View>
+              </View>
+            ) : question.type === 'short_answer' ? (
+              <View>
+                <TextInput
+                  placeholder="Your answer"
+                  editable={false}
+                  style={{
+                    backgroundColor: isDarkMode ? '#2A2A2A' : '#F9FAFB',
+                    borderRadius: 8,
+                    padding: 12,
+                    color: isDarkMode ? '#E0E0E0' : '#111827',
+                    fontFamily: 'Inter-Regular',
+                    marginBottom: 12,
+                  }}
+                  placeholderTextColor={isDarkMode ? '#9ca3af' : '#6B7280'}
+                />
+                {question.correctAnswers && question.correctAnswers.length > 0 && (
+                  <View style={{
+                    backgroundColor: isDarkMode ? '#065F46' : '#ECFDF5',
+                    borderRadius: 8,
+                    padding: 12,
+                  }}>
+                    <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-green-400' : 'text-green-800'}`}>
+                      Correct answer(s):
+                    </Text>
+                    {question.correctAnswers.map((ans, idx) => (
+                      <Text key={idx} className={`font-inter_regular text-sm ${isDarkMode ? 'text-green-300' : 'text-green-700'}`}>
+                        • {ans}
+                      </Text>
+                    ))}
+                    {question.caseSensitive && (
+                      <Text className={`font-inter_regular text-xs mt-2 ${isDarkMode ? 'text-green-400' : 'text-green-600'}`}>
+                        (Case sensitive)
+                      </Text>
+                    )}
+                  </View>
+                )}
+              </View>
+            ) : question.type === 'multiple_answers' ? (
               question.options.map((option, optionIndex) => (
                 <View key={optionIndex} style={{
                   flexDirection: 'row',
@@ -1224,7 +1519,7 @@ const EditQuizAndroid = () => {
 
   if (fetchingQuiz) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#121212' : '#F9FAFB', justifyContent: 'center', alignItems: 'center' }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#121212' : '#F9FAFB', justifyContent: 'center', alignItems: 'center' }} edges={['top', 'bottom']}>
         <ActivityIndicator size="large" color="#3B82F6" />
         <Text className={`font-inter_regular mt-4 ${isDarkMode ? 'text-gray-400' : 'text-[#6B7280]'}`}>
           Loading quiz...
@@ -1263,6 +1558,7 @@ const EditQuizAndroid = () => {
               onPress={() => {
                 setAiGenerationMode(!aiGenerationMode);
                 setPreviewMode(false);
+                setStudentPreviewMode(false);
               }}
               style={{
                 backgroundColor: aiGenerationMode ? '#10B981' : '#6B7280',
@@ -1279,6 +1575,7 @@ const EditQuizAndroid = () => {
               onPress={() => {
                 setPreviewMode(!previewMode);
                 setAiGenerationMode(false);
+                setStudentPreviewMode(false);
               }}
               style={{
                 backgroundColor: previewMode ? '#6B7280' : '#10B981',
@@ -1291,6 +1588,19 @@ const EditQuizAndroid = () => {
                 {previewMode ? 'Edit' : 'Preview'}
               </Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              onPress={toggleStudentPreviewMode}
+              style={{
+                backgroundColor: studentPreviewMode ? '#6B7280' : '#3B82F6',
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: 6,
+              }}
+            >
+              <Text className='font-inter_medium text-xs text-white'>
+                {studentPreviewMode ? 'Edit' : 'Student'}
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       </View>
@@ -1300,7 +1610,22 @@ const EditQuizAndroid = () => {
         style={{ flex: 1 }} 
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        {aiGenerationMode ? renderAIGeneration() : 
+        {aiGenerationMode ? renderAIGeneration() :
+         studentPreviewMode ? (
+          <TeacherQuizStudentPreview
+            key={`student-preview-${questions.length}-${formData.title}`}
+            title={formData.title}
+            sectionHeader={formData.sectionHeader}
+            sectionDescription={formData.sectionDescription}
+            term={formData.term}
+            totalPoints={calculateTotalPoints()}
+            timeLimit={formData.timeLimit}
+            shuffleQuestions={formData.shuffleQuestions}
+            questions={studentPreviewQuestions}
+            isDarkMode={isDarkMode}
+            onExit={() => setStudentPreviewMode(false)}
+          />
+         ) :
          previewMode ? renderPreview() : (
           <ScrollView style={{ flex: 1, padding: 16 }}>
             {/* Quiz Information */}
@@ -1395,18 +1720,18 @@ const EditQuizAndroid = () => {
 
               <View style={{ marginBottom: 16 }}>
                 <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
-                  Quarter *
+                  Term *
                 </Text>
                 <RadioButtonGroup
-                  value={formData.quarter}
-                  onChange={(value) => setFormData({ ...formData, quarter: value })}
+                  value={formData.term}
+                  onChange={(value) => setFormData({ ...formData, term: value })}
                   activeColor="#3B82F6"
                 >
-                  {quarters.map(quarter => (
+                  {terms.map(term => (
                     <RadioButton
-                      key={quarter}
-                      value={quarter}
-                      label={quarter}
+                      key={term}
+                      value={term}
+                      label={term === '1' ? '1st Term' : term === '2' ? '2nd Term' : '3rd Term'}
                       labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontSize: 13, fontFamily: 'Inter-Regular' }}
                       width={20}
                       height={20}
@@ -1433,6 +1758,24 @@ const EditQuizAndroid = () => {
                   }}
                   placeholderTextColor={isDarkMode ? '#9ca3af' : '#6B7280'}
                 />
+              </View>
+
+              {/* Shuffle Questions Checkbox */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+                <Checkbox
+                  value={formData.shuffleQuestions}
+                  onValueChange={(value) => setFormData({ ...formData, shuffleQuestions: value })}
+                  color={formData.shuffleQuestions ? '#3B82F6' : undefined}
+                  style={{ marginRight: 8 }}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text className={`font-inter_semibold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
+                    Shuffle questions
+                  </Text>
+                  <Text className={`font-inter_regular text-xs mt-1 ${isDarkMode ? 'text-gray-400' : 'text-[#6B7280]'}`}>
+                    Randomize question order for each student when they take the quiz
+                  </Text>
+                </View>
               </View>
 
               {questions.length > 0 && (

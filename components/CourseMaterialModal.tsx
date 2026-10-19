@@ -15,6 +15,7 @@ import {
   useWindowDimensions,
   FlatList,
   Linking,
+  ToastAndroid,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
@@ -61,6 +62,9 @@ interface CourseMaterialModalProps {
   isAdminOrTeacher?: boolean;
 }
 
+const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
+const ITEMS_PER_PAGE = 10;
+
 const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
   subjectId,
   teacher,
@@ -77,6 +81,10 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
   const [selectedFiles, setSelectedFiles] = useState<any[]>([]);
   const [uploading, setUploading] = useState(false);
   const [selectedCourseMaterial, setSelectedCourseMaterial] = useState<CourseMaterial | null>(null);
+
+  // Pagination state (client-side, based on fetched `materials`)
+  const [displayedCount, setDisplayedCount] = useState(ITEMS_PER_PAGE);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   // For viewing course materials
   const [viewMaterialModalVisible, setViewMaterialModalVisible] = useState(false);
@@ -174,6 +182,8 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
     try {
       const res = await apiClient.get(`/subjects/${subjectId}/courseMaterials`);
       setMaterials(res.data.data || []);
+      // Reset pagination when a fresh fetch happens
+      setDisplayedCount(ITEMS_PER_PAGE);
     } catch {
       console.warn('Failed loading course materials.');
     } finally {
@@ -185,6 +195,25 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
     fetchMaterials();
   }, [subjectId]);
 
+  /* ------------------------- Infinite scroll ------------------------- */
+  // Paginated slice of materials for display
+  const displayedMaterials = useMemo(() => {
+    return materials.slice(0, displayedCount);
+  }, [materials, displayedCount]);
+
+  const hasMore = displayedCount < materials.length;
+
+  const loadMore = useCallback(() => {
+    if (isLoadingMore || !hasMore) return;
+    setIsLoadingMore(true);
+    // Small delay so the footer spinner is perceivable (matches other screens)
+    setTimeout(() => {
+      setDisplayedCount((prev) => Math.min(prev + ITEMS_PER_PAGE, materials.length));
+      setIsLoadingMore(false);
+    }, 300);
+  }, [isLoadingMore, hasMore, materials.length]);
+
+  /* ------------------------- File picking ------------------------- */
   const pickDocuments = async () => {
     try {
       if (Platform.OS === 'web') {
@@ -219,11 +248,19 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
                   'text/javascript',
                   'application/javascript',
                 ];
-                return validTypes.includes(file.type);
+                
+                const isValidType = validTypes.includes(file.type);
+                const isValidSize = file.size <= MAX_FILE_SIZE_BYTES;
+                if (!isValidSize) {
+                  window.alert(`File "${file.name}" exceeds the 100 MB size limit. It will be skipped.`);
+                }
+                return isValidType && isValidSize;
               });
               
-              if (validFiles.length !== fileArray.length) {
-                window.alert('Some files were filtered out. Only PDF, Word, PowerPoint, Excel, image, and text files are allowed.');
+              if (validFiles.length === 0 && fileArray.length > 0) {
+                window.alert('No valid files selected. Please ensure each file is under 100 MB and of a supported type.');
+              } else if (validFiles.length < fileArray.length) {
+                window.alert(`${fileArray.length - validFiles.length} file(s) were skipped due to size or type restrictions.`);
               }
               
               setSelectedFiles(validFiles);
@@ -260,7 +297,19 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
         });
 
         if (result.canceled === false) {
-          setSelectedFiles(result.assets);
+          const validAssets = result.assets.filter(asset => {
+            if (asset.size && asset.size > MAX_FILE_SIZE_BYTES) {
+              Alert.alert('File Too Large', `"${asset.name}" exceeds the 100 MB size limit and will be skipped.`);
+              return false;
+            }
+            return true;
+          });
+          if (validAssets.length > 0) {
+            setSelectedFiles(validAssets);
+          }
+          if (validAssets.length < result.assets.length) {
+            ToastAndroid.show('Some files were skipped because they exceed the 100 MB size limit.', ToastAndroid.SHORT);
+          }
         }
       }
     } catch (err) {
@@ -268,7 +317,7 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
       if (Platform.OS === 'web') {
         window.alert('Error: Failed to pick documents.');
       } else {
-        Alert.alert('Error', 'Failed to pick documents.');
+        ToastAndroid.show('Failed to pick documents.', ToastAndroid.SHORT);
       }
     }
   };
@@ -314,7 +363,7 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
         if (Platform.OS === 'web') {
           window.alert(`Success: ${message}`);
         } else {
-          Alert.alert('Success', message);
+          ToastAndroid.show(message, ToastAndroid.SHORT);
         }
         
         setSelectedFiles([]);
@@ -326,7 +375,7 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
       if (Platform.OS === 'web') {
         window.alert(`Error: ${errorMessage}`);
       } else {
-        Alert.alert('Error', errorMessage);
+        ToastAndroid.show(errorMessage, ToastAndroid.SHORT);
       }
     } finally {
       setUploading(false);
@@ -379,13 +428,13 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
             onPress: async () => {
               try {
                 await apiClient.delete(`/courseMaterials/${materialId}`);
-                Alert.alert('Success', 'Course material deleted successfully.');
+                ToastAndroid.show('Course material deleted successfully.', ToastAndroid.SHORT);
                 setActionsModalVisible(false);
                 fetchMaterials();
               } catch (error: any) {
                 console.error('Delete error:', error);
                 const errorMessage = error.response?.data?.message || 'Failed to delete course material.';
-                Alert.alert('Error', errorMessage);
+                ToastAndroid.show(errorMessage, ToastAndroid.SHORT);
                 setActionsModalVisible(false);
               }
             },
@@ -505,6 +554,28 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
     </TouchableOpacity>
   );
 
+  // ---- List footer (loading more / end of list) ----
+  const renderListFooter = () => (
+    <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+      {isLoadingMore ? (
+        <>
+          <ActivityIndicator size="small" color="#3B82F6" />
+          <Text
+            className={`font-inter_regular text-xs mt-2 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}
+          >
+            Loading more materials...
+          </Text>
+        </>
+      ) : !hasMore && materials.length > ITEMS_PER_PAGE ? (
+        <Text
+          className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-500' : 'text-gray-500'}`}
+        >
+          All {materials.length} materials loaded
+        </Text>
+      ) : null}
+    </View>
+  );
+
   const MainContent = () => (
     <View style={{ flex: 1, padding: 8 }}>
       {/* Header */}
@@ -533,6 +604,11 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
           </TouchableOpacity>
         </View>
       </View>
+      <Text
+        className={`font-inter_regular text-sm mb-3 ${isDarkMode ? 'text-[#B0B0B0]' : 'text-gray-600'}`}
+      >
+        Maximum upload size: 100 MB per file
+      </Text>
 
       {/* Selected Files Preview */}
       {selectedFiles.length > 0 && (
@@ -560,8 +636,15 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
                   style={{ width: 16, height: 16, marginRight: 8 }}
                   tintColor={isDarkMode ? '#E0E0E0' : 'black'}
                 />
-                <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`} ellipsizeMode='tail' numberOfLines={1} style={{ flex: 1 }}>
                   {file.name}
+                </Text>
+                <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                  {file.size && (
+                    <Text>
+                      ({(file.size / 1024 / 1024).toFixed(2)} MB)
+                    </Text>
+                  )}
                 </Text>
               </View>
             ))}
@@ -598,28 +681,33 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
         </View>
       ) : materials.length > 0 ? (
         Platform.OS === 'web' ? (
-          // Use FlatList for web
+          // Use FlatList for web with infinite scroll
           <FlatList
-            data={materials}
+            data={displayedMaterials}
             renderItem={renderMaterialItem}
             keyExtractor={(item) => item._id}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 20 }}
-            initialNumToRender={10}
-            maxToRenderPerBatch={10}
+            onEndReached={loadMore}
+            onEndReachedThreshold={0.5}
+            ListFooterComponent={renderListFooter}
+            initialNumToRender={ITEMS_PER_PAGE}
+            maxToRenderPerBatch={ITEMS_PER_PAGE}
             windowSize={5}
             removeClippedSubviews={true}
           />
         ) : (
-          // Use FlashList for mobile
+          // Use FlashList for mobile with infinite scroll
           <FlashList
-            data={materials}
+            data={displayedMaterials}
             renderItem={renderMaterialItem}
             keyExtractor={(item) => item._id}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 20 }}
+            onEndReached={loadMore}
+            onEndReachedThreshold={0.5}
+            ListFooterComponent={renderListFooter}
             extraData={isDarkMode}
-            estimatedItemSize={100}
           />
         )
       ) : (
@@ -813,21 +901,22 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
                     flexDirection: 'row',
                     justifyContent: 'space-between',
                     alignItems: 'center',
-                    padding: 16,
-                    backgroundColor: isDarkMode ? '#121212' : '#fff',
-                    borderBottomWidth: 1,
-                    borderBottomColor: isDarkMode ? '#333' : '#E5E5E5',
+                    paddingHorizontal: 16,
+                    paddingVertical: 12,
+                    backgroundColor: 'transparent',
                   }}
                 >
-                  <View style={{ flex: 1 }}>
+                  <View style={{ flex: 1, marginRight: 12 }}>
                     <Text
-                      className={`font-pbold text-lg ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}
+                      style={{ color: '#FFFFFF', fontWeight: 'bold', fontFamily: 'Poppins-Bold', fontSize: 15 }}
                       numberOfLines={1}
+                      ellipsizeMode='tail'
                     >
                       {selectedMaterialForView.fileName}
                     </Text>
                     <Text
-                      className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}
+                      style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12, fontFamily: 'Inter-Regular', marginTop: 2 }}
+                      numberOfLines={1}
                     >
                       {selectedMaterialForView.fileType?.toUpperCase()} • {selectedMaterialForView.fileSize ? formatFileSize(selectedMaterialForView.fileSize) : 'Unknown size'}
                     </Text>
@@ -848,26 +937,28 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
                         }
                       }}
                       style={{
-                        backgroundColor: '#3B82F6',
                         paddingHorizontal: 12,
-                        paddingVertical: 8,
+                        paddingVertical: 6,
                         borderRadius: 6,
-                        marginRight: 12,
+                        borderWidth: 1,
+                        borderColor: 'rgba(255, 255, 255, 0.35)',
+                        marginRight: 8,
                       }}
                     >
-                      <Text className="font-pbold text-white text-sm">Download</Text>
+                      <Text style={{ color: '#FFFFFF', fontFamily: 'Inter-SemiBold', fontSize: 12 }}>Download</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
                       onPress={() => setViewMaterialModalVisible(false)}
-                      style={{ 
-                        backgroundColor: '#EF4444',
+                      style={{
                         paddingHorizontal: 12,
-                        paddingVertical: 8,
+                        paddingVertical: 6,
                         borderRadius: 6,
+                        borderWidth: 1,
+                        borderColor: 'rgba(255, 255, 255, 0.35)',
                       }}
                     >
-                      <Text className='font-pbold text-white text-sm'>Close</Text>
+                      <Text style={{ color: '#FFFFFF', fontFamily: 'Inter-SemiBold', fontSize: 12 }}>Close</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -1005,21 +1096,22 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
                     flexDirection: 'row',
                     justifyContent: 'space-between',
                     alignItems: 'center',
-                    padding: 16,
-                    backgroundColor: isDarkMode ? '#121212' : '#fff',
-                    borderBottomWidth: 1,
-                    borderBottomColor: isDarkMode ? '#333' : '#E5E5E5',
+                    paddingHorizontal: 16,
+                    paddingVertical: 12,
+                    backgroundColor: 'transparent',
                   }}
                 >
-                  <View style={{ flex: 1 }}>
+                  <View style={{ flex: 1, marginRight: 12 }}>
                     <Text
-                      className={`font-pbold text-lg ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}
+                      style={{ color: '#FFFFFF', fontFamily: 'Poppins-Bold', fontSize: 15 }}
                       numberOfLines={1}
+                      ellipsizeMode='tail'
                     >
                       {selectedMaterialForView.fileName}
                     </Text>
                     <Text
-                      className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}
+                      style={{ color: 'rgba(255,255,255,0.6)', fontFamily: 'Inter-Regular', fontSize: 12, marginTop: 2 }}
+                      numberOfLines={1}
                     >
                       {selectedMaterialForView.fileType?.toUpperCase()} • {selectedMaterialForView.fileSize ? formatFileSize(selectedMaterialForView.fileSize) : 'Unknown size'}
                     </Text>
@@ -1036,26 +1128,28 @@ const CourseMaterialModal: React.FC<CourseMaterialModalProps> = ({
                         }
                       }}
                       style={{
-                        backgroundColor: '#3B82F6',
                         paddingHorizontal: 12,
-                        paddingVertical: 8,
+                        paddingVertical: 6,
                         borderRadius: 6,
-                        marginRight: 12,
+                        borderWidth: 1,
+                        borderColor: 'rgba(255, 255, 255, 0.35)',
+                        marginRight: 8,
                       }}
                     >
-                      <Text className="font-pbold text-white text-sm">Download</Text>
+                      <Text style={{ color: '#FFFFFF', fontFamily: 'Inter-SemiBold', fontSize: 12 }}>Download</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
                       onPress={() => setViewMaterialModalVisible(false)}
-                      style={{ 
-                        backgroundColor: '#EF4444',
+                      style={{
                         paddingHorizontal: 12,
-                        paddingVertical: 8,
+                        paddingVertical: 6,
                         borderRadius: 6,
+                        borderWidth: 1,
+                        borderColor: 'rgba(255, 255, 255, 0.35)',
                       }}
                     >
-                      <Text className='font-pbold text-white text-sm'>Close</Text>
+                      <Text style={{ color: '#FFFFFF', fontFamily: 'Inter-SemiBold', fontSize: 12 }}>Close</Text>
                     </TouchableOpacity>
                   </View>
                 </View>

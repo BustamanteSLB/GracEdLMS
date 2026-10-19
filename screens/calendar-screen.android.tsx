@@ -23,6 +23,7 @@ import CalendarIcon from "@/assets/icons/calendar_month.svg";
 import CloseIcon from "@/assets/icons/close.svg";
 import ColoredCalendarIcon from "@/assets/icons/colored_calendar.svg";
 import ColoredTimeIcon from "@/assets/icons/colored_time.svg";
+import NetworkBanner from "@/components/NetworkBanner.web";
 
 interface User {
   _id: string;
@@ -81,6 +82,7 @@ const CalendarAndroid: React.FC = () => {
   const [weekEvents, setWeekEvents] = useState<Events[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [networkError, setNetworkError] = useState(false);
 
   // Date selection state
   const [selectedDate, setSelectedDate] = useState(dayjs());
@@ -104,6 +106,11 @@ const CalendarAndroid: React.FC = () => {
   const isStudent = user?.role === "Student";
   const isTeacher = user?.role === "Teacher";
   const isAdmin = user?.role === "Admin";
+
+  const isNetworkError = (err: any) =>
+    err?.message?.toLowerCase?.().includes("network") ||
+    err?.status === 0 ||
+    !err?.response;
 
   // Generate time slots for day/week view
   const timeSlots = useMemo(() => {
@@ -151,6 +158,7 @@ const CalendarAndroid: React.FC = () => {
     try {
       setIsLoading(true);
       setError(null);
+      setNetworkError(false);
 
       const response = await apiClient.get("/events", {
         params: {
@@ -165,6 +173,7 @@ const CalendarAndroid: React.FC = () => {
       }
     } catch (err: any) {
       console.error("Error fetching events:", err);
+      if (isNetworkError(err)) setNetworkError(true);
       setError(err.response?.data?.message || "Failed to fetch events");
     } finally {
       setIsLoading(false);
@@ -174,6 +183,7 @@ const CalendarAndroid: React.FC = () => {
   // Fetch events for current week
   const fetchWeekEvents = useCallback(async () => {
     try {
+      setNetworkError(false);
       const startOfWeek = selectedDate.startOf("week").toISOString();
       const endOfWeek = selectedDate.endOf("week").toISOString();
 
@@ -190,6 +200,7 @@ const CalendarAndroid: React.FC = () => {
       }
     } catch (err: any) {
       console.error("Error fetching week events:", err);
+      if (isNetworkError(err)) setNetworkError(true);
       setError(
         err.response?.data?.message || "Failed to fetch events for week"
       );
@@ -1150,6 +1161,16 @@ const CalendarAndroid: React.FC = () => {
           )}
         </Pressable>
       </Modal>
+
+      {/* Animated network banner overlay */}
+      <NetworkBanner
+        forceVisible={networkError}
+        onRetry={() => {
+          setNetworkError(false);
+          fetchEvents();
+          fetchWeekEvents();
+        }}
+      />
 
       <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
     </SafeAreaView>

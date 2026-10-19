@@ -1,6 +1,8 @@
-import { Text, View, useColorScheme, ActivityIndicator, VirtualizedList, TouchableOpacity, ScrollView } from 'react-native'
+// archives.web.tsx
+import { Text, View, useColorScheme, ActivityIndicator, FlatList, TouchableOpacity, TextInput } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import React, { useCallback, useEffect, useState, useMemo } from 'react'
+import React, { useCallback, useEffect, useMemo, useState, memo } from 'react'
+import { Checkbox } from 'expo-checkbox';
 import { StatusBar } from 'expo-status-bar'
 import { useDarkMode } from '@/contexts/DarkModeContext'
 import { cssInterop } from 'nativewind'
@@ -8,12 +10,18 @@ import { Image } from 'expo-image'
 import apiClient, { ApiResponse } from '@/app/services/apiClient';
 import { User } from '@/app/types/index';
 import DeleteIcon from '@/assets/icons/delete.svg';
-import { TextInput } from 'react-native'
-import Dropdown, { DropdownItem } from '@/components/Dropdown';
+import NetworkBanner from '@/components/NetworkBanner.web';
 
 cssInterop(Image, { className: "style" });
 
-// Pagination interface
+/* ------------------------------------------------------------------ */
+/*  Constants                                                          */
+/* ------------------------------------------------------------------ */
+const ITEMS_PER_PAGE = 25;
+
+/* ------------------------------------------------------------------ */
+/*  Types                                                              */
+/* ------------------------------------------------------------------ */
 interface PaginationInfo {
   currentPage: number;
   totalPages: number;
@@ -23,7 +31,6 @@ interface PaginationInfo {
   hasPrev: boolean;
 }
 
-// Enhanced API response interface with pagination
 interface UserListApiResponse extends ApiResponse {
   data?: User[];
   count?: number;
@@ -34,566 +41,1233 @@ interface UserListApiResponse extends ApiResponse {
   };
 }
 
+/* ------------------------------------------------------------------ */
+/*  Pure helpers                                                       */
+/* ------------------------------------------------------------------ */
+const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/* ------------------------------------------------------------------ */
+/*  ArchivedUserRow — memoized row                                     */
+/* ------------------------------------------------------------------ */
+interface ArchivedUserRowProps {
+  item: User;
+  isDarkMode: boolean;
+  searchQuery: string;
+  isSelected: boolean;
+  isRestoring: boolean;
+  isDeleting: boolean;
+  anyActionLoading: boolean;
+  onToggleSelect: (id: string) => void;
+  onRestore: (id: string, username: string) => void;
+  onDelete: (id: string, username: string) => void;
+}
+
+const ArchivedUserRow = memo<ArchivedUserRowProps>(
+  ({
+    item,
+    isDarkMode,
+    searchQuery,
+    isSelected,
+    isRestoring,
+    isDeleting,
+    anyActionLoading,
+    onToggleSelect,
+    onRestore,
+    onDelete,
+  }) => {
+    const displayName = `${item.lastName}, ${item.firstName}`;
+    const emailDisplay = item.email || 'No email';
+
+    const highlightedName = useMemo(() => {
+      if (!searchQuery.trim()) return displayName;
+      const q = searchQuery.trim();
+      const parts = displayName.split(new RegExp(`(${escapeRegex(q)})`, 'gi'));
+      return parts.map((part, i) =>
+        part.toLowerCase() === q.toLowerCase() ? (
+          <Text
+            key={i}
+            style={{
+              backgroundColor: isDarkMode ? '#FFC107' : '#FFF59D',
+              fontFamily: 'Inter-Bold',
+            }}
+          >
+            {part}
+          </Text>
+        ) : (
+          part
+        )
+      );
+    }, [displayName, searchQuery, isDarkMode]);
+
+    const highlightedEmail = useMemo(() => {
+      if (!searchQuery.trim()) return emailDisplay;
+      const q = searchQuery.trim();
+      const parts = emailDisplay.split(new RegExp(`(${escapeRegex(q)})`, 'gi'));
+      return parts.map((part, i) =>
+        part.toLowerCase() === q.toLowerCase() ? (
+          <Text
+            key={i}
+            style={{
+              backgroundColor: isDarkMode ? '#FFC107' : '#FFF59D',
+              fontFamily: 'Inter-Bold',
+            }}
+          >
+            {part}
+          </Text>
+        ) : (
+          part
+        )
+      );
+    }, [emailDisplay, searchQuery, isDarkMode]);
+
+    const handleToggleSelect = useCallback(() => {
+      onToggleSelect(item._id);
+    }, [item._id, onToggleSelect]);
+
+    const handleRestore = useCallback(() => {
+      onRestore(item._id, item.username);
+    }, [item._id, item.username, onRestore]);
+
+    const handleDelete = useCallback(() => {
+      onDelete(item._id, item.username);
+    }, [item._id, item.username, onDelete]);
+
+    const actionsDisabled = isRestoring || isDeleting || anyActionLoading;
+
+    return (
+      <View
+        style={{
+          backgroundColor: isSelected
+            ? isDarkMode
+              ? '#2A3A4A'
+              : '#E7F3FF'
+            : isDarkMode
+              ? '#242526'
+              : '#FFFFFF',
+          borderRadius: 12,
+          padding: 16,
+          marginHorizontal: 12,
+          marginTop: 12,
+          flexDirection: 'row',
+          alignItems: 'center',
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 1 },
+          shadowOpacity: 0.1,
+          shadowRadius: 4,
+          elevation: 2,
+          borderWidth: isSelected ? 1 : 0,
+          borderColor: isSelected ? '#1877F2' : 'transparent',
+        }}
+      >
+        <View style={{ marginRight: 12, padding: 4 }}>
+          <Checkbox
+            value={isSelected}
+            onValueChange={handleToggleSelect}
+            color={isSelected ? '#1877F2' : undefined}
+            disabled={anyActionLoading}
+          />
+        </View>
+
+        <View
+          style={{
+            borderRadius: 24,
+            overflow: 'hidden',
+            marginRight: 12,
+          }}
+        >
+          <Image
+            source={
+              item.profilePicture
+                ? { uri: item.profilePicture }
+                : require('@/assets/images/sample_profile_picture.png')
+            }
+            style={{ width: 48, height: 48 }}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+          />
+        </View>
+
+        <View style={{ flex: 1 }}>
+          <Text
+            style={{
+              fontSize: 14,
+              fontFamily: 'Inter-Bold',
+              color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+              marginBottom: 2,
+            }}
+            numberOfLines={1}
+          >
+            {highlightedName}
+          </Text>
+
+          <Text
+            style={{
+              fontSize: 12,
+              fontFamily: 'Inter-Regular',
+              color: isDarkMode ? '#B0B3B8' : '#65676B',
+              marginBottom: 2,
+            }}
+            numberOfLines={1}
+          >
+            {highlightedEmail}
+          </Text>
+
+          <Text
+            style={{
+              fontSize: 10,
+              fontFamily: 'Inter-Regular',
+              color: isDarkMode ? '#B0B3B8' : '#65676B',
+              marginBottom: 4,
+            }}
+            numberOfLines={1}
+          >
+            ID: {item.userId || 'N/A'} • Username: {item.username || 'N/A'}
+          </Text>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <View
+              style={{
+                backgroundColor: '#6B7280',
+                paddingHorizontal: 8,
+                paddingVertical: 2,
+                borderRadius: 12,
+                marginRight: 8,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 10,
+                  fontFamily: 'Inter-Bold',
+                  color: '#FFFFFF',
+                }}
+              >
+                ARCHIVED
+              </Text>
+            </View>
+
+            <View
+              style={{
+                backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                paddingHorizontal: 8,
+                paddingVertical: 2,
+                borderRadius: 12,
+                marginRight: 8,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 10,
+                  fontFamily: 'Inter-SemiBold',
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                }}
+              >
+                {item.role}
+              </Text>
+            </View>
+          </View>
+          <Text
+            style={{
+              marginTop: 2,
+              fontSize: 10,
+              fontFamily: 'Inter-Regular',
+              color: isDarkMode ? '#B0B3B8' : '#65676B',
+            }}
+          >
+            Archived: {new Date(item.updatedAt).toLocaleDateString()}
+          </Text>
+        </View>
+
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TouchableOpacity
+            onPress={handleRestore}
+            disabled={actionsDisabled}
+            style={{
+              backgroundColor: '#10B981',
+              borderRadius: 8,
+              padding: 10,
+              opacity: actionsDisabled ? 0.6 : 1,
+            }}
+          >
+            {isRestoring ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Image
+                source={require('@/assets/icons/restore.png')}
+                style={{ width: 20, height: 20 }}
+                tintColor="#FFFFFF"
+                contentFit="contain"
+              />
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={handleDelete}
+            disabled={actionsDisabled}
+            style={{
+              backgroundColor: '#EF4444',
+              borderRadius: 8,
+              padding: 10,
+              opacity: actionsDisabled ? 0.6 : 1,
+            }}
+          >
+            {isDeleting ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <DeleteIcon width={20} height={20} fill="#FFFFFF" />
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+);
+ArchivedUserRow.displayName = 'ArchivedUserRow';
+
+/* ------------------------------------------------------------------ */
+/*  Main component                                                     */
+/* ------------------------------------------------------------------ */
 const ArchivesWeb = () => {
   document.title = 'Archives - GracEdLMS';
   const colorScheme = useColorScheme();
   const { isDarkMode } = useDarkMode();
-  
-  // Enhanced state management with pagination
+
+  /* ------------------------- state ------------------------- */
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  // Fixed pagination state
+  // Network banner state
+  const [forceNetworkBannerVisible, setForceNetworkBannerVisible] = useState(false);
+
   const [pagination, setPagination] = useState<PaginationInfo>({
     currentPage: 1,
     totalPages: 1,
     totalItems: 0,
-    itemsPerPage: 25,
+    itemsPerPage: ITEMS_PER_PAGE,
     hasNext: false,
     hasPrev: false,
   });
 
-  // Search is handled locally for better performance
-  const filteredUsers = useMemo(() => {
-    if (!searchQuery.trim()) {
-      return users;
-    }
+  /* ------------------------- data fetching ------------------------- */
+  const fetchUsers = useCallback(
+    async (page: number = 1, append: boolean = false) => {
+      try {
+        if (!append) setLoading(true);
+        else setLoadingMore(true);
+        setError(null);
 
-    const query = searchQuery.toLowerCase().trim();
-    return users.filter(user => {
+        const params = {
+          status: 'archived',
+          page,
+          limit: ITEMS_PER_PAGE,
+          sort: '-updatedAt',
+        };
+
+        const response = await apiClient.get<UserListApiResponse>('/users', {
+          params,
+        });
+
+        if (response.data.success && response.data.data) {
+          const archivedUsers = response.data.data;
+          const totalItems = response.data.total || 0;
+          const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE);
+
+          setPagination({
+            currentPage: page,
+            totalPages,
+            totalItems,
+            itemsPerPage: ITEMS_PER_PAGE,
+            hasNext: page < totalPages,
+            hasPrev: page > 1,
+          });
+
+          if (append && page > 1) {
+            setUsers((prev) => [...prev, ...archivedUsers]);
+          } else {
+            setUsers(archivedUsers);
+          }
+          setForceNetworkBannerVisible(false);
+        } else {
+          setError(response.data.message || 'Failed to fetch archived users.');
+          if (!append) setUsers([]);
+        }
+      } catch (err: any) {
+        console.error('Error fetching archived users:', err);
+        setError(
+          err.response?.data?.message ||
+            err.message ||
+            'An error occurred while fetching archived users.'
+        );
+        if (!append) setUsers([]);
+
+        const isNetworkError =
+          !err?.response ||
+          err?.code === 'ECONNABORTED' ||
+          err?.message?.toLowerCase().includes('network') ||
+          err?.message?.toLowerCase().includes('timeout');
+        if (isNetworkError) {
+          setForceNetworkBannerVisible(true);
+        }
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    },
+    []
+  );
+
+  const refreshUsers = useCallback(() => {
+    setRefreshing(true);
+    setSelectedIds(new Set());
+    setPagination((prev) => ({ ...prev, currentPage: 1 }));
+    fetchUsers(1, false).finally(() => setRefreshing(false));
+  }, [fetchUsers]);
+
+  // Initial load
+  useEffect(() => {
+    fetchUsers(1, false);
+  }, [fetchUsers]);
+
+  // Infinite scroll
+  const loadMore = useCallback(() => {
+    if (loading || loadingMore || refreshing) return;
+    if (!pagination.hasNext) return;
+    fetchUsers(pagination.currentPage + 1, true);
+  }, [
+    loading,
+    loadingMore,
+    refreshing,
+    pagination.hasNext,
+    pagination.currentPage,
+    fetchUsers,
+  ]);
+
+  /* ------------------------- derived data ------------------------- */
+  const filteredUsers = useMemo(() => {
+    if (!searchQuery.trim()) return users;
+    const q = searchQuery.toLowerCase().trim();
+    return users.filter((user) => {
       const fullName = `${user.firstName} ${user.lastName}`.toLowerCase();
-      const firstName = user.firstName.toLowerCase();
-      const lastName = user.lastName.toLowerCase();
-      const email = user.email?.toLowerCase() || '';
-      const username = user.username?.toLowerCase() || '';
-      const userId = user.userId?.toLowerCase() || '';
-      
       return (
-        firstName.includes(query) ||
-        lastName.includes(query) ||
-        fullName.includes(query) ||
-        email.includes(query) ||
-        username.includes(query) ||
-        userId.includes(query)
+        user.firstName.toLowerCase().includes(q) ||
+        user.lastName.toLowerCase().includes(q) ||
+        fullName.includes(q) ||
+        (user.email?.toLowerCase() || '').includes(q) ||
+        (user.username?.toLowerCase() || '').includes(q) ||
+        (user.userId?.toLowerCase() || '').includes(q)
       );
     });
   }, [users, searchQuery]);
 
-  const clearSearch = () => {
-    setSearchQuery('');
-  };
+  const listData = searchQuery.length > 0 ? filteredUsers : users;
 
-  // Fixed fetchUsers with proper pagination handling
-  const fetchUsers = useCallback(async (
-    page: number = 1, 
-    append: boolean = false,
-    itemsPerPage?: number
-  ) => {
-    try {
-      if (!append) {
-        setLoading(true);
-      } else {
-        setLoadingMore(true);
-      }
-      setError(null);
+  const selectedCount = selectedIds.size;
+  const allVisibleSelected =
+    listData.length > 0 && listData.every((u) => selectedIds.has(u._id));
+  const someVisibleSelected =
+    listData.some((u) => selectedIds.has(u._id)) && !allVisibleSelected;
 
-      // Use the passed itemsPerPage or current pagination value
-      const currentItemsPerPage = itemsPerPage || pagination.itemsPerPage;
+  // Stable extraData so FlatList only re-renders rows that changed
+  const extraData = useMemo(
+    () => ({ isDarkMode, searchQuery, actionLoading, selectedIds }),
+    [isDarkMode, searchQuery, actionLoading, selectedIds]
+  );
 
-      const params: { 
-        status: string;
-        page: number; 
-        limit: number; 
-        sort?: string;
-      } = {
-        status: 'archived',
-        page,
-        limit: currentItemsPerPage,
-        sort: '-updatedAt', // Sort by most recently archived first
-      }; 
+  /* ------------------------- handlers ------------------------- */
+  const clearSearch = useCallback(() => setSearchQuery(''), []);
 
-      console.log('Fetching archived users with params:', params);
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
-      const response = await apiClient.get<UserListApiResponse>('/users', {
-        params,
-      });
-
-      if (response.data.success && response.data.data) {
-        const archivedUsers = response.data.data;
-        
-        // Fixed pagination calculation with correct itemsPerPage
-        const totalItems = response.data.total || 0;
-        const totalPages = Math.ceil(totalItems / currentItemsPerPage);
-        
-        const newPagination: PaginationInfo = {
-          currentPage: page,
-          totalPages: totalPages,
-          totalItems: totalItems,
-          itemsPerPage: currentItemsPerPage,
-          hasNext: page < totalPages,
-          hasPrev: page > 1,
-        };
-        
-        setPagination(newPagination);
-
-        if (append && page > 1) {
-          // Append new users to existing list (for infinite scroll if implemented)
-          setUsers(prevUsers => [...prevUsers, ...archivedUsers]);
-        } else {
-          // Replace users list (initial load, refresh, or page navigation)
-          setUsers(archivedUsers);
-        }
-
-        console.log(`Loaded ${archivedUsers.length} archived users (page ${page}/${totalPages})`);
-      } else {
-        setError(response.data.message || 'Failed to fetch archived users.');
-        setUsers([]);
-      }
-    } catch (err: any) {
-      console.error('Error fetching archived users:', err);
-      setError(
-        err.response?.data?.message || err.message || 'An error occurred while fetching archived users.'
-      );
-      setUsers([]);
-    } finally {
-      setLoading(false);
-      setLoadingMore(false);
-    }
-  }, []); // Remove pagination.itemsPerPage from dependencies
-
-  // Refresh function that resets to page 1
-  const refreshUsers = useCallback(() => {
-    setRefreshing(true);
-    setPagination(prev => ({ ...prev, currentPage: 1 }));
-    fetchUsers(1, false, pagination.itemsPerPage).finally(() => {
-      setRefreshing(false);
+  const toggleSelectUser = useCallback((userId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
     });
-  }, [fetchUsers, pagination.itemsPerPage]);
+  }, []);
 
-  // Initial load
-  useEffect(() => {
-    setPagination(prev => ({ ...prev, currentPage: 1 }));
-    fetchUsers(1, false, pagination.itemsPerPage);
-  }, []); // Remove fetchUsers from dependencies
-
-  // Fixed pagination navigation functions
-  const goToPreviousPage = useCallback(() => {
-    if (pagination.hasPrev && !loading && !loadingMore) {
-      const prevPage = pagination.currentPage - 1;
-      console.log(`Navigating to previous page: ${prevPage}`);
-      fetchUsers(prevPage, false, pagination.itemsPerPage);
-    }
-  }, [pagination.hasPrev, pagination.currentPage, pagination.itemsPerPage, loading, loadingMore]);
-
-  const goToNextPage = useCallback(() => {
-    if (pagination.hasNext && !loading && !loadingMore) {
-      const nextPage = pagination.currentPage + 1;
-      console.log(`Navigating to next page: ${nextPage}`);
-      fetchUsers(nextPage, false, pagination.itemsPerPage);
-    }
-  }, [pagination.hasNext, pagination.currentPage, pagination.itemsPerPage, loading, loadingMore]);
-
-  const goToSpecificPage = useCallback((pageNumber: number) => {
-    if (pageNumber >= 1 && pageNumber <= pagination.totalPages && pageNumber !== pagination.currentPage && !loading && !loadingMore) {
-      console.log(`Navigating to page: ${pageNumber}`);
-      fetchUsers(pageNumber, false, pagination.itemsPerPage);
-    }
-  }, [pagination.totalPages, pagination.currentPage, pagination.itemsPerPage, loading, loadingMore]);
-
-  // Memoized dropdown items
-  const itemsPerPageOptions: DropdownItem[] = useMemo(() => [
-    { label: '10', value: '10' },
-    { label: '25', value: '25' },
-    { label: '50', value: '50' },
-    { label: '100', value: '100' },
-  ], []);
-
-  // Fixed pagination controls with Facebook-inspired design
-  const PaginationControls = () => {
-    const renderPageNumbers = () => {
-      const pages = [];
-      const maxVisiblePages = 5;
-      const currentPage = pagination.currentPage;
-      const totalPages = pagination.totalPages;
-
-      let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
-      let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
-
-      if (endPage - startPage + 1 < maxVisiblePages) {
-        startPage = Math.max(1, endPage - maxVisiblePages + 1);
+  const toggleSelectAllVisible = useCallback(() => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      const allSelected =
+        listData.length > 0 && listData.every((u) => next.has(u._id));
+      if (allSelected) {
+        listData.forEach((u) => next.delete(u._id));
+      } else {
+        listData.forEach((u) => next.add(u._id));
       }
+      return next;
+    });
+  }, [listData]);
 
-      // Add first page and ellipsis if needed
-      if (startPage > 1) {
-        pages.push(
-          <TouchableOpacity
-            key={1}
-            onPress={() => goToSpecificPage(1)}
-            style={{
-              paddingHorizontal: 12,
-              paddingVertical: 8,
-              marginHorizontal: 2,
-              borderRadius: 6,
-              backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
-            }}
-            disabled={loading || loadingMore}
-          >
-            <Text style={{
-              fontSize: 14,
-              fontFamily: 'Inter-SemiBold',
-              color: isDarkMode ? '#E4E6EA' : '#1C1E21',
-            }}>
-              1
-            </Text>
-          </TouchableOpacity>
+  const removeUsersFromState = useCallback((ids: string[]) => {
+    const idSet = new Set(ids);
+    setUsers((prev) => prev.filter((u) => !idSet.has(u._id)));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => next.delete(id));
+      return next;
+    });
+    setPagination((prev) => ({
+      ...prev,
+      totalItems: Math.max(0, prev.totalItems - ids.length),
+    }));
+  }, []);
+
+  const handleRestoreUser = useCallback(
+    async (userId: string, username: string) => {
+      const confirmRestore = window.confirm(
+        `Are you sure you want to restore user "${username}"? Their status will be set to 'active'.`
+      );
+      if (!confirmRestore) return;
+
+      setActionLoading(`${userId}_restore`);
+      try {
+        const response = await apiClient.put<ApiResponse>(
+          `/users/${userId}/restore`,
+          { status: 'active' }
         );
-        
-        if (startPage > 2) {
-          pages.push(
-            <Text key="ellipsis1" style={{
-              paddingHorizontal: 8,
-              paddingVertical: 8,
-              fontSize: 14,
-              fontFamily: 'Inter-Regular',
-              color: isDarkMode ? '#B0B3B8' : '#65676B',
-            }}>
-              ...
-            </Text>
+        if (response.data.success) {
+          window.alert(`Success: User ${username} restored successfully.`);
+          removeUsersFromState([userId]);
+        } else {
+          window.alert(
+            `Error: ${response.data.message || 'Failed to restore user.'}`
           );
         }
-      }
-
-      // Add visible page numbers
-      for (let i = startPage; i <= endPage; i++) {
-        const isCurrentPage = i === currentPage;
-        pages.push(
-          <TouchableOpacity
-            key={i}
-            onPress={() => goToSpecificPage(i)}
-            style={{
-              paddingHorizontal: 12,
-              paddingVertical: 8,
-              marginHorizontal: 2,
-              borderRadius: 6,
-              backgroundColor: isCurrentPage 
-                ? '#1877F2' 
-                : isDarkMode ? '#3A3B3C' : '#F0F2F5',
-            }}
-            disabled={loading || loadingMore || isCurrentPage}
-          >
-            <Text style={{
-              fontSize: 14,
-              fontFamily: 'Inter-SemiBold',
-              color: isCurrentPage 
-                ? '#FFFFFF' 
-                : isDarkMode ? '#E4E6EA' : '#1C1E21',
-            }}>
-              {i}
-            </Text>
-          </TouchableOpacity>
+      } catch (err: any) {
+        console.error('Error restoring user:', err);
+        window.alert(
+          `Error: ${
+            err.response?.data?.message ||
+            'An error occurred while restoring the user.'
+          }`
         );
+      } finally {
+        setActionLoading(null);
       }
+    },
+    [removeUsersFromState]
+  );
 
-      // Add last page and ellipsis if needed
-      if (endPage < totalPages) {
-        if (endPage < totalPages - 1) {
-          pages.push(
-            <Text key="ellipsis2" style={{
-              paddingHorizontal: 8,
-              paddingVertical: 8,
-              fontSize: 14,
-              fontFamily: 'Inter-Regular',
-              color: isDarkMode ? '#B0B3B8' : '#65676B',
-            }}>
-              ...
-            </Text>
+  const handlePermanentDeleteUser = useCallback(
+    async (userId: string, username: string) => {
+      const confirmDelete = window.confirm(
+        `DANGER: Are you sure you want to PERMANENTLY DELETE user "${username}"? This action cannot be undone.`
+      );
+      if (!confirmDelete) return;
+
+      setActionLoading(`${userId}_delete`);
+      try {
+        const response = await apiClient.delete<ApiResponse>(
+          `/users/${userId}/permanent`
+        );
+        if (response.data.success) {
+          window.alert(`Success: User ${username} permanently deleted.`);
+          removeUsersFromState([userId]);
+        } else {
+          window.alert(
+            `Error: ${
+              response.data.message || 'Failed to permanently delete user.'
+            }`
           );
         }
-        
-        pages.push(
-          <TouchableOpacity
-            key={totalPages}
-            onPress={() => goToSpecificPage(totalPages)}
-            style={{
-              paddingHorizontal: 12,
-              paddingVertical: 8,
-              marginHorizontal: 2,
-              borderRadius: 6,
-              backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
-            }}
-            disabled={loading || loadingMore}
-          >
-            <Text style={{
-              fontSize: 14,
-              fontFamily: 'Inter-SemiBold',
-              color: isDarkMode ? '#E4E6EA' : '#1C1E21',
-            }}>
-              {totalPages}
-            </Text>
-          </TouchableOpacity>
+      } catch (err: any) {
+        console.error('Error permanently deleting user:', err);
+        window.alert(
+          `Error: ${
+            err.response?.data?.message ||
+            'An error occurred while deleting the user.'
+          }`
         );
+      } finally {
+        setActionLoading(null);
       }
+    },
+    [removeUsersFromState]
+  );
 
-      return pages;
-    };
+  const handleBulkRestore = useCallback(async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
 
-    if (searchQuery || pagination.totalPages <= 1) return null;
-
-    return (
-      <View style={{
-        backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
-        paddingVertical: 16,
-        paddingHorizontal: 20,
-        borderRadius: 12,
-        marginHorizontal: 16,
-        marginTop: 16,
-        marginBottom: 8,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 8,
-        elevation: 4,
-      }}>
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ 
-            flexDirection: 'row', 
-            justifyContent: 'center', 
-            alignItems: 'center',
-            paddingHorizontal: 16,
-          }}
-        >
-          {/* Items per page selector */}
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            marginRight: 20,
-          }}>
-            <Text style={{
-              fontSize: 14,
-              fontFamily: 'Inter-Regular',
-              color: isDarkMode ? '#B0B3B8' : '#65676B',
-              marginRight: 8,
-            }}>
-              Show:
-            </Text>
-            <View style={{ width: 80 }}>
-              <Dropdown
-                data={itemsPerPageOptions}
-                selectedValue={pagination.itemsPerPage.toString()}
-                onValueChange={(itemValue) => {
-                  const newItemsPerPage = parseInt(itemValue);
-                  console.log('Changing items per page to:', newItemsPerPage);
-                  
-                  // Update pagination state immediately
-                  setPagination(prev => ({ 
-                    ...prev, 
-                    itemsPerPage: newItemsPerPage,
-                    currentPage: 1 
-                  }));
-                  
-                  // Fetch with new items per page value
-                  fetchUsers(1, false, newItemsPerPage);
-                }}
-                placeholder="25"
-              />
-            </View>
-          </View>
-
-          {/* Navigation Controls */}
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-          }}>
-            {/* Previous Button */}
-            <TouchableOpacity
-              onPress={goToPreviousPage}
-              disabled={!pagination.hasPrev || loading || loadingMore}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                paddingHorizontal: 16,
-                paddingVertical: 8,
-                marginRight: 8,
-                borderRadius: 6,
-                backgroundColor: !pagination.hasPrev || loading || loadingMore
-                  ? isDarkMode ? '#3A3B3C' : '#F0F2F5'
-                  : '#1877F2',
-                opacity: !pagination.hasPrev || loading || loadingMore ? 0.5 : 1,
-              }}
-            >
-              <Image
-                source={require('@/assets/icons/back.png')}
-                style={{ width: 16, height: 16, marginRight: 4 }}
-                tintColor={!pagination.hasPrev || loading || loadingMore
-                  ? isDarkMode ? '#B0B3B8' : '#65676B'
-                  : '#FFFFFF'
-                }
-                contentFit="contain"
-              />
-              <Text style={{
-                fontSize: 14,
-                fontFamily: 'Inter-SemiBold',
-                color: !pagination.hasPrev || loading || loadingMore
-                  ? isDarkMode ? '#B0B3B8' : '#65676B'
-                  : '#FFFFFF',
-              }}>
-                Previous
-              </Text>
-            </TouchableOpacity>
-
-            {/* Page Numbers */}
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              marginHorizontal: 8,
-            }}>
-              {renderPageNumbers()}
-            </View>
-
-            {/* Next Button */}
-            <TouchableOpacity
-              onPress={goToNextPage}
-              disabled={!pagination.hasNext || loading || loadingMore}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                paddingHorizontal: 16,
-                paddingVertical: 8,
-                marginLeft: 8,
-                borderRadius: 6,
-                backgroundColor: !pagination.hasNext || loading || loadingMore
-                  ? isDarkMode ? '#3A3B3C' : '#F0F2F5'
-                  : '#1877F2',
-                opacity: !pagination.hasNext || loading || loadingMore ? 0.5 : 1,
-              }}
-            >
-              <Text style={{
-                fontSize: 14,
-                fontFamily: 'Inter-SemiBold',
-                color: !pagination.hasNext || loading || loadingMore
-                  ? isDarkMode ? '#B0B3B8' : '#65676B'
-                  : '#FFFFFF',
-                marginRight: 4,
-              }}>
-                Next
-              </Text>
-              <Image
-                source={require('@/assets/icons/forward.png')}
-                style={{ width: 16, height: 16 }}
-                tintColor={!pagination.hasNext || loading || loadingMore
-                  ? isDarkMode ? '#B0B3B8' : '#65676B'
-                  : '#FFFFFF'
-                }
-                contentFit="contain"
-              />
-            </TouchableOpacity>
-          </View>
-
-          {/* Page Info */}
-          <View style={{
-            marginLeft: 20,
-            alignItems: 'center',
-          }}>
-            <Text style={{
-              fontSize: 12,
-              fontFamily: 'Inter-Regular',
-              color: isDarkMode ? '#B0B3B8' : '#65676B',
-            }}>
-              Page {pagination.currentPage} of {pagination.totalPages}
-            </Text>
-            <Text style={{
-              fontSize: 12,
-              fontFamily: 'Inter-Regular',
-              color: isDarkMode ? '#B0B3B8' : '#65676B',
-            }}>
-              {pagination.totalItems} total archived users
-            </Text>
-          </View>
-        </ScrollView>
-      </View>
+    const confirmRestore = window.confirm(
+      `Are you sure you want to restore ${ids.length} selected user${
+        ids.length === 1 ? '' : 's'
+      }? Their status will be set to 'active'.`
     );
-  };
-
-  const handleRestoreUser = async (userId: string, username: string) => {
-    const confirmRestore = window.confirm(`Are you sure you want to restore user "${username}"? Their status will be set to 'active'.`);
     if (!confirmRestore) return;
 
-    setActionLoading(`${userId}_restore`);
+    setActionLoading('bulk_restore');
+    const succeeded: string[] = [];
+    const failed: string[] = [];
+
     try {
-      const response = await apiClient.put<ApiResponse>(`/users/${userId}/restore`, { status: 'active' });
-      if (response.data.success) {
-        window.alert(`Success: User ${username} restored successfully.`);
-        setUsers(prevUsers => prevUsers.filter(user => user._id !== userId));
-        // Update pagination info after restoration
-        setPagination(prev => ({
-          ...prev,
-          totalItems: Math.max(0, prev.totalItems - 1)
-        }));
-      } else {
-        window.alert(`Error: ${response.data.message || 'Failed to restore user.'}`);
+      for (const userId of ids) {
+        try {
+          const response = await apiClient.put<ApiResponse>(
+            `/users/${userId}/restore`,
+            { status: 'active' }
+          );
+          if (response.data.success) succeeded.push(userId);
+          else failed.push(userId);
+        } catch {
+          failed.push(userId);
+        }
       }
-    } catch (err: any) {
-      console.error('Error restoring user:', err);
-      window.alert(`Error: ${err.response?.data?.message || 'An error occurred while restoring the user.'}`);
+
+      if (succeeded.length > 0) removeUsersFromState(succeeded);
+
+      if (failed.length === 0) {
+        window.alert(
+          `Success: Restored ${succeeded.length} user${
+            succeeded.length === 1 ? '' : 's'
+          }.`
+        );
+      } else {
+        window.alert(
+          `Restored ${succeeded.length} user${
+            succeeded.length === 1 ? '' : 's'
+          }. Failed: ${failed.length}.`
+        );
+      }
     } finally {
       setActionLoading(null);
     }
-  };
+  }, [selectedIds, removeUsersFromState]);
 
-  const handlePermanentDeleteUser = async (userId: string, username: string) => {
+  const handleBulkPermanentDelete = useCallback(async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+
     const confirmDelete = window.confirm(
-      `DANGER: Are you sure you want to PERMANENTLY DELETE user "${username}"? This action cannot be undone.`
+      `DANGER: Permanently delete ${ids.length} selected user${
+        ids.length === 1 ? '' : 's'
+      }? This action cannot be undone.`
     );
     if (!confirmDelete) return;
 
-    setActionLoading(`${userId}_delete`);
+    setActionLoading('bulk_delete');
+    const succeeded: string[] = [];
+    const failed: string[] = [];
+
     try {
-      const response = await apiClient.delete<ApiResponse>(`/users/${userId}/permanent`);
-      if (response.data.success) {
-        window.alert(`Success: User ${username} permanently deleted.`);
-        setUsers(prevUsers => prevUsers.filter(user => user._id !== userId));
-        // Update pagination info after deletion
-        setPagination(prev => ({
-          ...prev,
-          totalItems: Math.max(0, prev.totalItems - 1)
-        }));
-      } else {
-        window.alert(`Error: ${response.data.message || 'Failed to permanently delete user.'}`);
+      for (const userId of ids) {
+        try {
+          const response = await apiClient.delete<ApiResponse>(
+            `/users/${userId}/permanent`
+          );
+          if (response.data.success) succeeded.push(userId);
+          else failed.push(userId);
+        } catch {
+          failed.push(userId);
+        }
       }
-    } catch (err: any) {
-      console.error('Error permanently deleting user:', err);
-      window.alert(`Error: ${err.response?.data?.message || 'An error occurred while deleting the user.'}`);
+
+      if (succeeded.length > 0) removeUsersFromState(succeeded);
+
+      if (failed.length === 0) {
+        window.alert(
+          `Success: Permanently deleted ${succeeded.length} user${
+            succeeded.length === 1 ? '' : 's'
+          }.`
+        );
+      } else {
+        window.alert(
+          `Deleted ${succeeded.length} user${
+            succeeded.length === 1 ? '' : 's'
+          }. Failed: ${failed.length}.`
+        );
+      }
     } finally {
       setActionLoading(null);
     }
-  };
+  }, [selectedIds, removeUsersFromState]);
 
-  // --- VirtualizedList specific functions ---
-  const getItemCount = useCallback((_data: User[] | null | undefined) => _data ? _data.length : 0, []);
-  
-  const getItem = useCallback((_data: User[] | null | undefined, index: number): User => {
-    return (_data as User[])[index];
-  }, []);
+  /* ------------------------- renderers ------------------------- */
+  const renderUserItem = useCallback(
+    ({ item }: { item: User }) => (
+      <ArchivedUserRow
+        item={item}
+        isDarkMode={isDarkMode}
+        searchQuery={searchQuery}
+        isSelected={selectedIds.has(item._id)}
+        isRestoring={actionLoading === `${item._id}_restore`}
+        isDeleting={actionLoading === `${item._id}_delete`}
+        anyActionLoading={!!actionLoading}
+        onToggleSelect={toggleSelectUser}
+        onRestore={handleRestoreUser}
+        onDelete={handlePermanentDeleteUser}
+      />
+    ),
+    [
+      isDarkMode,
+      searchQuery,
+      selectedIds,
+      actionLoading,
+      toggleSelectUser,
+      handleRestoreUser,
+      handlePermanentDeleteUser,
+    ]
+  );
 
-  // --- Render Logic ---
+  /* ------------------------- list header ------------------------- */
+  const listHeader = useMemo(
+    () => (
+      <View>
+        {/* Title + refresh */}
+        <View
+          style={{
+            backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+            paddingVertical: 16,
+            paddingHorizontal: 20,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.1,
+            shadowRadius: 8,
+            elevation: 4,
+          }}
+        >
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <View style={{ flex: 1 }}>
+              <Text
+                style={{
+                  fontSize: 24,
+                  fontFamily: 'Inter-Bold',
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                }}
+              >
+                Archived Users
+              </Text>
+              <Text
+                style={{
+                  fontSize: 14,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#B0B3B8' : '#65676B',
+                  marginTop: 2,
+                }}
+              >
+                {users.length} of {pagination.totalItems} archived user
+                {pagination.totalItems === 1 ? '' : 's'} loaded
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              onPress={refreshUsers}
+              disabled={refreshing}
+              style={{
+                backgroundColor: isDarkMode ? '#DC2626' : '#DC2626',
+                borderRadius: 8,
+                padding: 8,
+                opacity: refreshing ? 0.6 : 1,
+              }}
+            >
+              {refreshing ? (
+                <ActivityIndicator
+                  size="small"
+                  color={isDarkMode ? '#E4E6EA' : '#FFFFFF'}
+                />
+              ) : (
+                <Image
+                  source={require('@/assets/icons/refresh.png')}
+                  style={{ width: 24, height: 24 }}
+                  tintColor="white"
+                  contentFit="contain"
+                />
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Search bar */}
+        <View
+          style={{
+            backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+            paddingBottom: 16,
+            paddingHorizontal: 20,
+            borderBottomWidth: 1,
+            borderBottomColor: isDarkMode ? '#3A3B3C' : '#E4E6EA',
+          }}
+        >
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+              borderRadius: 20,
+              paddingHorizontal: 16,
+              paddingVertical: 10,
+            }}
+          >
+            <Image
+              source={require('@/assets/icons/search.png')}
+              style={{ width: 24, height: 24, marginRight: 8 }}
+              tintColor={isDarkMode ? '#B0B3B8' : '#65676B'}
+              contentFit="contain"
+            />
+            <TextInput
+              style={{
+                flex: 1,
+                fontSize: 16,
+                fontFamily: 'Inter-Regular',
+                color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+              }}
+              placeholder="Search archived users by name, email, or username..."
+              placeholderTextColor={isDarkMode ? '#B0B3B8' : '#65676B'}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity
+                onPress={clearSearch}
+                style={{
+                  backgroundColor: isDarkMode ? '#4E4F50' : '#E4E6EA',
+                  borderRadius: 12,
+                  padding: 8,
+                  marginLeft: 8,
+                }}
+              >
+                <Image
+                  source={require('@/assets/icons/close.png')}
+                  style={{ width: 24, height: 24 }}
+                  tintColor={isDarkMode ? '#B0B3B8' : '#65676B'}
+                  contentFit="contain"
+                />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {searchQuery.length > 0 && (
+            <Text
+              style={{
+                fontSize: 14,
+                fontFamily: 'Inter-Regular',
+                color: isDarkMode ? '#B0B3B8' : '#65676B',
+                marginTop: 12,
+              }}
+            >
+              {filteredUsers.length === 0
+                ? `No results found for "${searchQuery}"`
+                : `Found ${filteredUsers.length} archived user${
+                    filteredUsers.length === 1 ? '' : 's'
+                  } matching "${searchQuery}"`}
+            </Text>
+          )}
+        </View>
+
+        {/* Selection + bulk actions */}
+        {listData.length > 0 && (
+          <View
+            style={{
+              backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+              paddingHorizontal: 20,
+              paddingVertical: 12,
+              borderBottomWidth: 1,
+              borderBottomColor: isDarkMode ? '#3A3B3C' : '#E4E6EA',
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: 12,
+            }}
+          >
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                opacity: actionLoading ? 0.6 : 1,
+              }}
+            >
+              <Checkbox
+                value={allVisibleSelected}
+                onValueChange={toggleSelectAllVisible}
+                color={
+                  allVisibleSelected || someVisibleSelected
+                    ? '#1877F2'
+                    : undefined
+                }
+                disabled={!!actionLoading}
+              />
+              <TouchableOpacity
+                onPress={toggleSelectAllVisible}
+                disabled={!!actionLoading}
+              >
+                <Text
+                  style={{
+                    marginLeft: 10,
+                    fontSize: 14,
+                    fontFamily: 'Inter-SemiBold',
+                    color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  }}
+                >
+                  {allVisibleSelected
+                    ? 'Deselect all'
+                    : `Select all (${listData.length})`}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {selectedCount > 0 && (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 8,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 13,
+                    fontFamily: 'Inter-Regular',
+                    color: isDarkMode ? '#B0B3B8' : '#65676B',
+                    marginRight: 4,
+                  }}
+                >
+                  {selectedCount} selected
+                </Text>
+
+                <TouchableOpacity
+                  onPress={clearSelection}
+                  disabled={!!actionLoading}
+                  style={{
+                    backgroundColor: isDarkMode ? '#3A3B3C' : '#E4E6EA',
+                    borderRadius: 8,
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    opacity: actionLoading ? 0.6 : 1,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      fontFamily: 'Inter-SemiBold',
+                      color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                    }}
+                  >
+                    Clear
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={handleBulkRestore}
+                  disabled={!!actionLoading}
+                  style={{
+                    backgroundColor: '#10B981',
+                    borderRadius: 8,
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    opacity: actionLoading ? 0.6 : 1,
+                  }}
+                >
+                  {actionLoading === 'bulk_restore' ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Image
+                        source={require('@/assets/icons/restore.png')}
+                        style={{ width: 16, height: 16, marginRight: 6 }}
+                        tintColor="#FFFFFF"
+                        contentFit="contain"
+                      />
+                      <Text
+                        style={{
+                          fontSize: 13,
+                          fontFamily: 'Inter-SemiBold',
+                          color: '#FFFFFF',
+                        }}
+                      >
+                        Restore
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={handleBulkPermanentDelete}
+                  disabled={!!actionLoading}
+                  style={{
+                    backgroundColor: '#EF4444',
+                    borderRadius: 8,
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    opacity: actionLoading ? 0.6 : 1,
+                  }}
+                >
+                  {actionLoading === 'bulk_delete' ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <DeleteIcon width={16} height={16} fill="#FFFFFF" />
+                      <Text
+                        style={{
+                          fontSize: 13,
+                          fontFamily: 'Inter-SemiBold',
+                          color: '#FFFFFF',
+                          marginLeft: 6,
+                        }}
+                      >
+                        Delete
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        )}
+      </View>
+    ),
+    [
+      isDarkMode,
+      users.length,
+      pagination.totalItems,
+      refreshing,
+      searchQuery,
+      filteredUsers.length,
+      listData.length,
+      allVisibleSelected,
+      someVisibleSelected,
+      selectedCount,
+      actionLoading,
+      refreshUsers,
+      clearSearch,
+      toggleSelectAllVisible,
+      clearSelection,
+      handleBulkRestore,
+      handleBulkPermanentDelete,
+    ]
+  );
+
+  /* ------------------------- list empty ------------------------- */
+  const listEmpty = useMemo(
+    () => (
+      <View
+        style={{
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: 20,
+          minHeight: 400,
+        }}
+      >
+        <View
+          style={{
+            backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+            borderRadius: 12,
+            padding: 24,
+            alignItems: 'center',
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.1,
+            shadowRadius: 8,
+            elevation: 4,
+            maxWidth: 500,
+          }}
+        >
+          {searchQuery.length > 0 ? (
+            <>
+              <Image
+                source={require('@/assets/icons/search.png')}
+                style={{
+                  width: 64,
+                  height: 64,
+                  marginBottom: 16,
+                  opacity: 0.5,
+                }}
+                tintColor={isDarkMode ? '#B0B3B8' : '#65676B'}
+                contentFit="contain"
+              />
+              <Text
+                style={{
+                  fontSize: 18,
+                  fontFamily: 'Inter-Bold',
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  textAlign: 'center',
+                  marginBottom: 8,
+                }}
+              >
+                No Results Found
+              </Text>
+              <Text
+                style={{
+                  fontSize: 14,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#B0B3B8' : '#65676B',
+                  textAlign: 'center',
+                  marginBottom: 20,
+                }}
+              >
+                No archived users found matching "{searchQuery}"{'\n'}
+                Try searching with different keywords
+              </Text>
+              <TouchableOpacity
+                onPress={clearSearch}
+                style={{
+                  backgroundColor: '#1877F2',
+                  borderRadius: 8,
+                  paddingVertical: 12,
+                  paddingHorizontal: 24,
+                }}
+              >
+                <Text
+                  style={{
+                    color: '#FFFFFF',
+                    fontSize: 16,
+                    fontFamily: 'Inter-SemiBold',
+                  }}
+                >
+                  Clear Search
+                </Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <Image
+                source={require('@/assets/icons/archive.png')}
+                style={{
+                  width: 120,
+                  height: 120,
+                  marginBottom: 20,
+                  opacity: 0.5,
+                }}
+                tintColor={isDarkMode ? '#B0B3B8' : '#65676B'}
+                contentFit="contain"
+              />
+              <Text
+                style={{
+                  fontSize: 20,
+                  fontFamily: 'Inter-Bold',
+                  color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                  textAlign: 'center',
+                  marginBottom: 8,
+                }}
+              >
+                No Archived Users
+              </Text>
+              <Text
+                style={{
+                  fontSize: 14,
+                  fontFamily: 'Inter-Regular',
+                  color: isDarkMode ? '#B0B3B8' : '#65676B',
+                  textAlign: 'center',
+                  marginBottom: 24,
+                  lineHeight: 20,
+                }}
+              >
+                No archived user accounts found.{'\n'}
+                Archived users will appear here when deleted.
+              </Text>
+              <TouchableOpacity
+                onPress={refreshUsers}
+                style={{
+                  backgroundColor: '#1877F2',
+                  borderRadius: 8,
+                  paddingVertical: 12,
+                  paddingHorizontal: 24,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                }}
+              >
+                <Image
+                  source={require('@/assets/icons/refresh.png')}
+                  style={{ width: 20, height: 20, marginRight: 8 }}
+                  tintColor="#FFFFFF"
+                  contentFit="contain"
+                />
+                <Text
+                  style={{
+                    color: '#FFFFFF',
+                    fontSize: 16,
+                    fontFamily: 'Inter-SemiBold',
+                  }}
+                >
+                  Refresh
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+      </View>
+    ),
+    [isDarkMode, searchQuery, clearSearch, refreshUsers]
+  );
+
+  /* ------------------------- list footer ------------------------- */
+  const listFooter = useMemo(
+    () => (
+      <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+        {loadingMore ? (
+          <>
+            <ActivityIndicator size="small" color="#1877F2" />
+            <Text
+              style={{
+                marginTop: 8,
+                fontSize: 12,
+                fontFamily: 'Inter-Regular',
+                color: isDarkMode ? '#B0B3B8' : '#65676B',
+              }}
+            >
+              Loading more archived users...
+            </Text>
+          </>
+        ) : !pagination.hasNext && users.length > ITEMS_PER_PAGE ? (
+          <Text
+            style={{
+              fontSize: 12,
+              fontFamily: 'Inter-Regular',
+              color: isDarkMode ? '#B0B3B8' : '#65676B',
+            }}
+          >
+            All {pagination.totalItems} archived users loaded
+          </Text>
+        ) : null}
+      </View>
+    ),
+    [loadingMore, isDarkMode, pagination.hasNext, pagination.totalItems, users.length]
+  );
+
+  /* ------------------------- early returns ------------------------- */
   if (loading && users.length === 0) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' }}>
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+      <SafeAreaView
+        style={{
+          flex: 1,
+          backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5',
+        }}
+      >
+        <NetworkBanner
+          forceVisible={forceNetworkBannerVisible}
+          onRetry={() => fetchUsers(1, false)}
+          onDismiss={() => setForceNetworkBannerVisible(false)}
+        />
+        <View
+          style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}
+        >
           <ActivityIndicator size="large" color="#3B82F6" />
-          <Text style={{
-            fontFamily: 'Inter-Regular',
-            marginTop: 16,
-            fontSize: 14,
-            color: isDarkMode ? '#E4E6EA' : '#1C1E21',
-          }}>
+          <Text
+            style={{
+              fontFamily: 'Inter-Regular',
+              marginTop: 16,
+              fontSize: 14,
+              color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+            }}
+          >
             Loading Archived Users...
           </Text>
         </View>
@@ -604,41 +1278,64 @@ const ArchivesWeb = () => {
 
   if (error && users.length === 0) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' }}>
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-          <View style={{
-            backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
-            borderRadius: 12,
-            padding: 24,
+      <SafeAreaView
+        style={{
+          flex: 1,
+          backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5',
+        }}
+      >
+        <NetworkBanner
+          forceVisible={forceNetworkBannerVisible}
+          onRetry={() => fetchUsers(1, false)}
+          onDismiss={() => setForceNetworkBannerVisible(false)}
+        />
+        <View
+          style={{
+            flex: 1,
+            justifyContent: 'center',
             alignItems: 'center',
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.1,
-            shadowRadius: 8,
-            elevation: 4,
-          }}>
+            padding: 20,
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
+              borderRadius: 12,
+              padding: 24,
+              alignItems: 'center',
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.1,
+              shadowRadius: 8,
+              elevation: 4,
+            }}
+          >
             <Image
               source={require('@/assets/icons/error.png')}
               style={{ width: 64, height: 64, marginBottom: 16 }}
               tintColor="#F44336"
               contentFit="contain"
             />
-            <Text style={{
-              fontSize: 18,
-              fontFamily: 'Inter-Bold',
-              color: isDarkMode ? '#E4E6EA' : '#1C1E21',
-              textAlign: 'center',
-              marginBottom: 8,
-            }}>
+            <Text
+              style={{
+                fontSize: 18,
+                fontFamily: 'Inter-Bold',
+                color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                textAlign: 'center',
+                marginBottom: 8,
+              }}
+            >
               Failed to Load Archived Users
             </Text>
-            <Text style={{
-              fontSize: 14,
-              fontFamily: 'Inter-Regular',
-              color: '#F44336',
-              textAlign: 'center',
-              marginBottom: 20,
-            }}>
+            <Text
+              style={{
+                fontSize: 14,
+                fontFamily: 'Inter-Regular',
+                color: '#F44336',
+                textAlign: 'center',
+                marginBottom: 20,
+              }}
+            >
               {error}
             </Text>
             <TouchableOpacity
@@ -650,11 +1347,13 @@ const ArchivesWeb = () => {
                 paddingHorizontal: 24,
               }}
             >
-              <Text style={{
-                color: '#FFFFFF',
-                fontSize: 16,
-                fontFamily: 'Inter-SemiBold',
-              }}>
+              <Text
+                style={{
+                  color: '#FFFFFF',
+                  fontSize: 16,
+                  fontFamily: 'Inter-SemiBold',
+                }}
+              >
                 Try Again
               </Text>
             </TouchableOpacity>
@@ -665,462 +1364,46 @@ const ArchivesWeb = () => {
     );
   }
 
-  if (users.length === 0 && !searchQuery) {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' }}>
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-          <View style={{
-            backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
-            borderRadius: 12,
-            padding: 24,
-            alignItems: 'center',
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.1,
-            shadowRadius: 8,
-            elevation: 4,
-          }}>
-            <Image
-              source={require('@/assets/icons/archive.png')}
-              style={{ width: 120, height: 120, marginBottom: 20, opacity: 0.5 }}
-              tintColor={isDarkMode ? '#B0B3B8' : '#65676B'}
-              contentFit="contain"
-            />
-            <Text style={{
-              fontSize: 20,
-              fontFamily: 'Inter-Bold',
-              color: isDarkMode ? '#E4E6EA' : '#1C1E21',
-              textAlign: 'center',
-              marginBottom: 8,
-            }}>
-              No Archived Users
-            </Text>
-            <Text style={{
-              fontSize: 14,
-              fontFamily: 'Inter-Regular',
-              color: isDarkMode ? '#B0B3B8' : '#65676B',
-              textAlign: 'center',
-              marginBottom: 24,
-              lineHeight: 20,
-            }}>
-              No archived user accounts found.{'\n'}
-              Archived users will appear here when deleted.
-            </Text>
-            <TouchableOpacity
-              onPress={refreshUsers}
-              style={{
-                backgroundColor: '#1877F2',
-                borderRadius: 8,
-                paddingVertical: 12,
-                paddingHorizontal: 24,
-                flexDirection: 'row',
-                alignItems: 'center',
-              }}
-            >
-              <Image
-                source={require('@/assets/icons/refresh.png')}
-                style={{ width: 20, height: 20, marginRight: 8 }}
-                tintColor="#FFFFFF"
-                contentFit="contain"
-              />
-              <Text style={{
-                color: '#FFFFFF',
-                fontSize: 16,
-                fontFamily: 'Inter-SemiBold',
-              }}>
-                Refresh
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
-      </SafeAreaView>
-    );
-  }
-
-  // Main render
+  /* ------------------------- main render ------------------------- */
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' }}>
-      {/* Header */}
-      <View style={{
-        backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
-        paddingVertical: 16,
-        paddingHorizontal: 20,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 8,
-        elevation: 4,
-      }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <View style={{ flex: 1 }}>
-            <Text style={{
-              fontSize: 24,
-              fontFamily: 'Inter-Bold',
-              color: isDarkMode ? '#E4E6EA' : '#1C1E21',
-            }}>
-              Archived Users
-            </Text>
-            <Text style={{
-              fontSize: 14,
-              fontFamily: 'Inter-Regular',
-              color: isDarkMode ? '#B0B3B8' : '#65676B',
-              marginTop: 2,
-            }}>
-              {pagination.totalItems} total archived users • Page {pagination.currentPage} of {pagination.totalPages || 1}
-            </Text>
-          </View>
-          
-          <TouchableOpacity
-            onPress={refreshUsers}
-            disabled={refreshing}
-            className={`p-2 rounded-lg ${isDarkMode ? 'bg-red-500' : 'bg-red-600'}`}
-            style={{
-              borderRadius: 8,
-              padding: 8,
-              opacity: refreshing ? 0.6 : 1,
-            }}
-          >
-            {refreshing ? (
-              <ActivityIndicator size="small" color={isDarkMode ? '#E4E6EA' : '#1C1E21'} />
-            ) : (
-              <Image
-                source={require('@/assets/icons/refresh.png')}
-                style={{ width: 24, height: 24 }}
-                tintColor={isDarkMode ? '#E0E0E0' : 'white'}
-                contentFit="contain"
-              />
-            )}
-          </TouchableOpacity>
-        </View>
-      </View>
+    <SafeAreaView
+      style={{
+        flex: 1,
+        backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5',
+      }}
+    >
+      <NetworkBanner
+        forceVisible={forceNetworkBannerVisible}
+        onRetry={() => fetchUsers(1, false)}
+        onDismiss={() => setForceNetworkBannerVisible(false)}
+      />
 
-      {/* Search Bar */}
-      <View style={{
-        backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
-        paddingVertical: 16,
-        paddingHorizontal: 20,
-        borderBottomWidth: 1,
-        borderBottomColor: isDarkMode ? '#3A3B3C' : '#E4E6EA',
-      }}>
-        <View style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
-          borderRadius: 20,
-          paddingHorizontal: 16,
-          paddingVertical: 10,
-        }}>
-          <Image
-            source={require('@/assets/icons/search.png')}
-            style={{ width: 24, height: 24, marginRight: 8 }}
-            tintColor={isDarkMode ? '#B0B3B8' : '#65676B'}
-            contentFit="contain"
-          />
-          <TextInput
-            style={{
-              flex: 1,
-              fontSize: 16,
-              fontFamily: 'Inter-Regular',
-              color: isDarkMode ? '#E4E6EA' : '#1C1E21',
-            }}
-            placeholder="Search archived users by name, email, or username..."
-            placeholderTextColor={isDarkMode ? '#B0B3B8' : '#65676B'}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity
-              onPress={clearSearch}
-              style={{
-                backgroundColor: isDarkMode ? '#4E4F50' : '#E4E6EA',
-                borderRadius: 12,
-                padding: 8,
-                marginLeft: 8,
-              }}
-            >
-              <Image
-                source={require('@/assets/icons/close.png')}
-                style={{ width: 24, height: 24}}
-                tintColor={isDarkMode ? '#B0B3B8' : '#65676B'}
-                contentFit="contain"
-              />
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* Search Results Info */}
-        {searchQuery.length > 0 && (
-          <Text style={{
-            fontSize: 14,
-            fontFamily: 'Inter-Regular',
-            color: isDarkMode ? '#B0B3B8' : '#65676B',
-            marginTop: 12,
-          }}>
-            {filteredUsers.length === 0 
-              ? `No results found for "${searchQuery}"`
-              : `Found ${filteredUsers.length} archived user${filteredUsers.length === 1 ? '' : 's'} matching "${searchQuery}"`
-            }
-          </Text>
-        )}
-      </View>
-
-      {/* Pagination Controls */}
-      <PaginationControls />
-
-      {/* User List */}
-      {searchQuery.length > 0 && filteredUsers.length === 0 ? (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-          <View style={{
-            backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
-            borderRadius: 12,
-            padding: 24,
-            alignItems: 'center',
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.1,
-            shadowRadius: 8,
-            elevation: 4,
-          }}>
-            <Image
-              source={require('@/assets/icons/search.png')}
-              style={{ width: 64, height: 64, marginBottom: 16, opacity: 0.5 }}
-              tintColor={isDarkMode ? '#B0B3B8' : '#65676B'}
-              contentFit="contain"
-            />
-            <Text style={{
-              fontSize: 18,
-              fontFamily: 'Inter-Bold',
-              color: isDarkMode ? '#E4E6EA' : '#1C1E21',
-              textAlign: 'center',
-              marginBottom: 8,
-            }}>
-              No Results Found
-            </Text>
-            <Text style={{
-              fontSize: 14,
-              fontFamily: 'Inter-Regular',
-              color: isDarkMode ? '#B0B3B8' : '#65676B',
-              textAlign: 'center',
-              marginBottom: 20,
-            }}>
-              No archived users found matching "{searchQuery}"{'\n'}
-              Try searching with different keywords
-            </Text>
-            <TouchableOpacity
-              onPress={clearSearch}
-              style={{
-                backgroundColor: '#1877F2',
-                borderRadius: 8,
-                paddingVertical: 12,
-                paddingHorizontal: 24,
-              }}
-            >
-              <Text style={{
-                color: '#FFFFFF',
-                fontSize: 16,
-                fontFamily: 'Inter-SemiBold',
-              }}>
-                Clear Search
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      ) : (
-        <View style={{ flex: 1, paddingHorizontal: 16 }}>
-          <VirtualizedList
-            data={filteredUsers}
-            renderItem={({ item }: { item: User }) => {
-              const isRestoring = actionLoading === `${item._id}_restore`;
-              const isDeleting = actionLoading === `${item._id}_delete`;
-
-              const highlightText = (text: string, query: string) => {
-                if (!query.trim()) return text;
-                
-                const parts = text.split(new RegExp(`(${query})`, 'gi'));
-                return parts.map((part, index) => 
-                  part.toLowerCase() === query.toLowerCase() ? 
-                    <Text key={index} style={{
-                      backgroundColor: isDarkMode ? '#FFC107' : '#FFF59D',
-                      fontFamily: 'Inter-Bold',
-                    }}>
-                      {part}
-                    </Text> : part
-                );
-              };
-
-              return (
-                <View style={{
-                  backgroundColor: isDarkMode ? '#242526' : '#FFFFFF',
-                  borderRadius: 12,
-                  padding: 16,
-                  marginVertical: 4,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  shadowColor: '#000',
-                  shadowOffset: { width: 0, height: 1 },
-                  shadowOpacity: 0.1,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}>
-                  {/* Profile Picture */}
-                  <View style={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: 24,
-                    overflow: 'hidden',
-                    marginRight: 12,
-                  }}>
-                    <Image
-                      source={item.profilePicture ? { uri: item.profilePicture } : require('@/assets/images/sample_profile_picture.png')}
-                      style={{ width: 48, height: 48 }}
-                      contentFit="cover"
-                      cachePolicy="memory-disk"
-                    />
-                  </View>
-
-                  {/* User Info */}
-                  <View style={{ flex: 1 }}>
-                    <Text style={{
-                      fontSize: 16,
-                      fontFamily: 'Inter-Bold',
-                      color: isDarkMode ? '#E4E6EA' : '#1C1E21',
-                      marginBottom: 2,
-                    }}>
-                      {searchQuery ? 
-                        highlightText(`${item.lastName}, ${item.firstName}`, searchQuery) :
-                        `${item.lastName}, ${item.firstName}`
-                      }
-                    </Text>
-                    
-                    <Text style={{
-                      fontSize: 14,
-                      fontFamily: 'Inter-Regular',
-                      color: isDarkMode ? '#B0B3B8' : '#65676B',
-                      marginBottom: 2,
-                    }}>
-                      {searchQuery ? 
-                        highlightText(item.email || 'No email', searchQuery) :
-                        item.email || 'No email'
-                      }
-                    </Text>
-                    
-                    <Text style={{
-                      fontSize: 12,
-                      fontFamily: 'Inter-Regular',
-                      color: isDarkMode ? '#B0B3B8' : '#65676B',
-                      marginBottom: 4,
-                    }}>
-                      ID: {item.userId || 'N/A'} • Username: {item.username || 'N/A'}
-                    </Text>
-
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <View style={{
-                        backgroundColor: '#6B7280',
-                        paddingHorizontal: 8,
-                        paddingVertical: 2,
-                        borderRadius: 12,
-                        marginRight: 8,
-                      }}>
-                        <Text style={{
-                          fontSize: 12,
-                          fontFamily: 'Inter-Bold',
-                          color: '#FFFFFF',
-                        }}>
-                          ARCHIVED
-                        </Text>
-                      </View>
-                      
-                      <View style={{
-                        backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
-                        paddingHorizontal: 8,
-                        paddingVertical: 2,
-                        borderRadius: 12,
-                        marginRight: 8,
-                      }}>
-                        <Text style={{
-                          fontSize: 12,
-                          fontFamily: 'Inter-SemiBold',
-                          color: isDarkMode ? '#E4E6EA' : '#1C1E21',
-                        }}>
-                          {item.role}
-                        </Text>
-                      </View>
-
-                      <Text style={{
-                        fontSize: 12,
-                        fontFamily: 'Inter-Regular',
-                        color: isDarkMode ? '#B0B3B8' : '#65676B',
-                      }}>
-                        Archived: {new Date(item.updatedAt).toLocaleDateString()}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* Action Buttons */}
-                  <View style={{ flexDirection: 'row', gap: 8 }}>
-                    <TouchableOpacity
-                      onPress={() => handleRestoreUser(item._id, item.username)}
-                      disabled={isRestoring || isDeleting || !!actionLoading}
-                      style={{
-                        backgroundColor: '#10B981',
-                        borderRadius: 8,
-                        padding: 10,
-                        opacity: isRestoring || isDeleting || !!actionLoading ? 0.6 : 1,
-                      }}
-                    >
-                      {isRestoring ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                      ) : (
-                        <Image
-                          source={require('@/assets/icons/restore.png')}
-                          style={{ width: 20, height: 20 }}
-                          tintColor="#FFFFFF"
-                          contentFit="contain"
-                        />
-                      )}
-                    </TouchableOpacity>
-                    
-                    <TouchableOpacity
-                      onPress={() => handlePermanentDeleteUser(item._id, item.username)}
-                      disabled={isDeleting || isRestoring || !!actionLoading}
-                      style={{
-                        backgroundColor: '#EF4444',
-                        borderRadius: 8,
-                        padding: 10,
-                        opacity: isDeleting || isRestoring || !!actionLoading ? 0.6 : 1,
-                      }}
-                    >
-                      {isDeleting ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                      ) : (
-                        <DeleteIcon width={20} height={20} fill="#FFFFFF"/>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              );
-            }}
-            contentContainerStyle={{ paddingVertical: 16 }}
-            keyExtractor={(item) => item._id}
-            getItem={getItem}
-            getItemCount={getItemCount}
-            extraData={[isDarkMode, searchQuery, actionLoading]}
-            onRefresh={refreshUsers}
-            refreshing={refreshing}
-            showsVerticalScrollIndicator={false}
-            initialNumToRender={15}
-            maxToRenderPerBatch={10}
-            windowSize={5}
-            removeClippedSubviews={true}
-            updateCellsBatchingPeriod={50}
-          />
-        </View>
-      )}
+      {/* Entire screen is now scrollable via FlatList */}
+      <FlatList
+        data={listData}
+        renderItem={renderUserItem}
+        keyExtractor={(item) => item._id}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={listEmpty}
+        ListFooterComponent={listFooter}
+        contentContainerStyle={{ paddingBottom: 20, flexGrow: 1 }}
+        showsVerticalScrollIndicator={false}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.5}
+        onRefresh={refreshUsers}
+        refreshing={refreshing}
+        initialNumToRender={15}
+        maxToRenderPerBatch={10}
+        windowSize={5}
+        removeClippedSubviews
+        updateCellsBatchingPeriod={50}
+        extraData={extraData}
+        keyboardShouldPersistTaps="handled"
+      />
 
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
     </SafeAreaView>
-  )
-}
+  );
+};
 
-export default ArchivesWeb
+export default memo(ArchivesWeb);

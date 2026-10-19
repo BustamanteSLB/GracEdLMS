@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -24,6 +24,9 @@ import { useDarkMode } from '@/contexts/DarkModeContext';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import DownIcon from '@/assets/icons/down.svg';
+import TeacherQuizStudentPreview, {
+  StudentPreviewQuestion,
+} from '@/components/TeacherQuizStudentPreview';
 
 cssInterop(Image, { className: "style" });
 
@@ -66,14 +69,16 @@ const AddQuizAndroid = () => {
     sectionHeader: '',
     sectionDescription: '',
     subject: '',
-    quarter: 'First Quarter',
+    term: '1',
     timeLimit: '',
+    shuffleQuestions: false, // new
   });
 
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
+  const [studentPreviewMode, setStudentPreviewMode] = useState(false);
   const [selectedImages, setSelectedImages] = useState<{[key: number]: DocumentPicker.DocumentPickerAsset[]}>({});
   const [imagePreviewModal, setImagePreviewModal] = useState(false);
   const [selectedPreviewImage, setSelectedPreviewImage] = useState<string | null>(null);
@@ -88,7 +93,7 @@ const AddQuizAndroid = () => {
   });
   const [generatingAI, setGeneratingAI] = useState(false);
 
-  const quarters = ['First Quarter', 'Second Quarter', '3rd Quarter', '4th Quarter'];
+  const terms = ['1', '2', '3'];
 
   // Fetch subjects
   useEffect(() => {
@@ -165,7 +170,6 @@ const AddQuizAndroid = () => {
         question.caseSensitive = false;
         question.markOthersIncorrect = true;
       } else if (value === 'essay') {
-        // Essay has no options or correct answers
         question.options = [];
         question.correctAnswers = [];
       } else if (value === 'multiple_choice' || value === 'multiple_answers') {
@@ -317,6 +321,29 @@ const AddQuizAndroid = () => {
     return questions.reduce((total, question) => total + question.itemPoints, 0);
   };
 
+  const studentPreviewQuestions = useMemo<StudentPreviewQuestion[]>(
+    () =>
+      questions.map((question, index) => ({
+        text: question.text,
+        type: question.type,
+        options: question.options.map((option) => ({ text: option.text })),
+        images: (selectedImages[index] || []).map((file) => file.uri),
+        itemPoints: question.itemPoints,
+        caseSensitive: question.caseSensitive,
+      })),
+    [questions, selectedImages],
+  );
+
+  const toggleStudentPreviewMode = () => {
+    if (!studentPreviewMode && questions.length === 0) {
+      Alert.alert('Preview unavailable', 'Add at least one question to preview as a student.');
+      return;
+    }
+    setStudentPreviewMode(!studentPreviewMode);
+    setPreviewMode(false);
+    setAiGenerationMode(false);
+  };
+
   // Validate form
   const validateForm = () => {
     if (!formData.title.trim()) {
@@ -405,11 +432,13 @@ const AddQuizAndroid = () => {
               formDataToSend.append('sectionHeader', formData.sectionHeader.trim());
               formDataToSend.append('sectionDescription', formData.sectionDescription.trim());
               formDataToSend.append('subject', formData.subject);
-              formDataToSend.append('quarter', formData.quarter);
+              formDataToSend.append('term', formData.term);
               
               if (formData.timeLimit && formData.timeLimit.trim()) {
                 formDataToSend.append('timeLimit', formData.timeLimit.trim());
               }
+
+              formDataToSend.append('shuffleQuestions', String(formData.shuffleQuestions));
 
               formDataToSend.append('questions', JSON.stringify(cleanedQuestions));
 
@@ -499,7 +528,7 @@ const AddQuizAndroid = () => {
 
               formDataToSend.append('subject', formData.subject);
               formDataToSend.append('title', formData.title || `AI Generated Quiz`);
-              formDataToSend.append('quarter', formData.quarter);
+              formDataToSend.append('term', formData.term);
               formDataToSend.append('numberOfQuestions', aiGenerationData.numberOfQuestions);
               formDataToSend.append('questionTypes', JSON.stringify(aiGenerationData.questionTypes));
               formDataToSend.append('difficulty', aiGenerationData.difficulty);
@@ -1199,7 +1228,7 @@ const AddQuizAndroid = () => {
         )}
         <View style={{ gap: 8 }}>
           <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-[#6B7280]'}`}>
-            Quarter: {formData.quarter}
+            Term: {formData.term}
           </Text>
           <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-[#6B7280]'}`}>
             Points: {calculateTotalPoints()}
@@ -1207,6 +1236,11 @@ const AddQuizAndroid = () => {
           {formData.timeLimit && (
             <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-[#6B7280]'}`}>
               Time: {formData.timeLimit} minutes
+            </Text>
+          )}
+          {formData.shuffleQuestions && (
+            <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-[#6B7280]'}`}>
+              Shuffled questions
             </Text>
           )}
         </View>
@@ -1318,62 +1352,60 @@ const AddQuizAndroid = () => {
                   </View>
                 )}
               </View>
-            ) : question.options.length > 0 ? (
-              question.type === 'multiple_answers' ? (
-                question.options.map((option, optionIndex) => (
-                  <View key={optionIndex} style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
+            ) : question.type === 'multiple_answers' ? (
+              question.options.map((option, optionIndex) => (
+                <View key={optionIndex} style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  marginBottom: 8,
+                  padding: 8,
+                  borderRadius: 8,
+                  backgroundColor: option.isCorrect ? (isDarkMode ? '#065F46' : '#ECFDF5') : 'transparent',
+                }}>
+                  <Checkbox
+                    value={option.isCorrect}
+                    disabled={true}
+                    style={{
+                      marginRight: 12,
+                      borderRadius: 4,
+                      width: 20,
+                      height: 20,
+                    }}
+                    color={option.isCorrect ? '#10B981' : undefined}
+                  />
+                  <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'} ${option.isCorrect ? 'font-inter_semibold' : ''}`}>
+                    {option.text}
+                  </Text>
+                </View>
+              ))
+            ) : (
+              question.options.map((option, optionIndex) => (
+                <RadioButton
+                  key={optionIndex}
+                  value={option.text}
+                  label={option.text}
+                  selected={option.isCorrect}
+                  disabled={true}
+                  activeColor="#10B981"
+                  inactiveColor={isDarkMode ? '#6B7280' : '#D1D5DB'}
+                  width={20}
+                  height={20}
+                  style={{
                     marginBottom: 8,
                     padding: 8,
                     borderRadius: 8,
                     backgroundColor: option.isCorrect ? (isDarkMode ? '#065F46' : '#ECFDF5') : 'transparent',
-                  }}>
-                    <Checkbox
-                      value={option.isCorrect}
-                      disabled={true}
-                      style={{
-                        marginRight: 12,
-                        borderRadius: 4,
-                        width: 20,
-                        height: 20,
-                      }}
-                      color={option.isCorrect ? '#10B981' : undefined}
-                    />
-                    <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'} ${option.isCorrect ? 'font-inter_semibold' : ''}`}>
-                      {option.text}
-                    </Text>
-                  </View>
-                ))
-              ) : (
-                question.options.map((option, optionIndex) => (
-                  <RadioButton
-                    key={optionIndex}
-                    value={option.text}
-                    label={option.text}
-                    selected={option.isCorrect}
-                    disabled={true}
-                    activeColor="#10B981"
-                    inactiveColor={isDarkMode ? '#6B7280' : '#D1D5DB'}
-                    width={20}
-                    height={20}
-                    style={{
-                      marginBottom: 8,
-                      padding: 8,
-                      borderRadius: 8,
-                      backgroundColor: option.isCorrect ? (isDarkMode ? '#065F46' : '#ECFDF5') : 'transparent',
-                    }}
-                    labelStyle={{
-                      fontSize: 14,
-                      fontFamily: option.isCorrect ? 'Inter-SemiBold' : 'Inter-Regular',
-                      color: isDarkMode ? '#E5E7EB' : '#374151',
-                      flex: 1,
-                    }}
-                    labelClassName={isDarkMode ? 'text-gray-200' : 'text-gray-700'}
-                  />
-                ))
+                  }}
+                  labelStyle={{
+                    fontSize: 14,
+                    fontFamily: option.isCorrect ? 'Inter-SemiBold' : 'Inter-Regular',
+                    color: isDarkMode ? '#E5E7EB' : '#374151',
+                    flex: 1,
+                  }}
+                  labelClassName={isDarkMode ? 'text-gray-200' : 'text-gray-700'}
+                />
               ))
-            : null}
+            )}
           </View>
 
           <View style={{ marginTop: 12, flexDirection: 'row', justifyContent: 'space-between' }}>
@@ -1419,6 +1451,7 @@ const AddQuizAndroid = () => {
               onPress={() => {
                 setAiGenerationMode(!aiGenerationMode);
                 setPreviewMode(false);
+                setStudentPreviewMode(false);
               }}
               style={{
                 backgroundColor: aiGenerationMode ? '#10B981' : '#6B7280',
@@ -1435,6 +1468,7 @@ const AddQuizAndroid = () => {
               onPress={() => {
                 setPreviewMode(!previewMode);
                 setAiGenerationMode(false);
+                setStudentPreviewMode(false);
               }}
               style={{
                 backgroundColor: previewMode ? '#6B7280' : '#10B981',
@@ -1447,6 +1481,19 @@ const AddQuizAndroid = () => {
                 {previewMode ? 'Edit' : 'Preview'}
               </Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              onPress={toggleStudentPreviewMode}
+              style={{
+                backgroundColor: studentPreviewMode ? '#6B7280' : '#3B82F6',
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: 6,
+              }}
+            >
+              <Text className='font-inter_medium text-xs text-white'>
+                {studentPreviewMode ? 'Edit' : 'Student'}
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       </View>
@@ -1456,7 +1503,22 @@ const AddQuizAndroid = () => {
         style={{ flex: 1 }} 
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        {aiGenerationMode ? renderAIGeneration() : 
+        {aiGenerationMode ? renderAIGeneration() :
+         studentPreviewMode ? (
+          <TeacherQuizStudentPreview
+            key={`student-preview-${questions.length}-${formData.title}`}
+            title={formData.title}
+            sectionHeader={formData.sectionHeader}
+            sectionDescription={formData.sectionDescription}
+            term={formData.term}
+            totalPoints={calculateTotalPoints()}
+            timeLimit={formData.timeLimit}
+            shuffleQuestions={formData.shuffleQuestions}
+            questions={studentPreviewQuestions}
+            isDarkMode={isDarkMode}
+            onExit={() => setStudentPreviewMode(false)}
+          />
+         ) :
          previewMode ? renderPreview() : (
           <ScrollView style={{ flex: 1, padding: 16 }}>
             {/* Quiz Information */}
@@ -1551,18 +1613,18 @@ const AddQuizAndroid = () => {
 
               <View style={{ marginBottom: 16 }}>
                 <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
-                  Quarter *
+                  Term *
                 </Text>
                 <RadioButtonGroup
-                  value={formData.quarter}
-                  onChange={(value) => setFormData({ ...formData, quarter: value })}
+                  value={formData.term}
+                  onChange={(value) => setFormData({ ...formData, term: value })}
                   activeColor="#3B82F6"
                 >
-                  {quarters.map(quarter => (
+                  {terms.map(term => (
                     <RadioButton
-                      key={quarter}
-                      value={quarter}
-                      label={quarter}
+                      key={term}
+                      value={term}
+                      label={term === '1' ? '1st Term' : term === '2' ? '2nd Term' : '3rd Term'}
                       labelStyle={{ color: isDarkMode ? '#E0E0E0' : '#374151', fontSize: 13, fontFamily: 'Inter-Regular' }}
                       width={20}
                       height={20}
@@ -1589,6 +1651,24 @@ const AddQuizAndroid = () => {
                   }}
                   placeholderTextColor={isDarkMode ? '#9ca3af' : '#6B7280'}
                 />
+              </View>
+
+              {/* Shuffle Questions Checkbox (new) */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+                <Checkbox
+                  value={formData.shuffleQuestions}
+                  onValueChange={(value) => setFormData({ ...formData, shuffleQuestions: value })}
+                  color={formData.shuffleQuestions ? '#3B82F6' : undefined}
+                  style={{ marginRight: 8 }}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text className={`font-inter_semibold text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-[#374151]'}`}>
+                    Shuffle questions
+                  </Text>
+                  <Text className={`font-inter_regular text-xs mt-1 ${isDarkMode ? 'text-gray-400' : 'text-[#6B7280]'}`}>
+                    Randomize question order for each student when they take the quiz
+                  </Text>
+                </View>
               </View>
 
               {questions.length > 0 && (

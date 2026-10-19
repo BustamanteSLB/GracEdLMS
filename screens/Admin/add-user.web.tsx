@@ -1,5 +1,5 @@
 import { KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, TouchableOpacity, View, useColorScheme, ActivityIndicator } from 'react-native'
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useCallback } from 'react'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { StatusBar } from 'expo-status-bar'
 import { Image } from "expo-image";
@@ -10,6 +10,7 @@ import { useDarkMode } from '@/contexts/DarkModeContext';
 import apiClient from '@/app/services/apiClient'
 import * as ImagePicker from 'expo-image-picker';
 import Dropdown, { DropdownItem } from '@/components/Dropdown';
+import NetworkBanner from '@/components/NetworkBanner.web';
 
 cssInterop(Image, { className: "style" });
 
@@ -39,12 +40,15 @@ const AddUserWeb = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
 
+  // Network banner state
+  const [forceNetworkBannerVisible, setForceNetworkBannerVisible] = useState(false);
+
   const toggleSecure = () => setSecure(prev => !prev);
   const toggleConfirmSecure = () => setConfirmSecure(prev => !prev);
 
   // Memoized dropdown options
   const sexOptions: DropdownItem[] = useMemo(() => [
-    { label: 'Select Sex', value: '' },
+    { label: 'Select Gender', value: '' },
     { label: 'Male', value: 'Male' },
     { label: 'Female', value: 'Female' },
     { label: 'Other', value: 'Other' },
@@ -217,7 +221,7 @@ const AddUserWeb = () => {
   };
 
   // Function to handle registration
-  const handleAddUser = async () => {
+  const handleAddUser = useCallback(async () => {
     setIsSubmitting(true);
 
     if (password !== confirmPassword) {
@@ -250,6 +254,7 @@ const AddUserWeb = () => {
       });
 
       if (response.data.success) {
+        setForceNetworkBannerVisible(false);
         window.alert('Success: User account created successfully with active status!');
         clearAllFields();
         router.replace('/(admins)/user-management');
@@ -259,10 +264,22 @@ const AddUserWeb = () => {
     } catch (error: any) {
       console.error('Registration error:', error.response?.data || error.message);
       window.alert(`Registration Failed: ${error.response?.data?.message || 'An unexpected error occurred during registration.'}`);
+
+      const isNetworkError =
+        !error?.response ||
+        error?.code === 'ECONNABORTED' ||
+        error?.message?.toLowerCase().includes('network') ||
+        error?.message?.toLowerCase().includes('timeout');
+      if (isNetworkError) {
+        setForceNetworkBannerVisible(true);
+      }
     } finally {
       setIsSubmitting(false);
     }
-  };
+  }, [
+    password, confirmPassword, userId, username, firstName, middleName, lastName,
+    email, phoneNumber, address, sex, role, profilePicture, router
+  ]);
 
   const handleBack = () => {
     clearAllFields();
@@ -271,6 +288,12 @@ const AddUserWeb = () => {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' }}>
+      <NetworkBanner
+        forceVisible={forceNetworkBannerVisible}
+        onRetry={handleAddUser}
+        onDismiss={() => setForceNetworkBannerVisible(false)}
+      />
+
       <ScrollView 
         contentContainerStyle={{
           flexGrow: 1,
@@ -537,17 +560,17 @@ const AddUserWeb = () => {
               />
             </View>
 
-            {/* Sex and Role Row */}
+            {/* Gender and Role Row */}
             <View style={{ flexDirection: 'row', gap: 12 }}>
               <View style={{ flex: 1 }}>
                 <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                  Sex <Text className='font-inter_regular' style={{ color: '#E41E3F' }}>*</Text>
+                  Gender <Text className='font-inter_regular' style={{ color: '#E41E3F' }}>*</Text>
                 </Text>
                 <Dropdown
                   data={sexOptions}
                   selectedValue={sex}
                   onValueChange={(value) => setSex(value as 'Male' | 'Female' | 'Other' | '')}
-                  placeholder="Select Sex"
+                  placeholder="Select Gender"
                 />
               </View>
 

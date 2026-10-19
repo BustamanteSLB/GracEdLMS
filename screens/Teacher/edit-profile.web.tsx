@@ -1,3 +1,4 @@
+// edit-profile.web.tsx
 import { View, Text, useColorScheme, TextInput, Alert, ActivityIndicator, Keyboard, TouchableOpacity, Platform } from 'react-native'
 import React, { useEffect, useState, useMemo } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -12,6 +13,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { User } from '@/app/types';
 import * as ImagePicker from 'expo-image-picker';
 import Dropdown, { DropdownItem } from '@/components/Dropdown';
+import NetworkBanner from '@/components/NetworkBanner.web';
 
 cssInterop(Image, { className: "style" });
 
@@ -26,6 +28,7 @@ const EditProfileWeb = () => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [networkError, setNetworkError] = useState(false);
 
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
@@ -41,20 +44,24 @@ const EditProfileWeb = () => {
   const toggleSecure = () => setSecure(prev => !prev);
   const toggleConfirmSecure = () => setConfirmSecure(prev => !prev);
 
-  // Memoized dropdown options
   const sexOptions: DropdownItem[] = useMemo(() => [
     { label: 'Male', value: 'Male' },
     { label: 'Female', value: 'Female' },
     { label: 'Other', value: 'Other' },
   ], []);
 
-  // Function to handle image upload to Firebase
+  // Shared network error detection helper
+  const isNetworkError = (err: any) =>
+    err?.message?.toLowerCase?.().includes('network') ||
+    err?.status === 0 ||
+    !err?.response;
+
   const handleImageUpload = async () => {
     try {
       setIsUploadingImage(true);
+      setNetworkError(false);
 
       if (Platform.OS === 'web') {
-        // Web file picker
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = 'image/jpeg,image/jpg,image/png,image/gif,image/webp';
@@ -91,6 +98,7 @@ const EditProfileWeb = () => {
               }
             } catch (error: any) {
               console.error('Upload error:', error);
+              if (isNetworkError(error)) setNetworkError(true);
               window.alert(`Upload failed: ${error.response?.data?.message || error.message}`);
             }
           } catch (error: any) {
@@ -117,7 +125,6 @@ const EditProfileWeb = () => {
         
         input.click();
       } else {
-        // Mobile image picker
         try {
           const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
           
@@ -165,6 +172,7 @@ const EditProfileWeb = () => {
               }
             } catch (error: any) {
               console.error('Upload error:', error);
+              if (isNetworkError(error)) setNetworkError(true);
               alert(`Upload failed: ${error.response?.data?.message || error.message}`);
             }
           }
@@ -190,7 +198,6 @@ const EditProfileWeb = () => {
     if (user) {
       setProfilePicture(user.profilePicture || '');
       setEmail(user.email || '');
-      // Handle phone number - remove +63 prefix if present for display
       const phoneNum = user.phoneNumber || '';
       if (phoneNum.startsWith('+63')) {
         setPhoneNumber(phoneNum.substring(3));
@@ -210,15 +217,40 @@ const EditProfileWeb = () => {
     Keyboard.dismiss();
     setSubmitting(true);
     setError(null);
+    setNetworkError(false);
+
+    // --- Validation ---
+    if (!email || email.trim() === '') {
+      window.alert('Validation Error: Email address is required.');
+      setSubmitting(false);
+      return;
+    }
+    if (!sex) {
+      window.alert('Validation Error: Please select your gender.');
+      setSubmitting(false);
+      return;
+    }
+    if (phoneNumber && phoneNumber.trim() !== '') {
+      const cleaned = phoneNumber.replace(/[^0-9]/g, '');
+      if (cleaned.length !== 10) {
+        window.alert('Validation Error: Phone number must be exactly 10 digits (e.g., 9123456789).');
+        setSubmitting(false);
+        return;
+      }
+      if (!cleaned.startsWith('9')) {
+        window.alert('Validation Error: Phone number must start with 9 (Philippine mobile format).');
+        setSubmitting(false);
+        return;
+      }
+    }
 
     let successMessages: string[] = [];
     let errorMessages: string[] = [];
 
     try {
-      // Update profile details
       const updatedData: { [key: string]: any } = {
         profilePicture,
-        email: email && email.trim() !== '' ? email.trim() : undefined,
+        email: email.trim(),
         phoneNumber: phoneNumber && phoneNumber.trim() !== '' ? `+63${phoneNumber}` : undefined,
         address: address && address.trim() !== '' ? address.trim() : undefined,
         sex,
@@ -229,10 +261,10 @@ const EditProfileWeb = () => {
       fetchCurrentUser();
     } catch (err: any) {
       console.error('Error updating profile details:', err.response?.data || err.message);
+      if (isNetworkError(err)) setNetworkError(true);
       errorMessages.push(err.response?.data?.message || 'Failed to update profile details.');
     }
 
-    // Handle password update separately
     if (newPassword !== '' || confirmNewPassword !== '') {
       if (newPassword === '') {
         errorMessages.push('New password cannot be empty.');
@@ -241,9 +273,7 @@ const EditProfileWeb = () => {
       } else if (newPassword.length < 8) {
         errorMessages.push('New password must be at least 8 characters long.');
       } else {
-        // Check if new password is same as current password
         try {
-          // First verify the new password against current password
           const verifyResponse = await apiClient.post('/auth/verify-password', { 
             password: newPassword 
           });
@@ -251,7 +281,6 @@ const EditProfileWeb = () => {
           if (verifyResponse.data.success && verifyResponse.data.data.isMatch) {
             errorMessages.push('New password cannot be the same as your current password.');
           } else {
-            // Password is different, proceed with update
             try {
               await apiClient.put('/auth/reset-my-password', { newPassword });
               successMessages.push('Password updated successfully!');
@@ -259,14 +288,12 @@ const EditProfileWeb = () => {
               setConfirmNewPassword('');
             } catch (err: any) {
               console.error('Error updating password:', err.response?.data || err.message);
+              if (isNetworkError(err)) setNetworkError(true);
               errorMessages.push(err.response?.data?.message || 'Failed to update password.');
             }
           }
         } catch (err: any) {
-          // If verify endpoint fails, it might mean password is different or endpoint error
-          // Proceed with password update
           if (err.response?.status === 401) {
-            // Password is different, proceed
             try {
               await apiClient.put('/auth/reset-my-password', { newPassword });
               successMessages.push('Password updated successfully!');
@@ -274,10 +301,12 @@ const EditProfileWeb = () => {
               setConfirmNewPassword('');
             } catch (updateErr: any) {
               console.error('Error updating password:', updateErr.response?.data || updateErr.message);
+              if (isNetworkError(updateErr)) setNetworkError(true);
               errorMessages.push(updateErr.response?.data?.message || 'Failed to update password.');
             }
           } else {
             console.error('Error verifying password:', err.response?.data || err.message);
+            if (isNetworkError(err)) setNetworkError(true);
             errorMessages.push('Failed to verify password. Please try again.');
           }
         }
@@ -314,6 +343,10 @@ const EditProfileWeb = () => {
             Loading Profile data...
           </Text>
         </View>
+        <NetworkBanner
+          forceVisible={networkError}
+          onDismiss={() => setNetworkError(false)}
+        />
         <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       </SafeAreaView>
     );
@@ -377,12 +410,15 @@ const EditProfileWeb = () => {
             </TouchableOpacity>
           </View>
         </View>
+        <NetworkBanner
+          forceVisible={networkError}
+          onDismiss={() => setNetworkError(false)}
+        />
         <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       </SafeAreaView>
     );
   }
 
-  // Determine full name with optional middle name
   const fullName = user?.middleName
     ? `${user?.firstName} ${user?.middleName} ${user?.lastName}`
     : `${user?.firstName} ${user?.lastName}`;
@@ -488,7 +524,6 @@ const EditProfileWeb = () => {
               )}
             </View>
             
-            {/* User Name Display */}
             <Text style={{
               fontSize: 18,
               fontFamily: 'Inter-Bold',
@@ -561,7 +596,7 @@ const EditProfileWeb = () => {
 
           {/* Form Fields */}
           <View style={{ gap: 16 }}>
-            {/* Email */}
+            {/* Email - required */}
             <View>
               <Text style={{
                 fontSize: 14,
@@ -569,7 +604,7 @@ const EditProfileWeb = () => {
                 color: isDarkMode ? '#E4E6EA' : '#1C1E21',
                 marginBottom: 8,
               }}>
-                Email Address
+                Email Address <Text style={{ color: '#EF4444' }}>*</Text>
               </Text>
               <TextInput
                 style={{
@@ -592,7 +627,7 @@ const EditProfileWeb = () => {
               />
             </View>
 
-            {/* Sex - REPLACED WITH DROPDOWN */}
+            {/* Sex - required */}
             <View>
               <Text style={{
                 fontSize: 14,
@@ -600,7 +635,7 @@ const EditProfileWeb = () => {
                 color: isDarkMode ? '#E4E6EA' : '#1C1E21',
                 marginBottom: 8,
               }}>
-                Gender
+                Gender <Text style={{ color: '#EF4444' }}>*</Text>
               </Text>
               <Dropdown
                 data={sexOptions}
@@ -707,7 +742,7 @@ const EditProfileWeb = () => {
                 color: isDarkMode ? '#E4E6EA' : '#1C1E21',
                 marginBottom: 8,
               }}>
-                Phone Number
+                Phone Number (optional)
               </Text>
               <View style={{
                 flexDirection: 'row',
@@ -753,7 +788,7 @@ const EditProfileWeb = () => {
                 color: isDarkMode ? '#E4E6EA' : '#1C1E21',
                 marginBottom: 8,
               }}>
-                Address
+                Address (optional)
               </Text>
               <TextInput
                 style={{
@@ -802,7 +837,7 @@ const EditProfileWeb = () => {
                 flex: 1,
                 lineHeight: 20,
               }}>
-                Leave password fields empty to keep current password. Email, phone number, and address are optional fields.
+                Leave password fields empty to keep current password. Email and Gender are required.
               </Text>
             </View>
           </View>
@@ -862,6 +897,13 @@ const EditProfileWeb = () => {
           </View>
         </View>
       </ScrollView>
+
+      {/* Animated network banner overlay */}
+      <NetworkBanner
+        forceVisible={networkError}
+        onDismiss={() => setNetworkError(false)}
+      />
+
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
     </SafeAreaView>
   )

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { Subject } from '@/app/types/index';
 import { View, Text, ScrollView, useColorScheme, TouchableOpacity, ActivityIndicator } from 'react-native'
 import SubjectDetailsTabs from '@/components/SubjectDetailsTabs';
@@ -9,6 +9,7 @@ import { cssInterop } from 'nativewind';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDarkMode } from '@/contexts/DarkModeContext';
 import apiClient from '@/app/services/apiClient';
+import NetworkBanner from '@/components/NetworkBanner.web';
 
 cssInterop(Image, { className: 'style' });
 
@@ -25,37 +26,57 @@ const SubjectDetailsWeb = () => {
   const [viewingSubject, setViewingSubject] = useState<Subject | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Network banner state
+  const [forceNetworkBannerVisible, setForceNetworkBannerVisible] = useState(false);
+
   document.title = `${viewingSubject ? viewingSubject.subjectName : 'Subject Details'} - GracEdLMS`;
 
-  // Fetch subject data on mount
-  useEffect(() => {
-    const fetchSubject = async () => {
-      if (!subjectId) {
-        setError('No subject ID provided');
-        setLoading(false);
-        return;
-      }
+  // Fetch subject data
+  const fetchSubject = useCallback(async () => {
+    if (!subjectId) {
+      setError('No subject ID provided');
+      setLoading(false);
+      return;
+    }
 
-      try {
-        setLoading(true);
-        const response = await apiClient.get(`/subjects/${subjectId}`);
-        setViewingSubject(response.data.data);
-        setError(null);
-      } catch (err: any) {
-        console.error('Failed to fetch subject:', err);
-        setError(err.response?.data?.message || 'Failed to load subject details');
-      } finally {
-        setLoading(false);
-      }
-    };
+    try {
+      setLoading(true);
+      const response = await apiClient.get(`/subjects/${subjectId}`);
+      setViewingSubject(response.data.data);
+      setError(null);
+      setForceNetworkBannerVisible(false);
+    } catch (err: any) {
+      console.error('Failed to fetch subject:', err);
+      setError(err.response?.data?.message || 'Failed to load subject details');
 
-    fetchSubject();
+      const isNetworkError =
+        !err?.response ||
+        err?.code === 'ECONNABORTED' ||
+        err?.message?.toLowerCase().includes('network') ||
+        err?.message?.toLowerCase().includes('timeout');
+      if (isNetworkError) {
+        setForceNetworkBannerVisible(true);
+      }
+    } finally {
+      setLoading(false);
+    }
   }, [subjectId]);
+
+  // Fetch subject data on mount / when id changes
+  useEffect(() => {
+    fetchSubject();
+  }, [fetchSubject]);
 
   // Loading state
   if (loading) {
     return (
       <View className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} justify-center items-center`}>
+        <NetworkBanner
+          forceVisible={forceNetworkBannerVisible}
+          onRetry={fetchSubject}
+          onDismiss={() => setForceNetworkBannerVisible(false)}
+        />
         <ActivityIndicator size="large" color="#3B82F6" />
         <Text className={`${isDarkMode ? 'text-white' : 'text-black'} mt-4 font-inter_regular`}>
           Loading subject details...
@@ -69,6 +90,11 @@ const SubjectDetailsWeb = () => {
   if (error || !viewingSubject) {
     return (
       <View className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} justify-center items-center px-4`}>
+        <NetworkBanner
+          forceVisible={forceNetworkBannerVisible}
+          onRetry={fetchSubject}
+          onDismiss={() => setForceNetworkBannerVisible(false)}
+        />
         <Image
           className="w-[100] h-[100] mb-4"
           contentFit="contain"
@@ -101,20 +127,19 @@ const SubjectDetailsWeb = () => {
       ? `${teacher.firstName} ${teacher.middleName} ${teacher.lastName}`
       : `${teacher.firstName} ${teacher.lastName}`;
     
-    // If assigned to all quarters, just show name
-    if (ta.isAssignedToAllQuarters) {
+    // If assigned to all terms, just show name
+    if (ta.isAssignedToAllTerms) {
       return fullName;
     }
     
-    // Otherwise, show name with quarters
-    const quarters = [];
-    if (ta.quarters?.firstQuarter) quarters.push("1st");
-    if (ta.quarters?.secondQuarter) quarters.push("2nd");
-    if (ta.quarters?.thirdQuarter) quarters.push("3rd");
-    if (ta.quarters?.fourthQuarter) quarters.push("4th");
+    // Otherwise, show name with terms
+    const terms = [];
+    if (ta.terms?.[1]) terms.push("1st");
+    if (ta.terms?.[2]) terms.push("2nd");
+    if (ta.terms?.[3]) terms.push("3rd");
     
-    if (quarters.length > 0) {
-      return `${fullName} (${quarters.join(", ")} Quarter${quarters.length > 1 ? "s" : ""})`;
+    if (terms.length > 0) {
+      return `${fullName} (${terms.join(", ")} Term${terms.length > 1 ? "s" : ""})`;
     }
     return fullName;
   }).filter(Boolean).join(", ") || "Not assigned";
@@ -142,6 +167,12 @@ const SubjectDetailsWeb = () => {
   
   return (
     <View className={`flex-1 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
+      <NetworkBanner
+        forceVisible={forceNetworkBannerVisible}
+        onRetry={fetchSubject}
+        onDismiss={() => setForceNetworkBannerVisible(false)}
+      />
+
       <ScrollView showsVerticalScrollIndicator={false}>
         <View className='flex-row mb-4 mt-4 items-center'>
           <TouchableOpacity

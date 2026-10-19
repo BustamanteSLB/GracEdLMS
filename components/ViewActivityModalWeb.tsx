@@ -27,13 +27,12 @@ interface Subject {
   subjectDescription?: string;
   teachers: Array<{
     teacher: User;
-    quarters: {
-      firstQuarter: boolean;
-      secondQuarter: boolean;
-      thirdQuarter: boolean;
-      fourthQuarter: boolean;
+    terms: {
+      1: boolean;
+      2: boolean;
+      3: boolean;
     };
-    isAssignedToAllQuarters: boolean;
+    isAssignedToAllTerms: boolean;
   }>;
   section: string;
   gradeLevel: string;
@@ -47,7 +46,7 @@ interface Grade {
   student: User;
   activity: string;
   subject: string;
-  quarter: string;
+  term: string;
   score: number;
   bonusPoints?: number;
   gradedBy: User;
@@ -63,7 +62,7 @@ interface Activity {
   visibleDate: string;
   deadline: string;
   points: number | null;
-  quarter: string;
+  term: string;
   createdBy: User;
   subject: Subject;
   attachmentPath?: string | null;
@@ -297,7 +296,7 @@ const ViewActivityModalWeb: React.FC<ViewActivityModalWebProps> = ({
                 fontFamily: 'Inter-Regular',
                 color: isDarkMode ? '#6B7280' : '#9CA3AF',
               }}>
-                {activity.subject.section} • {activity.subject.gradeLevel} • {activity.quarter}
+                {activity.subject.section} • {activity.subject.gradeLevel} • {activity.term === '1' ? '1st Term' : activity.term === '2' ? '2nd Term': '3rd Term'}
               </Text>
             </View>
 

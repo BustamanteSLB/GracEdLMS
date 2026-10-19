@@ -11,7 +11,7 @@ import {
   Platform,
   Modal,
   useColorScheme,
-  VirtualizedList,
+  FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import apiClient from '@/app/services/apiClient';
@@ -21,7 +21,10 @@ import { StatusBar } from 'expo-status-bar';
 import { RadioButton, RadioButtonGroup } from '@/components/RadioButton';
 import Checkbox from 'expo-checkbox';
 import Dropdown, { DropdownItem } from '@/components/Dropdown';
-import { useRouter, useFocusEffect } from 'expo-router'; // Add useFocusEffect (ensure useRouter is imported from expo-router if not already)
+import { useRouter, useFocusEffect } from 'expo-router';
+import NetworkBanner from '@/components/NetworkBanner.web';
+
+const ITEMS_PER_PAGE = 10;
 
 interface Subject {
   _id: string;
@@ -30,7 +33,7 @@ interface Subject {
   gradeLevel?: string;
   section?: string;
   schoolYear?: string;
-  subjectImage?: string; // Add this line
+  subjectImage?: string;
 }
 
 interface User {
@@ -80,9 +83,10 @@ interface Quiz {
   sectionDescription?: string;
   questions: Question[];
   timeLimit?: number;
-  quarter: string;
+  term: string;
   quizPoints: number;
   status: 'draft' | 'published' | 'archived' | 'graded' | 'closed';
+  shuffleQuestions?: boolean;
   quizSubmissions: QuizSubmission[];
   createdAt: string;
   updatedAt: string;
@@ -104,8 +108,14 @@ const QuizzesWeb = () => {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSubject, setSelectedSubject] = useState<string>('');
-  const [selectedQuarter, setSelectedQuarter] = useState<string>('');
-  
+  const [selectedTerm, setSelectedTerm] = useState<string>('');
+  const [networkError, setNetworkError] = useState(false);
+
+  // Pagination state
+  const [displayedCount, setDisplayedCount] = useState(ITEMS_PER_PAGE);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const listRef = useRef<any>(null);
+
   // Quiz taking states
   const [takingQuiz, setTakingQuiz] = useState<Quiz | null>(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -115,12 +125,12 @@ const QuizzesWeb = () => {
   const [quizCompleted, setQuizCompleted] = useState(false);
   const [quizResults, setQuizResults] = useState<any>(null);
   const [showInstructions, setShowInstructions] = useState(false);
-  
+
   // Image preview states
   const [imagePreviewModal, setImagePreviewModal] = useState(false);
   const [selectedPreviewImage, setSelectedPreviewImage] = useState<string | null>(null);
   const [imageLoadError, setImageLoadError] = useState<{[key: string]: boolean}>({});
-  
+
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Memoized dropdown options
@@ -128,7 +138,7 @@ const QuizzesWeb = () => {
     const options: DropdownItem[] = [
       { label: 'All Subjects', value: '' }
     ];
-    
+
     subjects.forEach((subject) => {
       const label = `${subject.subjectName}${subject.gradeLevel ? ` - ${subject.gradeLevel}` : ''}${subject.section ? ` (${subject.section})` : ''}`;
       options.push({
@@ -136,30 +146,89 @@ const QuizzesWeb = () => {
         value: subject._id
       });
     });
-    
+
     return options;
   }, [subjects]);
 
-  const quarterFilterOptions: DropdownItem[] = useMemo(() => [
-    { label: 'All Quarters', value: '' },
-    { label: 'First Quarter', value: 'First Quarter' },
-    { label: 'Second Quarter', value: 'Second Quarter' },
-    { label: '3rd Quarter', value: '3rd Quarter' },
-    { label: '4th Quarter', value: '4th Quarter' },
+  const termFilterOptions: DropdownItem[] = useMemo(() => [
+    { label: 'All Terms', value: '' },
+    { label: '1st Term', value: '1' },
+    { label: '2nd Term', value: '2' },
+    { label: '3rd Term', value: '3' },
   ], []);
 
-  // Replace initial useEffect with useFocusEffect to refresh data when screen gains focus
+  const isNetworkError = (err: any) =>
+    err?.message?.toLowerCase?.().includes('network') ||
+    err?.status === 0 ||
+    !err?.response;
+
+  // Displayed (paginated) quizzes
+  const displayedQuizzes = useMemo(
+    () => quizzes.slice(0, displayedCount),
+    [quizzes, displayedCount]
+  );
+  const hasMore = displayedCount < quizzes.length;
+
+  const fetchQuizzes = useCallback(async () => {
+    setLoading(true);
+    setNetworkError(false);
+    try {
+      const params = new URLSearchParams();
+      params.append('status', 'published');
+      if (selectedSubject) params.append('subject', selectedSubject);
+      if (selectedTerm) params.append('term', selectedTerm);
+      if (searchQuery) params.append('search', searchQuery);
+
+      const response = await apiClient.get(`/quizzes?${params.toString()}`);
+      setQuizzes(response.data.data || []);
+      setDisplayedCount(ITEMS_PER_PAGE);
+    } catch (error: any) {
+      console.log('Error fetching quizzes:', error);
+      if (isNetworkError(error)) setNetworkError(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedSubject, selectedTerm, searchQuery]);
+
+  const fetchSubjects = useCallback(async () => {
+    try {
+      const response = await apiClient.get('/subjects');
+      setSubjects(response.data.data || []);
+    } catch (error) {
+      console.error('Error fetching subjects:', error);
+    }
+  }, []);
+
+  // Refresh data when screen gains focus
   useFocusEffect(
     useCallback(() => {
       fetchQuizzes();
       fetchSubjects();
-    }, [selectedSubject, selectedQuarter, searchQuery])
+    }, [fetchQuizzes, fetchSubjects])
   );
-  
-  // Keep the specific filter effect for immediate UI updates when dropdowns change
+
+  // Immediate UI updates when dropdowns change
   useEffect(() => {
     fetchQuizzes();
-  }, [selectedSubject, selectedQuarter]);
+  }, [selectedSubject, selectedTerm]);
+
+  // Reset pagination when filters/search change
+  useEffect(() => {
+    setDisplayedCount(ITEMS_PER_PAGE);
+    try {
+      listRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+    } catch {}
+  }, [selectedSubject, selectedTerm, searchQuery]);
+
+  // Infinite scroll
+  const loadMore = useCallback(() => {
+    if (isLoadingMore || !hasMore) return;
+    setIsLoadingMore(true);
+    setTimeout(() => {
+      setDisplayedCount(prev => Math.min(prev + ITEMS_PER_PAGE, quizzes.length));
+      setIsLoadingMore(false);
+    }, 300);
+  }, [isLoadingMore, hasMore, quizzes.length]);
 
   useEffect(() => {
     if (timeLeft !== null && timeLeft > 0 && quizStarted && !quizCompleted) {
@@ -177,51 +246,17 @@ const QuizzesWeb = () => {
     };
   }, [timeLeft, quizStarted, quizCompleted]);
 
-  const fetchQuizzes = async () => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams();
-      params.append('status', 'published'); // Only get published quizzes for students
-      if (selectedSubject) params.append('subject', selectedSubject);
-      if (selectedQuarter) params.append('quarter', selectedQuarter);
-      if (searchQuery) params.append('search', searchQuery);
-
-      const response = await apiClient.get(`/quizzes?${params.toString()}`);
-      setQuizzes(response.data.data || []);
-    } catch (error) {
-      console.log('Error fetching quizzes:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchSubjects = async () => {
-    try {
-      const response = await apiClient.get('/subjects');
-      // Response already filtered by backend for enrolled subjects only
-      setSubjects(response.data.data || []);
-    } catch (error) {
-      console.error('Error fetching subjects:', error);
-    }
-  };
-
-  // Helper function to validate and get image URL
   const getImageUrl = (imageUrl: string) => {
-    // If it's already a full Firebase URL, return as is
-    if (imageUrl.startsWith('https://storage.googleapis.com/') || 
+    if (imageUrl.startsWith('https://storage.googleapis.com/') ||
         imageUrl.startsWith('https://firebasestorage.googleapis.com/')) {
       return imageUrl;
     }
-    
-    // If it's a legacy local path, try to construct Firebase URL
-    // This is for backward compatibility
+
     if (imageUrl.startsWith('/uploads/') || imageUrl.startsWith('uploads/')) {
       console.warn('Legacy image path detected:', imageUrl);
-      // You might want to handle this case differently based on your migration strategy
-      return null; // or return a placeholder image
+      return null;
     }
-    
-    // If it's already a relative path that might be a Firebase URL
+
     return imageUrl;
   };
 
@@ -272,9 +307,9 @@ const QuizzesWeb = () => {
     setQuizCompleted(false);
     setQuizResults(null);
     setShowInstructions(true);
-    setImageLoadError({}); // Reset image error state
+    setImageLoadError({});
     if (quiz.timeLimit) {
-      setTimeLeft(quiz.timeLimit * 60); // Convert minutes to seconds
+      setTimeLeft(quiz.timeLimit * 60);
     }
   };
 
@@ -308,9 +343,8 @@ const QuizzesWeb = () => {
   const handleSubmitQuiz = async (isAutoSubmit = false) => {
     if (!takingQuiz) return;
 
-    // Skip confirmation if auto-submitting (time ran out)
     if (!isAutoSubmit) {
-      const confirmSubmit = Platform.OS === 'web' 
+      const confirmSubmit = Platform.OS === 'web'
         ? window.confirm('Are you sure you want to submit your quiz? This action cannot be undone.')
         : await new Promise(resolve => {
             Alert.alert(
@@ -334,14 +368,13 @@ const QuizzesWeb = () => {
       setQuizResults(response.data.data);
       setQuizCompleted(true);
       setQuizStarted(false);
-      
+
       if (timerRef.current) {
         clearTimeout(timerRef.current);
       }
 
-      await fetchQuizzes(); // Ensure we await this to update the list immediately after submission
+      await fetchQuizzes();
 
-      // Show notification ONLY if auto-submitted (not manual submission)
       if (isAutoSubmit) {
         const message = 'Your quiz has been submitted.';
         if (Platform.OS === 'web') {
@@ -352,6 +385,7 @@ const QuizzesWeb = () => {
       }
     } catch (error: any) {
       console.error('Error submitting quiz:', error);
+      if (isNetworkError(error)) setNetworkError(true);
       const message = error.response?.data?.message || 'Failed to submit quiz';
       if (Platform.OS === 'web') {
         window.alert(message);
@@ -363,8 +397,6 @@ const QuizzesWeb = () => {
 
   const handleAutoSubmit = () => {
     if (!takingQuiz) return;
-    
-    // Auto-submit when time runs out (pass true to skip confirmation)
     handleSubmitQuiz(true);
   };
 
@@ -383,7 +415,7 @@ const QuizzesWeb = () => {
     if (timerRef.current) {
       clearTimeout(timerRef.current);
     }
-    fetchQuizzes(); // Trigger a refresh when closing the modal to ensure statuses are up to date
+    fetchQuizzes();
   };
 
   const formatTime = (seconds: number) => {
@@ -399,8 +431,7 @@ const QuizzesWeb = () => {
   const renderQuizItem = ({ item }: { item: Quiz }) => {
     const status = getQuizStatus(item);
     const submission = item.quizSubmissions?.find(sub => sub.student === user?._id);
-    
-    // Add these for subject image display
+
     const initials = item.subject?.subjectName ? item.subject.subjectName.slice(0, 2).toUpperCase() : 'QZ';
     const getConsistentColor = (str: string) => {
       let hash = 0;
@@ -411,13 +442,14 @@ const QuizzesWeb = () => {
       return colors[Math.abs(hash) % colors.length];
     };
     const bgColor = getConsistentColor(item.subject?.subjectName || 'Quiz');
-    
+
     return (
       <TouchableOpacity
         style={{
           backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
           borderRadius: 12,
           padding: 16,
+          marginHorizontal: 12,
           marginBottom: 12,
           borderWidth: 1,
           borderColor: isDarkMode ? '#333333' : '#E5E7EB',
@@ -432,7 +464,6 @@ const QuizzesWeb = () => {
       >
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <View style={{ flexDirection: 'row', flex: 1 }}>
-            {/* Subject Image or Icon */}
             {item.subject?.subjectImage ? (
               <Image
                 source={{ uri: item.subject.subjectImage }}
@@ -450,17 +481,16 @@ const QuizzesWeb = () => {
                   alignItems: 'center',
                 }}
               >
-                <Text style={{ 
-                  color: 'white', 
-                  fontSize: 18, 
-                  fontFamily: 'Inter-Bold' 
+                <Text style={{
+                  color: 'white',
+                  fontSize: 18,
+                  fontFamily: 'Inter-Bold'
                 }}>
                   {initials}
                 </Text>
               </View>
             )}
 
-            {/* Content */}
             <View style={{ flex: 1, marginLeft: 12 }}>
               <View className='flex-row items-center mb-1'>
                 <Text
@@ -477,9 +507,9 @@ const QuizzesWeb = () => {
                   {item.title}
                 </Text>
                 {submission && submission.status === 'graded' && (
-                  <Text 
+                  <Text
                     className='font-inter_medium text-xs'
-                    style={{ 
+                    style={{
                       color: isDarkMode ? '#16a34a' : '#22c55e',
                       marginLeft: 8,
                     }}
@@ -508,24 +538,24 @@ const QuizzesWeb = () => {
                     marginRight: 12,
                   }}
                 >
-                  <Text style={{ 
-                    color: 'white', 
-                    fontSize: 12, 
-                    fontFamily: 'Inter-Medium' 
+                  <Text style={{
+                    color: 'white',
+                    fontSize: 12,
+                    fontFamily: 'Inter-Medium'
                   }}>
                     {getStatusText(status)}
                   </Text>
                 </View>
-                <Text style={{ 
-                  fontSize: 12, 
+                <Text style={{
+                  fontSize: 12,
                   fontFamily: 'Inter-Regular',
-                  color: isDarkMode ? '#9CA3AF' : '#6B7280' 
+                  color: isDarkMode ? '#9CA3AF' : '#6B7280'
                 }}>
                   {item.questions.length} questions • {item.quizPoints} points
                 </Text>
                 {item.timeLimit && (
-                  <Text style={{ 
-                    fontSize: 12, 
+                  <Text style={{
+                    fontSize: 12,
                     fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280',
                     marginLeft: 8
@@ -533,11 +563,21 @@ const QuizzesWeb = () => {
                     • {item.timeLimit} min
                   </Text>
                 )}
+                {item.shuffleQuestions && (
+                  <Text style={{
+                    fontSize: 12,
+                    fontFamily: 'Inter-Regular',
+                    color: isDarkMode ? '#9CA3AF' : '#6B7280',
+                    marginLeft: 8
+                  }}>
+                    • Shuffled
+                  </Text>
+                )}
               </View>
-              <Text style={{ 
-                fontSize: 12, 
+              <Text style={{
+                fontSize: 12,
                 fontFamily: 'Inter-Regular',
-                color: isDarkMode ? '#9CA3AF' : '#6B7280' 
+                color: isDarkMode ? '#9CA3AF' : '#6B7280'
               }}>
                 Created: {new Date(item.createdAt).toLocaleDateString()}
               </Text>
@@ -555,10 +595,10 @@ const QuizzesWeb = () => {
                 marginLeft: 8,
               }}
             >
-              <Text style={{ 
-                color: 'white', 
+              <Text style={{
+                color: 'white',
                 fontSize: 12,
-                fontFamily: 'Inter-Medium' 
+                fontFamily: 'Inter-Medium'
               }}>
                 Start
               </Text>
@@ -630,7 +670,6 @@ const QuizzesWeb = () => {
                 resizeMode="contain"
                 onError={() => handleImageError(imageUrl)}
                 onLoad={() => {
-                  // Remove from error state if it loads successfully
                   setImageLoadError(prev => {
                     const newState = { ...prev };
                     delete newState[imageUrl];
@@ -647,7 +686,7 @@ const QuizzesWeb = () => {
 
   const renderQuestion = (question: Question, index: number) => {
     const currentAnswer = getCurrentAnswer(question._id);
-    
+
     return (
       <View
         style={{
@@ -674,7 +713,6 @@ const QuizzesWeb = () => {
 
         <View style={{ marginLeft: 8 }}>
           {question.type === 'essay' ? (
-            // Essay input
             <View>
               <TextInput
                 value={currentAnswer || ''}
@@ -706,7 +744,6 @@ const QuizzesWeb = () => {
               </Text>
             </View>
           ) : question.type === 'short_answer' ? (
-            // Short answer input
             <View>
               <TextInput
                 value={currentAnswer || ''}
@@ -739,7 +776,6 @@ const QuizzesWeb = () => {
               )}
             </View>
           ) : question.type === 'multiple_answers' ? (
-            // For multiple answers, use Expo Checkbox
             <View>
               {question.options.map((option, optionIndex) => (
                 <TouchableOpacity
@@ -752,8 +788,8 @@ const QuizzesWeb = () => {
                     borderRadius: 8,
                     backgroundColor: isDarkMode ? '#333333' : '#F3F4F6',
                     borderWidth: 2,
-                    borderColor: Array.isArray(currentAnswer) && currentAnswer.includes(option.text) 
-                      ? '#3B82F6' 
+                    borderColor: Array.isArray(currentAnswer) && currentAnswer.includes(option.text)
+                      ? '#3B82F6'
                       : 'transparent'
                   }}
                   onPress={() => {
@@ -795,7 +831,6 @@ const QuizzesWeb = () => {
               ))}
             </View>
           ) : (
-            // For single choice questions (multiple_choice, true_false), use RadioButtonGroup
             <RadioButtonGroup
               value={currentAnswer}
               onChange={(value) => handleAnswerChange(question._id, value)}
@@ -832,10 +867,10 @@ const QuizzesWeb = () => {
         </View>
 
         <View style={{ marginTop: 16, alignItems: 'center' }}>
-          <Text style={{ 
-            fontSize: 12, 
+          <Text style={{
+            fontSize: 12,
             fontFamily: 'Inter-Regular',
-            color: isDarkMode ? '#9CA3AF' : '#6B7280' 
+            color: isDarkMode ? '#9CA3AF' : '#6B7280'
           }}>
             Points: {question.itemPoints}
           </Text>
@@ -844,164 +879,197 @@ const QuizzesWeb = () => {
     );
   };
 
-  // VirtualizedList required functions
-  const getItem = (data: Quiz[], index: number) => data[index];
-  const getItemCount = (data: Quiz[]) => data.length;
-  const keyExtractor = (item: Quiz, index: number) => item._id;
-
-  return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB' }}>
-      {/* Header */}
-      <View
+  // ---- List header (scrolls with the list now) ----
+  const listHeader = useMemo(() => (
+    <View
+      style={{
+        backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
+        paddingHorizontal: 20,
+        paddingTop: 20,
+        paddingBottom: 16,
+        marginBottom: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
+      }}
+    >
+      <Text
         style={{
-          backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
-          paddingHorizontal: 20,
-          paddingTop: 20,
-          paddingBottom: 16,
-          borderBottomWidth: 1,
-          borderBottomColor: isDarkMode ? '#333333' : '#E5E7EB',
+          fontSize: 24,
+          fontFamily: 'Inter-Bold',
+          color: isDarkMode ? '#F9FAFB' : '#111827',
+          marginBottom: 16,
         }}
       >
-        <Text
-          style={{
-            fontSize: 24,
-            fontFamily: 'Inter-Bold',
-            color: isDarkMode ? '#F9FAFB' : '#111827',
-            marginBottom: 16,
-          }}
-        >
-          My Quizzes
-        </Text>
+        My Quizzes
+      </Text>
 
-        {/* Filters */}
-        <View>
-          <View style={{ flexDirection: 'row', marginBottom: 12 }}>
-            <View style={{ flex: 1, marginRight: 8 }}>
-              <TextInput
-                placeholder="Search quizzes..."
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                style={{
-                  backgroundColor: isDarkMode ? '#2A2A2A' : '#F3F4F6',
-                  borderRadius: 8,
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                  color: isDarkMode ? '#E0E0E0' : '#111827',
-                  fontFamily: 'Inter-Regular',
-                }}
-                placeholderTextColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
-              />
-            </View>
-            <TouchableOpacity
-              onPress={fetchQuizzes}
+      <View>
+        <View style={{ flexDirection: 'row', marginBottom: 12 }}>
+          <View style={{ flex: 1, marginRight: 8 }}>
+            <TextInput
+              placeholder="Search quizzes..."
+              value={searchQuery}
+              onChangeText={setSearchQuery}
               style={{
-                backgroundColor: '#10B981',
-                paddingHorizontal: 16,
-                paddingVertical: 8,
+                backgroundColor: isDarkMode ? '#2A2A2A' : '#F3F4F6',
                 borderRadius: 8,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                color: isDarkMode ? '#E0E0E0' : '#111827',
+                fontFamily: 'Inter-Regular',
               }}
+              placeholderTextColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
+            />
+          </View>
+          <TouchableOpacity
+            onPress={fetchQuizzes}
+            style={{
+              backgroundColor: '#10B981',
+              paddingHorizontal: 16,
+              paddingVertical: 8,
+              borderRadius: 8,
+            }}
+          >
+            <Text
+              className={`font-psemibold ${isDarkMode ? 'text-[#E0E0E0]' : 'text-white'}`}
             >
-              <Text 
-                className={`font-psemibold ${isDarkMode ? 'text-[#E0E0E0]' : 'text-white'}`}
-              >
-                Search
-              </Text>
-            </TouchableOpacity>
+              Search
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{
+              fontSize: 12,
+              fontFamily: 'Inter-Medium',
+              color: isDarkMode ? '#E0E0E0' : '#6B7280',
+              marginBottom: 4
+            }}>
+              Subject
+            </Text>
+            <Dropdown
+              data={subjectFilterOptions}
+              selectedValue={selectedSubject}
+              onValueChange={setSelectedSubject}
+              placeholder="All Subjects"
+            />
           </View>
 
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            {/* Subject Dropdown - REPLACED PICKER */}
-            <View style={{ flex: 1 }}>
-              <Text style={{ 
-                fontSize: 12, 
-                fontFamily: 'Inter-Medium',
-                color: isDarkMode ? '#E0E0E0' : '#6B7280', 
-                marginBottom: 4 
-              }}>
-                Subject
-              </Text>
-              <Dropdown
-                data={subjectFilterOptions}
-                selectedValue={selectedSubject}
-                onValueChange={setSelectedSubject}
-                placeholder="All Subjects"
-              />
-            </View>
-
-            {/* Quarter Dropdown - REPLACED PICKER */}
-            <View style={{ flex: 1 }}>
-              <Text style={{ 
-                fontSize: 12, 
-                fontFamily: 'Inter-Medium',
-                color: isDarkMode ? '#E0E0E0' : '#6B7280', 
-                marginBottom: 4 
-              }}>
-                Quarter
-              </Text>
-              <Dropdown
-                data={quarterFilterOptions}
-                selectedValue={selectedQuarter}
-                onValueChange={setSelectedQuarter}
-                placeholder="All Quarters"
-              />
-            </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{
+              fontSize: 12,
+              fontFamily: 'Inter-Medium',
+              color: isDarkMode ? '#E0E0E0' : '#6B7280',
+              marginBottom: 4
+            }}>
+              Term
+            </Text>
+            <Dropdown
+              data={termFilterOptions}
+              selectedValue={selectedTerm}
+              onValueChange={setSelectedTerm}
+              placeholder="All Terms"
+            />
           </View>
         </View>
       </View>
+    </View>
+  ), [isDarkMode, searchQuery, selectedSubject, selectedTerm, subjectFilterOptions, termFilterOptions, fetchQuizzes]);
 
-      {/* Content */}
-      <View style={{ flex: 1, padding: 20 }}>
-        {loading ? (
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <ActivityIndicator size="large" color="#3B82F6" />
-            <Text style={{ 
-              marginTop: 16, 
-              fontFamily: 'Inter-Regular',
-              color: isDarkMode ? '#9CA3AF' : '#6B7280' 
-            }}>
-              Loading quizzes...
-            </Text>
-          </View>
-        ) : quizzes.length > 0 ? (
-          <VirtualizedList
-            data={quizzes}
-            renderItem={renderQuizItem}
-            keyExtractor={keyExtractor}
-            getItem={getItem}
-            getItemCount={getItemCount}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingBottom: 20 }}
-            initialNumToRender={10}
-            maxToRenderPerBatch={10}
-            windowSize={10}
-            removeClippedSubviews={true}
-            extraData={isDarkMode}
-          />
-        ) : (
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <Image
-              source={require('@/assets/images/quiz.png')}
-              style={{ width: 64, height: 64, marginBottom: 16 }}
-            />
-            <Text style={{ 
-              fontSize: 18, 
-              fontFamily: 'Inter-SemiBold',
-              color: isDarkMode ? '#9CA3AF' : '#6B7280', 
-              marginBottom: 8 
-            }}>
-              No quizzes available
-            </Text>
-            <Text style={{ 
-              fontSize: 14, 
-              fontFamily: 'Inter-Regular',
-              color: isDarkMode ? '#6B7280' : '#9CA3AF', 
-              textAlign: 'center' 
-            }}>
-              Check back later for new quizzes
-            </Text>
-          </View>
-        )}
+  // ---- List empty ----
+  const listEmpty = useMemo(() => {
+    if (loading) {
+      return (
+        <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+          <ActivityIndicator size="large" color="#3B82F6" />
+          <Text style={{
+            marginTop: 16,
+            fontFamily: 'Inter-Regular',
+            color: isDarkMode ? '#9CA3AF' : '#6B7280'
+          }}>
+            Loading quizzes...
+          </Text>
+        </View>
+      );
+    }
+    return (
+      <View style={{ paddingVertical: 40, alignItems: 'center', paddingHorizontal: 20 }}>
+        <Image
+          source={require('@/assets/images/quiz.png')}
+          style={{ width: 64, height: 64, marginBottom: 16 }}
+        />
+        <Text style={{
+          fontSize: 18,
+          fontFamily: 'Inter-SemiBold',
+          color: isDarkMode ? '#9CA3AF' : '#6B7280',
+          marginBottom: 8
+        }}>
+          No quizzes available
+        </Text>
+        <Text style={{
+          fontSize: 14,
+          fontFamily: 'Inter-Regular',
+          color: isDarkMode ? '#6B7280' : '#9CA3AF',
+          textAlign: 'center'
+        }}>
+          Check back later for new quizzes
+        </Text>
       </View>
+    );
+  }, [loading, isDarkMode]);
+
+  // ---- List footer ----
+  const listFooter = useMemo(() => (
+    <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+      {isLoadingMore ? (
+        <>
+          <ActivityIndicator size="small" color="#3B82F6" />
+          <Text style={{
+            marginTop: 8,
+            fontSize: 12,
+            fontFamily: 'Inter-Regular',
+            color: isDarkMode ? '#9CA3AF' : '#6B7280',
+          }}>
+            Loading more quizzes...
+          </Text>
+        </>
+      ) : !hasMore && quizzes.length > ITEMS_PER_PAGE ? (
+        <Text style={{
+          fontSize: 12,
+          fontFamily: 'Inter-Regular',
+          color: isDarkMode ? '#6B7280' : '#9CA3AF',
+        }}>
+          All {quizzes.length} quizzes loaded
+        </Text>
+      ) : null}
+    </View>
+  ), [isLoadingMore, isDarkMode, hasMore, quizzes.length]);
+
+  const keyExtractor = useCallback((item: Quiz) => item._id, []);
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB' }}>
+      {/* Entire screen scrolls as one unit via FlatList */}
+      <FlatList
+        ref={listRef}
+        data={displayedQuizzes}
+        renderItem={renderQuizItem}
+        keyExtractor={keyExtractor}
+        showsVerticalScrollIndicator={false}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.5}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={listEmpty}
+        ListFooterComponent={listFooter}
+        contentContainerStyle={{ paddingBottom: 20, flexGrow: 1 }}
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={10}
+        removeClippedSubviews={true}
+        extraData={isDarkMode}
+        keyboardShouldPersistTaps="handled"
+      />
 
       {/* Quiz Taking Modal */}
       <Modal
@@ -1011,7 +1079,6 @@ const QuizzesWeb = () => {
         onRequestClose={closeQuizModal}
       >
         <View style={{ flex: 1, backgroundColor: isDarkMode ? '#1A1A1A' : '#F9FAFB' }}>
-          {/* Instructions Screen */}
           {showInstructions && takingQuiz && (
             <View style={{ flex: 1, padding: 20, justifyContent: 'center' }}>
               <View
@@ -1050,80 +1117,90 @@ const QuizzesWeb = () => {
                 )}
 
                 <View style={{ marginBottom: 20 }}>
-                  <Text style={{ 
-                    fontSize: 16, 
+                  <Text style={{
+                    fontSize: 16,
                     fontFamily: 'Inter-Medium',
                     color: isDarkMode ? '#F9FAFB' : '#111827',
-                    marginBottom: 8 
+                    marginBottom: 8
                   }}>
                     Quiz Information:
                   </Text>
-                  <Text style={{ 
-                    fontSize: 14, 
+                  <Text style={{
+                    fontSize: 14,
                     fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280',
-                    marginBottom: 4 
+                    marginBottom: 4
                   }}>
                     • Questions: {takingQuiz.questions.length}
                   </Text>
-                  <Text style={{ 
-                    fontSize: 14, 
+                  <Text style={{
+                    fontSize: 14,
                     fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280',
-                    marginBottom: 4 
+                    marginBottom: 4
                   }}>
                     • Total Points: {takingQuiz.quizPoints}
                   </Text>
                   {takingQuiz.timeLimit && (
-                    <Text style={{ 
-                      fontSize: 14, 
+                    <Text style={{
+                      fontSize: 14,
                       fontFamily: 'Inter-Regular',
                       color: isDarkMode ? '#9CA3AF' : '#6B7280',
-                      marginBottom: 4 
+                      marginBottom: 4
                     }}>
                       • Time Limit: {takingQuiz.timeLimit} minutes
+                    </Text>
+                  )}
+                  {takingQuiz.shuffleQuestions && (
+                    <Text style={{
+                      fontSize: 14,
+                      fontFamily: 'Inter-Regular',
+                      color: isDarkMode ? '#9CA3AF' : '#6B7280',
+                      marginBottom: 4
+                    }}>
+                      • Questions are shown in a randomized order
                     </Text>
                   )}
                 </View>
 
                 <View style={{ marginBottom: 20 }}>
-                  <Text style={{ 
-                    fontSize: 16, 
+                  <Text style={{
+                    fontSize: 16,
                     fontFamily: 'Inter-Medium',
                     color: isDarkMode ? '#F9FAFB' : '#111827',
-                    marginBottom: 8 
+                    marginBottom: 8
                   }}>
                     Instructions:
                   </Text>
-                  <Text style={{ 
-                    fontSize: 14, 
+                  <Text style={{
+                    fontSize: 14,
                     fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280',
-                    marginBottom: 4 
+                    marginBottom: 4
                   }}>
                     • Read each question carefully
                   </Text>
-                  <Text style={{ 
-                    fontSize: 14, 
+                  <Text style={{
+                    fontSize: 14,
                     fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280',
-                    marginBottom: 4 
+                    marginBottom: 4
                   }}>
                     • You can navigate between questions using the navigation buttons
                   </Text>
-                  <Text style={{ 
-                    fontSize: 14, 
+                  <Text style={{
+                    fontSize: 14,
                     fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280',
-                    marginBottom: 4 
+                    marginBottom: 4
                   }}>
                     • Make sure to submit your quiz before time runs out
                   </Text>
-                  <Text style={{ 
-                    fontSize: 14, 
+                  <Text style={{
+                    fontSize: 14,
                     fontFamily: 'Inter-Regular',
                     color: isDarkMode ? '#9CA3AF' : '#6B7280',
-                    marginBottom: 4 
+                    marginBottom: 4
                   }}>
                     • Your answers will be automatically saved as you progress
                   </Text>
@@ -1140,10 +1217,10 @@ const QuizzesWeb = () => {
                       alignItems: 'center',
                     }}
                   >
-                    <Text style={{ 
-                      color: 'white', 
+                    <Text style={{
+                      color: 'white',
                       fontFamily: 'Inter-Medium',
-                      fontSize: 16 
+                      fontSize: 16
                     }}>
                       Cancel
                     </Text>
@@ -1158,10 +1235,10 @@ const QuizzesWeb = () => {
                       alignItems: 'center',
                     }}
                   >
-                    <Text style={{ 
-                      color: 'white', 
+                    <Text style={{
+                      color: 'white',
                       fontFamily: 'Inter-Medium',
-                      fontSize: 16 
+                      fontSize: 16
                     }}>
                       Begin Quiz
                     </Text>
@@ -1171,10 +1248,8 @@ const QuizzesWeb = () => {
             </View>
           )}
 
-          {/* Quiz Taking Screen */}
           {quizStarted && takingQuiz && !quizCompleted && (
             <View style={{ flex: 1 }}>
-              {/* Header with timer */}
               <View
                 style={{
                   backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
@@ -1212,7 +1287,7 @@ const QuizzesWeb = () => {
                       style={{
                         fontSize: 18,
                         fontFamily: 'Inter-Bold',
-                        color: timeLeft <= 300 ? '#EF4444' : '#10B981', // Red when 5 minutes or less
+                        color: timeLeft <= 300 ? '#EF4444' : '#10B981',
                       }}
                     >
                       {formatTime(timeLeft)}
@@ -1228,10 +1303,10 @@ const QuizzesWeb = () => {
                       marginTop: 4,
                     }}
                   >
-                    <Text style={{ 
-                      color: 'white', 
+                    <Text style={{
+                      color: 'white',
                       fontFamily: 'Inter-Medium',
-                      fontSize: 12 
+                      fontSize: 12
                     }}>
                       Exit
                     </Text>
@@ -1239,12 +1314,10 @@ const QuizzesWeb = () => {
                 </View>
               </View>
 
-              {/* Question */}
               <ScrollView style={{ flex: 1, padding: 20 }}>
                 {renderQuestion(takingQuiz.questions[currentQuestionIndex], currentQuestionIndex)}
               </ScrollView>
 
-              {/* Navigation */}
               <View
                 style={{
                   backgroundColor: isDarkMode ? '#1E1E1E' : '#FFFFFF',
@@ -1266,19 +1339,19 @@ const QuizzesWeb = () => {
                     borderRadius: 8,
                   }}
                 >
-                  <Text style={{ 
-                    color: 'white', 
-                    fontFamily: 'Inter-Medium' 
+                  <Text style={{
+                    color: 'white',
+                    fontFamily: 'Inter-Medium'
                   }}>
                     Previous
                   </Text>
                 </TouchableOpacity>
 
                 <View style={{ flex: 1, alignItems: 'center' }}>
-                  <Text style={{ 
-                    fontSize: 12, 
+                  <Text style={{
+                    fontSize: 12,
                     fontFamily: 'Inter-Regular',
-                    color: isDarkMode ? '#9CA3AF' : '#6B7280' 
+                    color: isDarkMode ? '#9CA3AF' : '#6B7280'
                   }}>
                     Answered: {studentAnswers.length} / {takingQuiz.questions.length}
                   </Text>
@@ -1294,9 +1367,9 @@ const QuizzesWeb = () => {
                       borderRadius: 8,
                     }}
                   >
-                    <Text style={{ 
-                      color: 'white', 
-                      fontFamily: 'Inter-Medium' 
+                    <Text style={{
+                      color: 'white',
+                      fontFamily: 'Inter-Medium'
                     }}>
                       Next
                     </Text>
@@ -1311,9 +1384,9 @@ const QuizzesWeb = () => {
                       borderRadius: 8,
                     }}
                   >
-                    <Text style={{ 
-                      color: 'white', 
-                      fontFamily: 'Inter-Medium' 
+                    <Text style={{
+                      color: 'white',
+                      fontFamily: 'Inter-Medium'
                     }}>
                       Submit Quiz
                     </Text>
@@ -1323,7 +1396,6 @@ const QuizzesWeb = () => {
             </View>
           )}
 
-          {/* Results Screen */}
           {quizCompleted && quizResults && takingQuiz && (
             <View style={{ flex: 1, padding: 20, justifyContent: 'center' }}>
               <View
@@ -1387,10 +1459,10 @@ const QuizzesWeb = () => {
                     borderRadius: 8,
                   }}
                 >
-                  <Text style={{ 
-                    color: 'white', 
+                  <Text style={{
+                    color: 'white',
                     fontFamily: 'Inter-Medium',
-                    fontSize: 16 
+                    fontSize: 16
                   }}>
                     Close
                   </Text>
@@ -1433,7 +1505,7 @@ const QuizzesWeb = () => {
               tintColor="white"
             />
           </TouchableOpacity>
-          
+
           <TouchableOpacity
             style={{ flex: 1, justifyContent: 'center', alignItems: 'center', width: '100%' }}
             onPress={() => setImagePreviewModal(false)}
@@ -1455,8 +1527,7 @@ const QuizzesWeb = () => {
               />
             )}
           </TouchableOpacity>
-          
-          {/* Optional: Add a hint text */}
+
           <View style={{
             position: 'absolute',
             bottom: 40,
@@ -1476,6 +1547,15 @@ const QuizzesWeb = () => {
           </View>
         </View>
       </Modal>
+
+      {/* Animated network banner overlay */}
+      <NetworkBanner
+        forceVisible={networkError}
+        onRetry={() => {
+          setNetworkError(false);
+          fetchQuizzes();
+        }}
+      />
 
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
     </SafeAreaView>

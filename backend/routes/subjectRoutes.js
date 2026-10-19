@@ -14,6 +14,8 @@ const {
   bulkEnrollStudents,
   uploadSubjectImage,
   deleteSubjectImage,
+  getActiveSchoolYear,
+  setActiveSchoolYear,
 } = require("../controllers/subjectController");
 const { protect, authorize } = require("../middleware/authMiddleware");
 
@@ -26,15 +28,22 @@ router
   .post(authorize("Admin", "Teacher"), createSubject)
   .get(getAllSubjects);
 
+router.get("/active-school-year", getActiveSchoolYear);
+router.put("/active-school-year", authorize("Admin"), setActiveSchoolYear);
+
 router
   .route("/:id")
   .get(getSubject)
   .put(authorize("Admin", "Teacher"), updateSubject)
   .delete(authorize("Admin", "Teacher"), deleteSubject);
 
-// Archive management routes
-router.put("/:id/restore", authorize("Admin"), restoreSubject);
-router.delete("/:id/permanent", authorize("Admin"), permanentDeleteSubject);
+// Archive management routes (Admin: any subject; Teacher: only assigned subjects)
+router.put("/:id/restore", authorize("Admin", "Teacher"), restoreSubject);
+router.delete(
+  "/:id/permanent",
+  authorize("Admin", "Teacher"),
+  permanentDeleteSubject,
+);
 
 router.put("/:subjectId/assign-teacher", authorize("Admin"), assignTeacher);
 router.put("/:subjectId/unassign-teacher", authorize("Admin"), unassignTeacher);

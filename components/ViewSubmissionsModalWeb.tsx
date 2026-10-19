@@ -28,13 +28,12 @@ interface Subject {
   subjectDescription?: string;
   teachers: Array<{
     teacher: User;
-    quarters: {
-      firstQuarter: boolean;
-      secondQuarter: boolean;
-      thirdQuarter: boolean;
-      fourthQuarter: boolean;
+    terms: {
+      1: boolean,
+      2: boolean,
+      3: boolean,
     };
-    isAssignedToAllQuarters: boolean;
+    isAssignedToAllTerms: boolean;
   }>;
   section: string;
   gradeLevel: string;
@@ -48,7 +47,7 @@ interface Grade {
   student: User;
   activity: string;
   subject: string;
-  quarter: string;
+  term: string;
   score: number;
   bonusPoints?: number;
   gradedBy: User;
@@ -74,7 +73,7 @@ interface Activity {
   visibleDate: string;
   deadline: string;
   points: number | null;
-  quarter: string;
+  term: string;
   createdBy: User;
   subject: Subject;
   attachmentPath?: string | null;
@@ -217,12 +216,17 @@ const ViewSubmissionsModalWeb: React.FC<ViewSubmissionsModalWebProps> = ({
         [submission._id]: { ...prev[submission._id], isSubmitting: true }
       }));
 
+      const term = ["1", "2", "3"].includes(String(activity.term))
+        ? String(activity.term)
+        : "1";
+
       if (existingGrade) {
         // Update existing grade
         await apiClient.put(`/grades/${existingGrade._id}`, {
           score,
           bonusPoints,
           comments: commentsValue || undefined,
+          term,
         });
       } else {
         // Create new grade
@@ -231,6 +235,7 @@ const ViewSubmissionsModalWeb: React.FC<ViewSubmissionsModalWebProps> = ({
           score,
           bonusPoints,
           comments: commentsValue || undefined,
+          term,
         });
       }
 
@@ -389,7 +394,7 @@ const ViewSubmissionsModalWeb: React.FC<ViewSubmissionsModalWebProps> = ({
                       color: isDarkMode ? '#9CA3AF' : '#6B7280',
                       marginBottom: 4,
                     }}>
-                      {activity.subject.subjectName} • {activity.subject.section} • {activity.quarter}
+                      {activity.subject.subjectName} • {activity.subject.section} • {activity.term === '1' ? '1st Term' : activity.term === '2' ? '2nd Term' : '3rd Term'}
                     </Text>
                     <Text style={{ 
                       fontSize: 14, 

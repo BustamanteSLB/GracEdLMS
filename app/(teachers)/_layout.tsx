@@ -26,11 +26,7 @@ export default function DrawerLayout() {
         drawerContent={(props) => <CustomDrawerContent {...props} />}
         screenOptions={({ navigation }) => ({
           drawerActiveTintColor: 'black',
-          drawerActiveBackgroundColor: Platform.select({
-            android: '#4ADE80',
-            ios: '#93C5FD',
-            web: '#A78BFA'
-          }),
+          drawerActiveBackgroundColor: '#93C5FD',
           drawerHideStatusBarOnOpen: false,
           drawerInactiveTintColor: isDarkMode ? '#E0E0E0' : 'black',
           headerLeft: () => (
@@ -54,11 +50,7 @@ export default function DrawerLayout() {
               fontFamily: 'Inter-SemiBold'
             },           
             headerStyle: {
-              backgroundColor: Platform.select({
-                android: '#22C55E',
-                ios: '#3B82F6',
-                web: '#6D28D9',
-              }),
+              backgroundColor: '#4276B4',
             },
             headerTintColor: 'white', 
             headerTitleAlign: 'left',             
@@ -86,11 +78,7 @@ export default function DrawerLayout() {
               fontFamily: 'Inter-SemiBold'
             },            
             headerStyle: {
-              backgroundColor: Platform.select({
-                android: '#22C55E',
-                ios: '#3B82F6',
-                web: '#6D28D9',
-              }),
+              backgroundColor: '#4276B4',
             },
             headerTintColor: 'white', 
             headerTitleAlign: 'left',             
@@ -118,11 +106,7 @@ export default function DrawerLayout() {
               fontFamily: 'Inter-SemiBold'
             },
             headerStyle: {
-              backgroundColor: Platform.select({
-                android: '#22C55E',
-                ios: '#3B82F6',
-                web: '#6D28D9',
-              }),
+              backgroundColor: '#4276B4',
             },
             headerTintColor: 'white', 
             headerTitleAlign: 'left',             
@@ -152,11 +136,7 @@ export default function DrawerLayout() {
             },
             drawerItemStyle: { display: 'none' },
             headerStyle: {
-              backgroundColor: Platform.select({
-                android: '#22C55E',
-                ios: '#3B82F6',
-                web: '#6D28D9',
-              }),
+              backgroundColor: '#4276B4',
             },
             headerTintColor: 'white', 
             headerTitleAlign: 'left',             
@@ -184,11 +164,7 @@ export default function DrawerLayout() {
               fontFamily: 'Inter-SemiBold'
             },  
             headerStyle: {
-              backgroundColor: Platform.select({
-                android: '#22C55E',
-                ios: '#3B82F6',
-                web: '#6D28D9',
-              }),
+              backgroundColor: '#4276B4',
             },
             headerTintColor: 'white', 
             headerTitleAlign: 'left',             
@@ -217,11 +193,7 @@ export default function DrawerLayout() {
               fontFamily: 'Inter-SemiBold'
             },  
             headerStyle: {
-              backgroundColor: Platform.select({
-                android: '#22C55E',
-                ios: '#3B82F6',
-                web: '#6D28D9',
-              }),
+              backgroundColor: '#4276B4',
             },
             headerTintColor: 'white', 
             headerTitleAlign: 'left',             
@@ -252,11 +224,7 @@ export default function DrawerLayout() {
             },
             headerShown: false,  
             headerStyle: {
-              backgroundColor: Platform.select({
-                android: '#22C55E',
-                ios: '#3B82F6',
-                web: '#6D28D9',
-              }),
+              backgroundColor: '#4276B4',
             },
             headerTintColor: 'white', 
             headerTitleAlign: 'left',             
@@ -287,11 +255,7 @@ export default function DrawerLayout() {
             },
             headerShown: false,  
             headerStyle: {
-              backgroundColor: Platform.select({
-                android: '#22C55E',
-                ios: '#3B82F6',
-                web: '#6D28D9',
-              }),
+              backgroundColor: '#4276B4',
             },
             headerTintColor: 'white', 
             headerTitleAlign: 'left',             
@@ -322,11 +286,7 @@ export default function DrawerLayout() {
             },
             headerShown: false,  
             headerStyle: {
-              backgroundColor: Platform.select({
-                android: '#22C55E',
-                ios: '#3B82F6',
-                web: '#6D28D9',
-              }),
+              backgroundColor: '#4276B4',
             },
             headerTintColor: 'white', 
             headerTitleAlign: 'left',             
@@ -354,11 +314,7 @@ export default function DrawerLayout() {
               fontFamily: 'Inter-SemiBold'
             },            
             headerStyle: {
-              backgroundColor: Platform.select({
-                android: '#22C55E',
-                ios: '#3B82F6',
-                web: '#6D28D9',
-              }),
+              backgroundColor: '#4276B4',
             },
             headerTintColor: 'white', 
             headerTitleAlign: 'left',             
@@ -388,11 +344,7 @@ export default function DrawerLayout() {
             },            
             drawerItemStyle: { display: 'none' },
             headerStyle: {
-              backgroundColor: Platform.select({
-                android: '#22C55E',
-                ios: '#3B82F6',
-                web: '#6D28D9',
-              }),
+              backgroundColor: '#4276B4',
             },
             headerTintColor: 'white', 
             headerTitleAlign: 'left',             
@@ -404,6 +356,64 @@ export default function DrawerLayout() {
               })
             },
             title:"Subject Details",
+          }}
+        />
+        <Drawer.Screen
+          name="subject-archives"
+          options={{
+            drawerIcon:({focused})=>(
+              <Image
+                className='w-[24] h-[24]'
+                source={require('@/assets/icons/archive.png')}
+                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
+              />
+            ),
+            drawerLabel: "Archived Subjects",
+            drawerLabelStyle:{
+              fontFamily: 'Inter-SemiBold'
+            },            
+            headerStyle: {
+              backgroundColor: '#4276B4',
+            },
+            headerTintColor: 'white', 
+            headerTitleAlign: 'left',             
+            headerTitleStyle: {
+              fontFamily: 'Poppins-Bold',
+              marginTop: Platform.select({
+                web: 0,
+                default: 5
+              })
+            },
+            title:"Archived Subjects",
+          }}
+        />
+        <Drawer.Screen
+          name="quiz-archives"
+          options={{
+            drawerIcon:({focused})=>(
+              <Image
+                className='w-[24] h-[24]'
+                source={require('@/assets/icons/archive.png')}
+                tintColor={focused ? 'black' : (isDarkMode ? '#E0E0E0' : 'black')}
+              />
+            ),
+            drawerLabel: "Archived Quizzes",
+            drawerLabelStyle:{
+              fontFamily: 'Inter-SemiBold'
+            },            
+            headerStyle: {
+              backgroundColor: '#4276B4',
+            },
+            headerTintColor: 'white', 
+            headerTitleAlign: 'left',             
+            headerTitleStyle: {
+              fontFamily: 'Poppins-Bold',
+              marginTop: Platform.select({
+                web: 0,
+                default: 5
+              })
+            },
+            title:"Archived Quizzes",
           }}
         />
         <Drawer.Screen
@@ -420,11 +430,7 @@ export default function DrawerLayout() {
               fontFamily: 'Inter-SemiBold'
             },            
             headerStyle: {
-              backgroundColor: Platform.select({
-                android: '#22C55E',
-                ios: '#3B82F6',
-                web: '#6D28D9',
-              }),
+              backgroundColor: '#4276B4',
             },
             headerTintColor: 'white', 
             headerTitleAlign: 'left',             
@@ -452,11 +458,7 @@ export default function DrawerLayout() {
               fontFamily: 'Inter-SemiBold'
             },            
             headerStyle: {
-              backgroundColor: Platform.select({
-                android: '#22C55E',
-                ios: '#3B82F6',
-                web: '#6D28D9',
-              }),
+              backgroundColor: '#4276B4',
             },
             headerTintColor: 'white', 
             headerTitleAlign: 'left',             

@@ -103,20 +103,19 @@ const SubjectDetailsWeb = () => {
       ? `${teacher.firstName} ${teacher.middleName} ${teacher.lastName}`
       : `${teacher.firstName} ${teacher.lastName}`;
     
-    // If assigned to all quarters, just show name
-    if (ta.isAssignedToAllQuarters) {
+    // If assigned to all terms, just show name
+    if (ta.isAssignedToAllTerms) {
       return fullName;
     }
     
-    // Otherwise, show name with quarters
-    const quarters = [];
-    if (ta.quarters.firstQuarter) quarters.push("1st");
-    if (ta.quarters.secondQuarter) quarters.push("2nd");
-    if (ta.quarters.thirdQuarter) quarters.push("3rd");
-    if (ta.quarters.fourthQuarter) quarters.push("4th");
+    // Otherwise, show name with terms
+    const terms = [];
+    if (ta.terms?.[1]) terms.push("1st");
+    if (ta.terms?.[2]) terms.push("2nd");
+    if (ta.terms?.[3]) terms.push("3rd");
     
-    if (quarters.length > 0) {
-      return `${fullName} (${quarters.join(", ")} Quarter${quarters.length > 1 ? "s" : ""})`;
+    if (terms.length > 0) {
+      return `${fullName} (${terms.join(", ")} Term${terms.length > 1 ? "s" : ""})`;
     }
     return fullName;
   }).join(", ") || "Not assigned";

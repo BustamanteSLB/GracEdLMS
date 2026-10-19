@@ -22,6 +22,7 @@ import EditSchoolInfoModal from '@/components/EditSchoolInfoModal';
 import ImageUploadModal from '@/components/ImageUploadModal';
 import ManageLinksModal from '@/components/ManageLinksModal';
 import ImagePreviewModal from '@/components/ImagePreviewModal';
+import NetworkBanner from '@/components/NetworkBanner.web';
 
 cssInterop(Image, { className: 'style' });
 
@@ -58,6 +59,12 @@ interface SchoolData {
     caption: string;
     uploadedAt: Date;
   }>;
+  galleryVideos: Array<{
+    _id: string;
+    url: string;
+    caption: string;
+    uploadedAt: Date;
+  }>;
 }
 
 const SchoolPageWeb: React.FC = () => {
@@ -70,6 +77,9 @@ const SchoolPageWeb: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [schoolData, setSchoolData] = useState<SchoolData | null>(null);
 
+  // Network banner state
+  const [forceNetworkBannerVisible, setForceNetworkBannerVisible] = useState(false);
+
   // Modal states
   const [editInfoModalVisible, setEditInfoModalVisible] = useState(false);
   const [imageUploadModalVisible, setImageUploadModalVisible] = useState(false);
@@ -80,15 +90,30 @@ const SchoolPageWeb: React.FC = () => {
   const [previewModalVisible, setPreviewModalVisible] = useState(false);
   const [previewImageUrl, setPreviewImageUrl] = useState('');
 
-  // Fetch school data
-  const fetchSchoolData = async () => {
+  const [videoThumbnails, setVideoThumbnails] = useState<{ [key: string]: string }>({});
+
+  const [studentCount, setStudentCount] = useState(0);
+  const [teacherCount, setTeacherCount] = useState(0);
+
+  // Fetch school data from API
+  const fetchSchoolData = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await apiClient.get('/school');
+
+      const [schoolResponse, statsResponse] = await Promise.all([
+        apiClient.get('/school'),
+        apiClient.get('/school/stats'),
+      ]);
       
-      if (response.data.success) {
-        setSchoolData(response.data.data);
+      if (schoolResponse.data.success) {
+        setSchoolData(schoolResponse.data.data);
       }
+
+      if (statsResponse.data.success) {
+        setStudentCount(statsResponse.data.data?.studentCount || 0);
+        setTeacherCount(statsResponse.data.data?.teacherCount || 0);
+      }
+      setForceNetworkBannerVisible(false);
     } catch (error: any) {
       console.error('Error fetching school data:', error);
       const errorMessage = error.response?.data?.message || 'Failed to load school information';
@@ -98,19 +123,28 @@ const SchoolPageWeb: React.FC = () => {
       } else {
         Alert.alert('Error', errorMessage);
       }
+
+      const isNetworkError =
+        !error?.response ||
+        error?.code === 'ECONNABORTED' ||
+        error?.message?.toLowerCase().includes('network') ||
+        error?.message?.toLowerCase().includes('timeout');
+      if (isNetworkError) {
+        setForceNetworkBannerVisible(true);
+      }
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchSchoolData();
-  }, []);
+  }, [fetchSchoolData]);
 
   useFocusEffect(
     useCallback(() => {
       fetchSchoolData();
-    }, [])
+    }, [fetchSchoolData])
   );
 
   // Handle image upload
@@ -140,6 +174,15 @@ const SchoolPageWeb: React.FC = () => {
         alert(`Error: ${errorMessage}`);
       } else {
         Alert.alert('Error', errorMessage);
+      }
+
+      const isNetworkError =
+        !error?.response ||
+        error?.code === 'ECONNABORTED' ||
+        error?.message?.toLowerCase().includes('network') ||
+        error?.message?.toLowerCase().includes('timeout');
+      if (isNetworkError) {
+        setForceNetworkBannerVisible(true);
       }
     }
   };
@@ -193,8 +236,113 @@ const SchoolPageWeb: React.FC = () => {
       } else {
         Alert.alert('Error', errorMessage);
       }
+
+      const isNetworkError =
+        !error?.response ||
+        error?.code === 'ECONNABORTED' ||
+        error?.message?.toLowerCase().includes('network') ||
+        error?.message?.toLowerCase().includes('timeout');
+      if (isNetworkError) {
+        setForceNetworkBannerVisible(true);
+      }
     }
   };
+
+  // Handle delete gallery video
+  const handleDeleteGalleryVideo = async (videoId: string) => {
+    const confirmDelete = Platform.OS === 'web'
+      ? window.confirm('Are you sure you want to delete this video?')
+      : true;
+
+    if (confirmDelete) {
+      if (Platform.OS !== 'web') {
+        Alert.alert(
+          'Confirm Delete',
+          'Are you sure you want to delete this video?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Delete',
+              style: 'destructive',
+              onPress: async () => {
+                await deleteVideo(videoId);
+              },
+            },
+          ]
+        );
+      } else {
+        await deleteVideo(videoId);
+      }
+    }
+  };
+
+  const deleteVideo = async (videoId: string) => {
+    try {
+      const response = await apiClient.delete(`/school/gallery/video/${videoId}`);
+      
+      if (response.data.success) {
+        if (Platform.OS === 'web') {
+          alert('Video deleted successfully!');
+        } else {
+          Alert.alert('Success', 'Video deleted successfully!');
+        }
+        fetchSchoolData();
+      }
+    } catch (error: any) {
+      console.error('Error deleting video:', error);
+      const errorMessage = error.response?.data?.message || 'Failed to delete video';
+      
+      if (Platform.OS === 'web') {
+        alert(`Error: ${errorMessage}`);
+      } else {
+        Alert.alert('Error', errorMessage);
+      }
+
+      const isNetworkError =
+        !error?.response ||
+        error?.code === 'ECONNABORTED' ||
+        error?.message?.toLowerCase().includes('network') ||
+        error?.message?.toLowerCase().includes('timeout');
+      if (isNetworkError) {
+        setForceNetworkBannerVisible(true);
+      }
+    }
+  };
+
+  // Extract video thumbnail
+  const extractVideoThumbnail = (videoUrl: string, videoId: string) => {
+    if (videoThumbnails[videoId]) return; // Already extracted
+  
+    if (Platform.OS === 'web') {
+      const video = document.createElement('video');
+      video.src = videoUrl;
+      video.currentTime = 5; // Get frame at 5 seconds
+      
+      video.onloadedmetadata = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(video, 0, 0);
+          const thumbnail = canvas.toDataURL('image/jpeg', 0.7);
+          setVideoThumbnails(prev => ({
+            ...prev,
+            [videoId]: thumbnail
+          }));
+        }
+      };
+    }
+  };
+
+  // Extract thumbnails for all videos
+  useEffect(() => {
+    if (schoolData?.galleryVideos && schoolData.galleryVideos.length > 0) {
+      schoolData.galleryVideos.forEach(video => {
+        extractVideoThumbnail(video.url, video._id);
+      });
+    }
+  }, [schoolData?.galleryVideos]);
 
   // Get icon source based on icon name
   const getIconSource = (iconName: string) => {
@@ -222,6 +370,11 @@ const SchoolPageWeb: React.FC = () => {
   if (loading) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5', justifyContent: 'center', alignItems: 'center' }}>
+        <NetworkBanner
+          forceVisible={forceNetworkBannerVisible}
+          onRetry={fetchSchoolData}
+          onDismiss={() => setForceNetworkBannerVisible(false)}
+        />
         <ActivityIndicator size="large" color="#3B82F6" />
         <Text style={{
           marginTop: 16,
@@ -239,6 +392,11 @@ const SchoolPageWeb: React.FC = () => {
   if (!schoolData) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+        <NetworkBanner
+          forceVisible={forceNetworkBannerVisible}
+          onRetry={fetchSchoolData}
+          onDismiss={() => setForceNetworkBannerVisible(false)}
+        />
         <Image
           source={require('@/assets/icons/error.png')}
           style={{ width: 100, height: 100, marginBottom: 16 }}
@@ -285,14 +443,20 @@ const SchoolPageWeb: React.FC = () => {
   }
 
   const schoolStats = [
-    { label: 'Students Enrolled', value: schoolData.stats.studentsEnrolled, icon: require('@/assets/icons/students.png') },
+    { label: 'Students Enrolled', value: studentCount.toString(), icon: require('@/assets/icons/students.png') },
     { label: 'Years of Excellence', value: schoolData.stats.yearsOfExcellence, icon: require('@/assets/icons/award.png') },
-    { label: 'Dedicated Teachers', value: schoolData.stats.dedicatedTeachers, icon: require('@/assets/icons/teacher.png') },
+    { label: 'Dedicated Teachers', value: teacherCount.toString(), icon: require('@/assets/icons/teacher.png') },
     { label: 'Graduates', value: schoolData.stats.graduates, icon: require('@/assets/icons/graduation.png') },
   ];
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: isDarkMode ? '#18191A' : '#F0F2F5' }}>
+      <NetworkBanner
+        forceVisible={forceNetworkBannerVisible}
+        onRetry={fetchSchoolData}
+        onDismiss={() => setForceNetworkBannerVisible(false)}
+      />
+
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Admin Controls Header */}
         <View style={{
@@ -950,43 +1114,72 @@ const SchoolPageWeb: React.FC = () => {
                   fontFamily: 'Inter-Bold',
                   color: isDarkMode ? '#E4E6EA' : '#1C1E21',
                 }}>
-                  Photo Gallery ({schoolData?.galleryImages.length || 0})
+                  Photo Gallery ({schoolData.galleryImages.length + (schoolData.galleryVideos?.length || 0)}/15)
                 </Text>
               </View>
 
-              <TouchableOpacity
-                onPress={() => handleImageUpload('gallery')}
-                style={{
-                  backgroundColor: '#10B981',
-                  paddingHorizontal: 12,
-                  paddingVertical: 6,
-                  borderRadius: 6,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                }}
-              >
-                <Image
-                  source={require('@/assets/icons/plus.png')}
-                  style={{ width: 14, height: 14, marginRight: 4 }}
-                  tintColor="#FFFFFF"
-                  contentFit="contain"
-                />
-                <Text style={{
-                  color: '#FFFFFF',
-                  fontSize: 12,
-                  fontFamily: 'Inter-Medium',
-                }}>
-                  Add Images
-                </Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity
+                  onPress={() => handleImageUpload('gallery')}
+                  style={{
+                    backgroundColor: '#10B981',
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    borderRadius: 6,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                  }}
+                >
+                  <Image
+                    source={require('@/assets/icons/plus.png')}
+                    style={{ width: 14, height: 14, marginRight: 4 }}
+                    tintColor="#FFFFFF"
+                    contentFit="contain"
+                  />
+                  <Text style={{
+                    color: '#FFFFFF',
+                    fontSize: 12,
+                    fontFamily: 'Inter-Medium',
+                  }}>
+                    Add Images
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => handleImageUpload('video')}
+                  style={{
+                    backgroundColor: '#8B5CF6',
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    borderRadius: 6,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                  }}
+                >
+                  <Image
+                    source={require('@/assets/icons/video.png')}
+                    style={{ width: 14, height: 14, marginRight: 4 }}
+                    tintColor="#FFFFFF"
+                    contentFit="contain"
+                  />
+                  <Text style={{
+                    color: '#FFFFFF',
+                    fontSize: 12,
+                    fontFamily: 'Inter-Medium',
+                  }}>
+                    Add Videos
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
-            {schoolData && schoolData.galleryImages.length > 0 ? (
+            {schoolData && (schoolData.galleryImages.length > 0 || (schoolData.galleryVideos && schoolData.galleryVideos.length > 0)) ? (
               <View style={{
                 flexDirection: 'row',
                 flexWrap: 'wrap',
                 gap: 12,
               }}>
+                {/* Images */}
                 {schoolData.galleryImages.map((image, index) => (
                   <View
                     key={image._id}
@@ -1020,12 +1213,16 @@ const SchoolPageWeb: React.FC = () => {
                     </TouchableOpacity>
 
                     {image.caption && (
-                      <View style={{ padding: 8, backgroundColor: isDarkMode ? '#242526' : '#FFFFFF' }}>
+                      <View style={{
+                        backgroundColor: isDarkMode ? 'rgba(0, 0, 0, 0.7)' : 'rgba(0, 0, 0, 0.5)',
+                        paddingHorizontal: 8,
+                        paddingVertical: 4,
+                      }}>
                         <Text
                           style={{
                             fontSize: 12,
                             fontFamily: 'Inter-Regular',
-                            color: isDarkMode ? '#E4E6EA' : '#1C1E21',
+                            color: '#FFFFFF',
                           }}
                           numberOfLines={2}
                         >
@@ -1050,6 +1247,118 @@ const SchoolPageWeb: React.FC = () => {
                         shadowOffset: { width: 0, height: 2 },
                         shadowOpacity: 0.3,
                         shadowRadius: 4,
+                      }}
+                    >
+                      <Image
+                        source={require('@/assets/icons/delete.png')}
+                        style={{ width: 16, height: 16 }}
+                        tintColor="#FFFFFF"
+                        contentFit="contain"
+                      />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+
+                {/* Videos */}
+                {schoolData.galleryVideos && schoolData.galleryVideos.map((video) => (
+                  <View
+                    key={video._id}
+                    style={{
+                      width: width < 768 ? '48%' : '31%',
+                      backgroundColor: isDarkMode ? '#3A3B3C' : '#F0F2F5',
+                      borderRadius: 8,
+                      overflow: 'hidden',
+                      position: 'relative',
+                    }}
+                  >
+                    <TouchableOpacity
+                      activeOpacity={0.9}
+                      onPress={() => handleImagePreview(video.url, video.caption)}
+                    >
+                      {videoThumbnails[video._id] ? (
+                        <Image
+                          source={{ uri: videoThumbnails[video._id] }}
+                          style={{ width: '100%', height: 200 }}
+                          contentFit="cover"
+                        />
+                      ) : (
+                        <View
+                          style={{
+                            width: '100%',
+                            height: 200,
+                            backgroundColor: isDarkMode ? '#2A2A2A' : '#E5E7EB',
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <ActivityIndicator color={isDarkMode ? '#9CA3AF' : '#6B7280'} />
+                        </View>
+                      )}
+                      
+                      {/* Play icon overlay */}
+                      <View
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                          backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                        }}
+                      >
+                        <View
+                          style={{
+                            width: 50,
+                            height: 50,
+                            borderRadius: 25,
+                            backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <Image
+                            source={require('@/assets/icons/play.png')}
+                            style={{ width: 24, height: 24 }}
+                            tintColor="#1877F2"
+                            contentFit="contain"
+                          />
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+
+                    {video.caption && (
+                      <View style={{
+                        backgroundColor: isDarkMode ? 'rgba(0, 0, 0, 0.7)' : 'rgba(0, 0, 0, 0.5)',
+                        paddingHorizontal: 8,
+                        paddingVertical: 4,
+                      }}>
+                        <Text
+                          style={{
+                            fontSize: 12,
+                            fontFamily: 'Inter-Regular',
+                            color: '#FFFFFF',
+                          }}
+                          numberOfLines={2}
+                        >
+                          {video.caption}
+                        </Text>
+                      </View>
+                    )}
+
+                    <TouchableOpacity
+                      onPress={() => handleDeleteGalleryVideo(video._id)}
+                      style={{
+                        position: 'absolute',
+                        top: 8,
+                        right: 8,
+                        backgroundColor: 'rgba(239, 68, 68, 0.9)',
+                        borderRadius: 4,
+                        width: 28,
+                        height: 28,
+                        justifyContent: 'center',
+                        alignItems: 'center',
                       }}
                     >
                       <Image
@@ -1104,6 +1413,10 @@ const SchoolPageWeb: React.FC = () => {
         imageType={uploadImageType}
         onUploadSuccess={fetchSchoolData}
         isDarkMode={isDarkMode}
+        currentCount={uploadImageType === 'video' 
+          ? (schoolData?.galleryVideos?.length || 0)
+          : (schoolData?.galleryImages?.length || 0)
+        }
       />
 
       <ManageLinksModal

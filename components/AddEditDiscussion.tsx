@@ -77,7 +77,7 @@ const AddEditDiscussion: React.FC<AddEditDiscussionProps> = ({
               fontSize: 16,
             }}
           >
-            Title
+            Title <Text className="text-red-500">*</Text>
           </Text>
           <TextInput
             placeholder="What's on your mind?"
@@ -102,7 +102,7 @@ const AddEditDiscussion: React.FC<AddEditDiscussionProps> = ({
               fontSize: 16,
             }}
           >
-            Content
+            Content <Text className="text-red-500">*</Text>
           </Text>
           <TextInput
             placeholder="Share your thoughts with the class..."

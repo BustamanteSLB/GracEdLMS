@@ -27,6 +27,7 @@ export interface Subject {
   teachers: never[];
   _id: string;
   subjectName: string;
+  classCode?: string;
   description?: string;
   gradeLevel?: string;
   schoolYear?: string;

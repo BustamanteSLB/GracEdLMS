@@ -1,7 +1,7 @@
+// subjects.web.tsx
 import apiClient from "@/app/services/apiClient";
 import { Subject } from "@/app/types/index";
 import ContextMenu from "@/components/ContextMenu";
-import SubjectDetailsTabs from "@/components/SubjectDetailsTabs";
 import { useAuth } from "@/contexts/AuthContext";
 import { useDarkMode } from "@/contexts/DarkModeContext";
 import { Image } from "expo-image";
@@ -9,7 +9,14 @@ import { useRouter } from "expo-router";
 import { Checkbox } from 'expo-checkbox';
 import { StatusBar } from "expo-status-bar";
 import { cssInterop } from "nativewind";
-import React, { useCallback, useEffect, useState, useMemo } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useState,
+  useMemo,
+  useRef,
+  memo,
+} from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -20,7 +27,6 @@ import {
   useColorScheme,
   useWindowDimensions,
   View,
-  VirtualizedList,
   ScrollView,
   FlatList,
 } from "react-native";
@@ -28,24 +34,80 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import MoreVertIcon from "@/assets/icons/more_vert.svg";
 import DeleteIcon from "@/assets/icons/delete.svg";
 import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system/legacy";
 import Dropdown, { DropdownItem } from "@/components/Dropdown";
+import {
+  formatSubjectDisplay,
+  normalizeClassCodeInput,
+} from "@/app/utils/subjectUtils";
+import NetworkBanner from "@/components/NetworkBanner.web";
 
 cssInterop(Image, { className: "style" });
 
+/* ------------------------------------------------------------------ */
+/*  Constants                                                          */
+/* ------------------------------------------------------------------ */
+const ITEMS_PER_PAGE = 10;
+
+const GRADE_LEVEL_OPTIONS: DropdownItem[] = [
+  { label: "Select Grade Level", value: "" },
+  { label: "Grade 1", value: "Grade 1" },
+  { label: "Grade 2", value: "Grade 2" },
+  { label: "Grade 3", value: "Grade 3" },
+  { label: "Grade 4", value: "Grade 4" },
+  { label: "Grade 5", value: "Grade 5" },
+  { label: "Grade 6", value: "Grade 6" },
+];
+
+const GRADE_LEVEL_FILTER_OPTIONS: DropdownItem[] = [
+  { label: "All Grade Levels", value: "" },
+  { label: "Grade 1", value: "Grade 1" },
+  { label: "Grade 2", value: "Grade 2" },
+  { label: "Grade 3", value: "Grade 3" },
+  { label: "Grade 4", value: "Grade 4" },
+  { label: "Grade 5", value: "Grade 5" },
+  { label: "Grade 6", value: "Grade 6" },
+];
+
+const buildSchoolYearOptions = (includeAll: boolean): DropdownItem[] => {
+  const currentYear = new Date().getFullYear();
+  const options: DropdownItem[] = [
+    { label: includeAll ? "All School Years" : "Select School Year", value: "" },
+  ];
+
+  const previousYear = currentYear - 1;
+  options.push({
+    label: `${previousYear} - ${currentYear}`,
+    value: `${previousYear} - ${currentYear}`,
+  });
+
+  for (let i = 0; i < 4; i++) {
+    const startYear = currentYear + i;
+    const endYear = startYear + 1;
+    options.push({
+      label: `${startYear} - ${endYear}`,
+      value: `${startYear} - ${endYear}`,
+    });
+  }
+
+  return options;
+};
+
+/* ------------------------------------------------------------------ */
+/*  Types                                                              */
+/* ------------------------------------------------------------------ */
 interface TeacherAssignment {
   teacherId: string;
-  quarters: {
-    firstQuarter: boolean;
-    secondQuarter: boolean;
-    thirdQuarter: boolean;
-    fourthQuarter: boolean;
+  terms: {
+    1: boolean;
+    2: boolean;
+    3: boolean;
   };
-  isAssignedToAllQuarters: boolean;
+  isAssignedToAllTerms: boolean;
 }
 
 interface SubjectForm {
   subjectName: string;
+  classCode: string;
   description: string;
   gradeLevel: string;
   section: string;
@@ -93,912 +155,83 @@ interface Teacher {
   status: "active" | "inactive" | "suspended" | "pending" | "archived";
 }
 
-const SubjectsWeb: React.FC = () => {
-  document.title = "Subjects - GracEdLMS";
-  const router = useRouter();
-  const colorScheme = useColorScheme();
-  const { isDarkMode } = useDarkMode();
-  const { user, isLoading } = useAuth();
-  const { width } = useWindowDimensions();
-
-  // State
-  const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedGradeLevel, setSelectedGradeLevel] = useState<string>("");
-  const [selectedSchoolYear, setSelectedSchoolYear] = useState<string>("");
-
-  // Pagination state
-  const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(10);
-
-  // Context menu
-  const [menuVisible, setMenuVisible] = useState(false);
-  const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
-  const [selectedSubject, setSelectedSubject] = useState<Subject | null>(null);
-
-  // Add/Edit modal
-  const [modalVisible, setModalVisible] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
-  const [currentSubject, setCurrentSubject] = useState<Subject | null>(null);
-
-  // View Details
-  const [viewingSubject, setViewingSubject] = useState<Subject | null>(null);
-
-  // Form fields
-  const [subjectName, setSubjectName] = useState("");
-  const [description, setDescription] = useState("");
-  const [gradeLevel, setGradeLevel] = useState("");
-  const [section, setSection] = useState("");
-  const [schoolYear, setSchoolYear] = useState("");
-  
-  // Teacher assignments state
-  const [teacherAssignments, setTeacherAssignments] = useState<TeacherAssignment[]>([
-    {
-      teacherId: "",
-      quarters: {
-        firstQuarter: false,
-        secondQuarter: false,
-        thirdQuarter: false,
-        fourthQuarter: false,
-      },
-      isAssignedToAllQuarters: false,
-    },
-  ]);
-
-  // Add new state for image upload
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  const [uploadingImage, setUploadingImage] = useState(false);
-
-  // New state for sections
-  const [sections, setSections] = useState<Section[]>([]);
-  const [selectedSection, setSelectedSection] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<"details" | "sections">(
-    "details"
-  );
-
-  // Section management modal
-  const [sectionModalVisible, setSectionModalVisible] = useState(false);
-  const [editingSection, setEditingSection] = useState<Section | null>(null);
-  const [newSectionName, setNewSectionName] = useState("");
-  const [sectionGradeLevel, setSectionGradeLevel] = useState("");
-  const [sectionSchoolYear, setSectionSchoolYear] = useState("");
-
-  // Student selection
-  const [allStudents, setAllStudents] = useState<Student[]>([]);
-  const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
-  const [studentSearchQuery, setStudentSearchQuery] = useState("");
-
-  // Teacher selection
-  const [allTeachers, setAllTeachers] = useState<Teacher[]>([]);
-  const [loadingTeachers, setLoadingTeachers] = useState(false);
-
-  const isAdmin = user?.role === "Admin";
-  const isAdminOrTeacher = user?.role === "Admin" || user?.role === "Teacher";
-
-  // Memoized dropdown options
-  const gradeLevelOptions: DropdownItem[] = useMemo(
-    () => [
-      { label: "Select Grade Level", value: "" },
-      { label: "Grade 1", value: "Grade 1" },
-      { label: "Grade 2", value: "Grade 2" },
-      { label: "Grade 3", value: "Grade 3" },
-      { label: "Grade 4", value: "Grade 4" },
-      { label: "Grade 5", value: "Grade 5" },
-      { label: "Grade 6", value: "Grade 6" },
-    ],
-    []
-  );
-
-  const gradeLevelFilterOptions: DropdownItem[] = useMemo(
-    () => [
-      { label: "All Grade Levels", value: "" },
-      { label: "Grade 1", value: "Grade 1" },
-      { label: "Grade 2", value: "Grade 2" },
-      { label: "Grade 3", value: "Grade 3" },
-      { label: "Grade 4", value: "Grade 4" },
-      { label: "Grade 5", value: "Grade 5" },
-      { label: "Grade 6", value: "Grade 6" },
-    ],
-    []
-  );
-
-  const schoolYearOptions: DropdownItem[] = useMemo(() => {
-    const currentYear = new Date().getFullYear();
-    const options: DropdownItem[] = [
-      { label: "Select School Year", value: "" },
-    ];
-
-    const previousYear = currentYear - 1;
-    options.push({
-      label: `${previousYear} - ${currentYear}`,
-      value: `${previousYear} - ${currentYear}`,
-    });
-
-    for (let i = 0; i < 4; i++) {
-      const startYear = currentYear + i;
-      const endYear = startYear + 1;
-      options.push({
-        label: `${startYear} - ${endYear}`,
-        value: `${startYear} - ${endYear}`,
-      });
-    }
-
-    return options;
-  }, []);
-
-  const schoolYearFilterOptions: DropdownItem[] = useMemo(() => {
-    const currentYear = new Date().getFullYear();
-    const options: DropdownItem[] = [{ label: "All School Years", value: "" }];
-
-    const previousYear = currentYear - 1;
-    options.push({
-      label: `${previousYear} - ${currentYear}`,
-      value: `${previousYear} - ${currentYear}`,
-    });
-
-    for (let i = 0; i < 4; i++) {
-      const startYear = currentYear + i;
-      const endYear = startYear + 1;
-      options.push({
-        label: `${startYear} - ${endYear}`,
-        value: `${startYear} - ${endYear}`,
-      });
-    }
-
-    return options;
-  }, []);
-
-  const itemsPerPageOptions: DropdownItem[] = useMemo(
-    () => [
-      { label: "5", value: "5" },
-      { label: "10", value: "10" },
-      { label: "20", value: "20" },
-      { label: "50", value: "50" },
-    ],
-    []
-  );
-
-  // Memoized teacher dropdown options
-  const teacherOptions: DropdownItem[] = useMemo(() => {
-    const options: DropdownItem[] = [{ label: "Select Teacher (Optional)", value: "" }];
-
-    allTeachers.forEach((teacher) => {
-      const fullName = teacher.middleName
-        ? `${teacher.firstName} ${teacher.middleName} ${teacher.lastName}`
-        : `${teacher.firstName} ${teacher.lastName}`;
-      options.push({
-        label: fullName,
-        value: teacher._id,
-      });
-    });
-
-    return options;
-  }, [allTeachers]);
-
-  // Fetch teachers
-  const fetchTeachers = useCallback(async () => {
-    try {
-      setLoadingTeachers(true);
-      const response = await apiClient.get("/users?role=Teacher&status=active");
-      setAllTeachers(response.data.data || []);
-    } catch (error) {
-      console.error("Failed to fetch teachers:", error);
-    } finally {
-      setLoadingTeachers(false);
-    }
-  }, []);
-
-  // Fetch sections
-  const fetchSections = useCallback(async (grade?: string, year?: string) => {
-    try {
-      const params = new URLSearchParams();
-      if (grade) params.append("gradeLevel", grade);
-      if (year) params.append("schoolYear", year);
-
-      const response = await apiClient.get(`/sections?${params.toString()}`);
-      setSections(response.data.data);
-    } catch (error) {
-      console.error("Failed to fetch sections:", error);
-    }
-  }, []);
-
-  // Fetch all students
-  const fetchStudents = useCallback(async () => {
-    try {
-      let allStudentsData: Student[] = [];
-      let page = 1;
-      let hasMore = true;
-
-      // Fetch all pages of students
-      while (hasMore) {
-        const response = await apiClient.get(
-          `/users?role=Student&status=active&page=${page}&limit=100`
-        );
-        const students = response.data.data || [];
-        
-        if (students.length === 0) {
-          hasMore = false;
-        } else {
-          allStudentsData = [...allStudentsData, ...students];
-          page++;
-        }
-      }
-
-      setAllStudents(allStudentsData);
-    } catch (error) {
-      console.error("Failed to fetch students:", error);
-      setAllStudents([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (isAdmin) {
-      fetchStudents();
-      fetchTeachers();
-    }
-  }, [fetchStudents, fetchTeachers, isAdmin]);
-
-  // Update sections when grade level or school year changes
-  useEffect(() => {
-    if (gradeLevel && schoolYear && isAdmin) {
-      fetchSections(gradeLevel, schoolYear);
-    }
-  }, [gradeLevel, schoolYear, fetchSections, isAdmin]);
-
-  // Filter available sections based on selected grade and school year
-  const availableSections = useMemo(() => {
-    return sections.filter(
-      (s) => s.gradeLevel === gradeLevel && s.schoolYear === schoolYear
-    );
-  }, [sections, gradeLevel, schoolYear]);
-
-  // Section dropdown options
-  const sectionOptions: DropdownItem[] = useMemo(() => {
-    const options: DropdownItem[] = [{ label: "Select Section", value: "" }];
-
-    availableSections.forEach((sec) => {
-      options.push({
-        label: `${sec.sectionName} (${sec.students.length} students)`,
-        value: sec.sectionName,
-      });
-    });
-
-    if (isAdmin) {
-      options.push({ label: "+ Create New Section", value: "__create_new__" });
-    }
-
-    return options;
-  }, [availableSections, isAdmin]);
-
-  // Handle section selection
-  const handleSectionChange = (value: string) => {
-    if (value === "__create_new__") {
-      handleOpenSectionModal();
-    } else {
-      setSection(value);
-      setSelectedSection(value);
-    }
-  };
-
-  // Open section management modal
-  const handleOpenSectionModal = () => {
-    if (!gradeLevel || !schoolYear) {
-      window.alert("Please select grade level and school year first");
-      return;
-    }
-
-    setEditingSection(null);
-    setNewSectionName("");
-    setSectionGradeLevel(gradeLevel);
-    setSectionSchoolYear(schoolYear);
-    setSelectedStudents([]);
-    setStudentSearchQuery("");
-    setSectionModalVisible(true);
-  };
-
-  // Handle edit section
-  const handleEditSection = (section: Section) => {
-    setEditingSection(section);
-    setNewSectionName(section.sectionName);
-    setSectionGradeLevel(section.gradeLevel);
-    setSectionSchoolYear(section.schoolYear);
-    setSelectedStudents(section.students.map((s) => s._id));
-    setStudentSearchQuery("");
-    setSectionModalVisible(true);
-  };
-
-  // Save section
-  const handleSaveSection = async () => {
-    if (!newSectionName.trim()) {
-      window.alert("Please enter section name");
-      return;
-    }
-
-    try {
-      const sectionData = {
-        sectionName: newSectionName.trim(),
-        gradeLevel: sectionGradeLevel,
-        schoolYear: sectionSchoolYear,
-        studentIds: selectedStudents,
-      };
-
-      if (editingSection) {
-        await apiClient.put(`/sections/${editingSection._id}`, sectionData);
-        window.alert("Section updated successfully");
-      } else {
-        await apiClient.post("/sections", sectionData);
-        window.alert("Section created successfully");
-      }
-
-      setSectionModalVisible(false);
-      fetchSections(gradeLevel, schoolYear);
-    } catch (error: any) {
-      console.error("Failed to save section:", error);
-      window.alert(
-        "Error: " +
-          (error.response?.data?.message || "Failed to save section")
-      );
-    }
-  };
-
-  // Delete section
-  const handleDeleteSection = async (sectionId: string) => {
-    const confirmDelete = window.confirm(
-      "Are you sure you want to archive this section?"
-    );
-    if (!confirmDelete) return;
-
-    try {
-      await apiClient.delete(`/sections/${sectionId}`);
-      window.alert("Section archived successfully");
-      fetchSections(gradeLevel, schoolYear);
-    } catch (error: any) {
-      console.error("Failed to delete section:", error);
-      window.alert(
-        "Error: " +
-          (error.response?.data?.message || "Failed to delete section")
-      );
-    }
-  };
-
-  // Toggle student selection
-  const handleToggleStudent = (studentId: string) => {
-    setSelectedStudents((prev) =>
-      prev.includes(studentId)
-        ? prev.filter((id) => id !== studentId)
-        : [...prev, studentId]
-    );
-  };
-
-  // Filter students for search - UPDATED to exclude already selected students
-  const filteredStudents = useMemo(() => {
-    if (!studentSearchQuery.trim()) {
-      // Return all students except those already in the section
-      return allStudents.filter(
-        (student) => !selectedStudents.includes(student._id)
-      );
-    }
-
-    const query = studentSearchQuery.toLowerCase();
-    return allStudents.filter(
-      (student) =>
-        !selectedStudents.includes(student._id) &&
-        ((student.firstName?.toLowerCase().includes(query) ?? false) ||
-          (student.lastName?.toLowerCase().includes(query) ?? false) ||
-          (student.middleName?.toLowerCase().includes(query) ?? false) ||
-          (student.email?.toLowerCase().includes(query) ?? false) ||
-          (student.userId?.toLowerCase().includes(query) ?? false))
-    );
-  }, [allStudents, studentSearchQuery, selectedStudents]);
-
-  // Fetch subjects
-  const fetchSubjects = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await apiClient.get<{ data: Subject[] }>("/subjects");
-      setSubjects(response.data.data);
-    } catch (error) {
-      console.error("Failed to fetch subjects:", error);
-      window.alert("Error: Failed to load subjects.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchSubjects();
-  }, [fetchSubjects]);
-
-  // Filter subjects
-  const filteredSubjects = useMemo(() => {
-    return subjects.filter((subject) => {
-      const matchesSearch =
-        subject.subjectName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        subject.description
-          ?.toLowerCase()
-          .includes(searchQuery.toLowerCase()) ||
-        subject.section?.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesGradeLevel =
-        !selectedGradeLevel || subject.gradeLevel === selectedGradeLevel;
-      const matchesSchoolYear =
-        !selectedSchoolYear || subject.schoolYear === selectedSchoolYear;
-
-      return matchesSearch && matchesGradeLevel && matchesSchoolYear;
-    });
-  }, [subjects, searchQuery, selectedGradeLevel, selectedSchoolYear]);
-
-  // Pagination calculations
-  const totalPages = Math.ceil(filteredSubjects.length / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
-  const paginatedSubjects = filteredSubjects.slice(startIndex, endIndex);
-
-  // Reset to page 1 when filters change
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchQuery, selectedGradeLevel, selectedSchoolYear, itemsPerPage]);
-
-  // Pagination handlers
-  const goToPage = (page: number) => {
-    if (page >= 1 && page <= totalPages) {
-      setCurrentPage(page);
-    }
-  };
-
-  const goToPreviousPage = () => {
-    if (currentPage > 1) {
-      setCurrentPage(currentPage - 1);
-    }
-  };
-
-  const goToNextPage = () => {
-    if (currentPage < totalPages) {
-      setCurrentPage(currentPage + 1);
-    }
-  };
-
-  // Generate page numbers to display
-  const getPageNumbers = () => {
-    const pages: (number | string)[] = [];
-    const maxVisiblePages = 5;
-
-    if (totalPages <= maxVisiblePages) {
-      for (let i = 1; i <= totalPages; i++) {
-        pages.push(i);
-      }
-    } else {
-      if (currentPage <= 3) {
-        for (let i = 1; i <= 4; i++) {
-          pages.push(i);
-        }
-        pages.push("...");
-        pages.push(totalPages);
-      } else if (currentPage >= totalPages - 2) {
-        pages.push(1);
-        pages.push("...");
-        for (let i = totalPages - 3; i <= totalPages; i++) {
-          pages.push(i);
-        }
-      } else {
-        pages.push(1);
-        pages.push("...");
-        for (let i = currentPage - 1; i <= currentPage + 1; i++) {
-          pages.push(i);
-        }
-        pages.push("...");
-        pages.push(totalPages);
-      }
-    }
-
-    return pages;
-  };
-
-  // Handlers
-  const handleAddSubject = () => {
-    setIsEditing(false);
-    setCurrentSubject(null);
-    setSubjectName("");
-    setDescription("");
-    setGradeLevel("");
-    setSection("");
-    setSchoolYear("");
-    setTeacherAssignments([
-      {
-        teacherId: "",
-        quarters: {
-          firstQuarter: false,
-          secondQuarter: false,
-          thirdQuarter: false,
-          fourthQuarter: false,
-        },
-        isAssignedToAllQuarters: false,
-      },
-    ]);
-    setSelectedImage(null);
-    setActiveTab("details");
-    setModalVisible(true);
-  };
-
-  const handleEditSubject = (subject: Subject) => {
-    setIsEditing(true);
-    setCurrentSubject(subject);
-    setSubjectName(subject.subjectName);
-    setDescription(subject.description || "");
-    setGradeLevel(subject.gradeLevel || "");
-    setSection(subject.section || "");
-    setSchoolYear(subject.schoolYear || "");
-    
-    // Map backend teachers to frontend format
-    const assignments = subject.teachers?.map((ta: any) => ({
-      teacherId: ta.teacher?._id || "",
-      quarters: ta.quarters || {
-        firstQuarter: false,
-        secondQuarter: false,
-        thirdQuarter: false,
-        fourthQuarter: false,
-      },
-      isAssignedToAllQuarters: ta.isAssignedToAllQuarters || false,
-    })) || [];
-    
-    setTeacherAssignments(assignments.length > 0 ? assignments : [
-      {
-        teacherId: "",
-        quarters: {
-          firstQuarter: false,
-          secondQuarter: false,
-          thirdQuarter: false,
-          fourthQuarter: false,
-        },
-        isAssignedToAllQuarters: false,
-      },
-    ]);
-    
-    setSelectedImage(null);
-    setActiveTab("details");
-    setModalVisible(true);
-    handleCloseMenu();
-  };
-
-  // Handle teacher assignment changes
-  const handleTeacherChange = (index: number, teacherId: string) => {
-    const updated = [...teacherAssignments];
-    updated[index].teacherId = teacherId;
-    setTeacherAssignments(updated);
-  };
-
-  const handleQuarterChange = (
-    index: number,
-    quarter: "firstQuarter" | "secondQuarter" | "thirdQuarter" | "fourthQuarter"
-  ) => {
-    const updated = [...teacherAssignments];
-    updated[index].quarters[quarter] = !updated[index].quarters[quarter];
-    setTeacherAssignments(updated);
-  };
-
-  const handleAllQuartersToggle = (index: number) => {
-    const updated = [...teacherAssignments];
-    updated[index].isAssignedToAllQuarters =
-      !updated[index].isAssignedToAllQuarters;
-    
-    if (updated[index].isAssignedToAllQuarters) {
-      updated[index].quarters = {
-        firstQuarter: true,
-        secondQuarter: true,
-        thirdQuarter: true,
-        fourthQuarter: true,
-      };
-    }
-    setTeacherAssignments(updated);
-  };
-
-  const handleAddTeacherRow = () => {
-    setTeacherAssignments([
-      ...teacherAssignments,
-      {
-        teacherId: "",
-        quarters: {
-          firstQuarter: false,
-          secondQuarter: false,
-          thirdQuarter: false,
-          fourthQuarter: false,
-        },
-        isAssignedToAllQuarters: false,
-      },
-    ]);
-  };
-
-  const handleRemoveTeacherRow = (index: number) => {
-    if (teacherAssignments.length === 1) {
-      window.alert("At least one teacher assignment is required");
-      return;
-    }
-    const updated = teacherAssignments.filter((_, i) => i !== index);
-    setTeacherAssignments(updated);
-  };
-
-  const handleSubmit = async () => {
-    // Validation
-    if (!teacherAssignments.some((ta) => ta.teacherId.trim())) {
-      window.alert("Error: Please assign at least one teacher");
-      return;
-    }
-
-    const validAssignments = teacherAssignments.filter(
-      (ta) =>
-        ta.teacherId.trim() &&
-        (ta.isAssignedToAllQuarters ||
-          Object.values(ta.quarters).some((q) => q))
-    );
-
-    if (validAssignments.length === 0) {
-      window.alert(
-        "Error: Each teacher must be assigned to at least one quarter"
-      );
-      return;
-    }
-
-    const formData: SubjectForm = {
-      subjectName,
-      description,
-      gradeLevel,
-      section,
-      schoolYear,
-      teachers: validAssignments,
-    };
-
-    try {
-      if (isEditing && currentSubject) {
-        await apiClient.put(`/subjects/${currentSubject._id}`, formData);
-        window.alert("Success: Subject updated successfully.");
-      } else {
-        const response = await apiClient.post("/subjects", formData);
-        if (selectedImage && response.data.data?._id) {
-          await handleUploadImage(response.data.data._id);
-        }
-        window.alert("Success: Subject added successfully.");
-      }
-      setModalVisible(false);
-      setSelectedImage(null);
-      setSections([]);
-      fetchSubjects();
-    } catch (error: any) {
-      console.error(
-        "Failed to save subject:",
-        error.response?.data || error.message
-      );
-      const backendErrorMessage = error.response?.data?.message;
-      window.alert(
-        "Error: " + (backendErrorMessage || "Failed to save subject.")
-      );
-    }
-  };
-
-  // Add image picker handler
-  const handlePickImage = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: "image/*",
-        copyToCacheDirectory: true,
-      });
-
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        const asset = result.assets[0];
-        setSelectedImage(asset.uri);
-      }
-    } catch (error) {
-      console.error("Error picking image:", error);
-      window.alert("Error: Failed to pick image");
-    }
-  };
-
-  // Add image upload handler
-  const handleUploadImage = async (subjectId: string) => {
-    if (!selectedImage) return;
-
-    setUploadingImage(true);
-    try {
-      const formData = new FormData();
-
-      // For web, fetch the image and convert to blob
-      const response = await fetch(selectedImage);
-      const blob = await response.blob();
-
-      formData.append("subjectImage", blob, "subject-image.jpg");
-
-      await apiClient.put(`/subjects/${subjectId}/upload-image`, formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
-      });
-
-      window.alert("Success: Subject image uploaded successfully");
-      setSelectedImage(null);
-      fetchSubjects();
-    } catch (error: any) {
-      console.error("Error uploading image:", error);
-      window.alert(
-        "Error: " + (error.response?.data?.message || "Failed to upload image")
-      );
-    } finally {
-      setUploadingImage(false);
-    }
-  };
-
-  // Add image delete handler
-  const handleDeleteImage = async (subjectId: string) => {
-    const confirmDelete = window.confirm(
-      "Are you sure you want to delete this subject image?"
-    );
-    if (!confirmDelete) return;
-
-    try {
-      await apiClient.delete(`/subjects/${subjectId}/delete-image`);
-      window.alert("Success: Subject image deleted successfully");
-      fetchSubjects();
-    } catch (error: any) {
-      console.error("Error deleting image:", error);
-      window.alert(
-        "Error: " + (error.response?.data?.message || "Failed to delete image")
-      );
-    }
-  };
-
-  const handleDeleteSubject = async (subjectId: string) => {
-    const confirmDelete = window.confirm(
-      "Are you sure you want to delete this subject? This action cannot be undone."
-    );
-    if (!confirmDelete) return;
-
-    try {
-      await apiClient.delete(`/subjects/${subjectId}`);
-      window.alert("Success: Subject deleted successfully.");
-      handleCloseMenu();
-      fetchSubjects();
-    } catch (error: any) {
-      console.error("Failed to delete subject:", error);
-      const backendErrorMessage = error.response?.data?.message;
-      window.alert(
-        "Error: " + (backendErrorMessage || "Failed to delete subject.")
-      );
-    }
-  };
-
-  const handleOpenMenu = (event: any, subject: Subject) => {
-    const { pageX, pageY } = event.nativeEvent;
-    setMenuPosition({ x: pageX, y: pageY });
-    setSelectedSubject(subject);
-    setMenuVisible(true);
-  };
-
-  const handleCloseMenu = () => {
-    setMenuVisible(false);
-    setSelectedSubject(null);
-  };
-
-  const handleViewSubject = (subject: Subject) => {
-    router.push(`/subjects/${subject._id}` as any);
-  };
-
-  // Menu items
-  const menuItems = [
-    {
-      label: "Edit Subject",
-      onPress: () => {
-        if (selectedSubject) {
-          handleEditSubject(selectedSubject);
-        }
-      },
-      icon: (
-        <Image
-          className="w-[20] h-[20] mr-2"
-          contentFit="contain"
-          source={require("@/assets/icons/edit.png")}
-          cachePolicy="memory-disk"
-          tintColor={isDarkMode ? "#E0E0E0" : "#333"}
-        />
-      ),
-    },
-    {
-      label: "Delete Subject",
-      onPress: () => {
-        if (selectedSubject) {
-          handleDeleteSubject(selectedSubject._id);
-        }
-      },
-      icon: (
-        <DeleteIcon
-          width={20}
-          height={20}
-          style={{ marginRight: 8 }}
-          fill="#EF4444"
-        />
-      ),
-    },
-  ];
-
-  // Get consistent color
-  const getConsistentColor = (str: string) => {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      hash = str.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    const colors = [
-      "#3B82F6",
-      "#10B981",
-      "#F59E0B",
-      "#EF4444",
-      "#8B5CF6",
-      "#F97316",
-      "#14B8A6",
-      "#EC4899",
-    ];
-    return colors[Math.abs(hash) % colors.length];
-  };
-
-  // Get teacher name by ID
-  const getTeacherName = (teacherId: string) => {
-    const teacher = allTeachers.find((t) => t._id === teacherId);
-    if (!teacher) return "Not assigned";
-    return teacher.middleName
-      ? `${teacher.firstName} ${teacher.middleName} ${teacher.lastName}`
-      : `${teacher.firstName} ${teacher.lastName}`;
-  };
-
-  // Loading state
-  if (isLoading || loading) {
-    return (
-      <SafeAreaView
-        className={`flex-1 items-center justify-center ${
-          isDarkMode ? "bg-[#1A1A1A]" : "bg-[#F9FAFB]"
-        }`}
-      >
-        <ActivityIndicator size="large" color="#3B82F6" />
-        <Text
-          className={`mt-4 text-sm font-inter_regular ${
-            isDarkMode ? "text-[#9CA3AF]" : "text-[#6B7280]"
-          }`}
-        >
-          Loading subjects...
-        </Text>
-        <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
-      </SafeAreaView>
-    );
+/* ------------------------------------------------------------------ */
+/*  Pure helpers                                                       */
+/* ------------------------------------------------------------------ */
+const COLOR_PALETTE = [
+  "#3B82F6",
+  "#10B981",
+  "#F59E0B",
+  "#EF4444",
+  "#8B5CF6",
+  "#F97316",
+  "#14B8A6",
+  "#EC4899",
+];
+
+const getConsistentColor = (str: string) => {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
   }
+  return COLOR_PALETTE[Math.abs(hash) % COLOR_PALETTE.length];
+};
 
-  // Render subject item
-  const renderSubjectItem = ({ item }: { item: Subject }) => {
+const getAdviserInfo = (item: Subject): string => {
+  if (!item.teachers || item.teachers.length === 0) return "Not assigned";
+  return (
+    item.teachers
+      .map((ta: any) => {
+        const teacher = ta.teacher as any;
+        if (!teacher) return null;
+        const fullName = teacher.middleName
+          ? `${teacher.firstName} ${teacher.middleName} ${teacher.lastName}`
+          : `${teacher.firstName} ${teacher.lastName}`;
+
+        if (ta.isAssignedToAllTerms) return fullName;
+
+        const terms: string[] = [];
+        if (ta.terms?.["1"]) terms.push("1st");
+        if (ta.terms?.["2"]) terms.push("2nd");
+        if (ta.terms?.["3"]) terms.push("3rd");
+
+        if (terms.length > 0) {
+          return `${fullName} (${terms.join(", ")} Term${
+            terms.length > 1 ? "s" : ""
+          })`;
+        }
+        return fullName;
+      })
+      .filter(Boolean)
+      .join(", ") || "Not assigned"
+  );
+};
+
+/* ------------------------------------------------------------------ */
+/*  SubjectItem — memoized row                                         */
+/* ------------------------------------------------------------------ */
+interface SubjectItemProps {
+  item: Subject;
+  isDarkMode: boolean;
+  onPress: (subject: Subject) => void;
+  onMenuPress: (event: any, subject: Subject) => void;
+}
+
+const SubjectItem = memo<SubjectItemProps>(
+  ({ item, isDarkMode, onPress, onMenuPress }) => {
+    const handlePress = useCallback(() => onPress(item), [item, onPress]);
+    const handleMenuPress = useCallback(
+      (event: any) => onMenuPress(event, item),
+      [item, onMenuPress]
+    );
+
     const initials = item.subjectName.slice(0, 2).toUpperCase();
     const bgColor = getConsistentColor(item.subjectName);
-    
-    // Get adviser names with quarter info from teachers array
-    const adviserInfo = item.teachers?.map((ta: any) => {
-      const teacher = ta.teacher as any;
-      const fullName = teacher?.middleName
-        ? `${teacher.firstName} ${teacher.middleName} ${teacher.lastName}`
-        : `${teacher.firstName} ${teacher.lastName}`;
-      
-      // If assigned to all quarters, just show name
-      if (ta.isAssignedToAllQuarters) {
-        return fullName;
-      }
-      
-      // Otherwise, show name with quarters
-      const quarters = [];
-      if (ta.quarters.firstQuarter) quarters.push("1st");
-      if (ta.quarters.secondQuarter) quarters.push("2nd");
-      if (ta.quarters.thirdQuarter) quarters.push("3rd");
-      if (ta.quarters.fourthQuarter) quarters.push("4th");
-      
-      if (quarters.length > 0) {
-        return `${fullName} (${quarters.join(", ")} Quarter${quarters.length > 1 ? "s" : ""})`;
-      }
-      return fullName;
-    }).join(", ") || "Not assigned";
+    const adviserInfo = getAdviserInfo(item);
 
     return (
       <TouchableOpacity
-        className={`rounded-xl p-4 mb-3 border ${
+        className={`rounded-xl p-4 mt-3 mx-3 border ${
           isDarkMode
             ? "bg-[#1E1E1E] border-[#333333]"
             : "bg-white border-[#E5E7EB]"
@@ -1010,11 +243,11 @@ const SubjectsWeb: React.FC = () => {
           shadowRadius: 4,
           elevation: 2,
         }}
-        onPress={() => handleViewSubject(item)}
+        onPress={handlePress}
+        activeOpacity={0.8}
       >
         <View className="flex-row justify-between items-start">
           <View className="flex-row flex-1">
-            {/* Icon or Image */}
             {item.subjectImage ? (
               <Image
                 source={{ uri: item.subjectImage }}
@@ -1032,7 +265,6 @@ const SubjectsWeb: React.FC = () => {
               </View>
             )}
 
-            {/* Content */}
             <View className="flex-1 ml-3">
               <Text
                 className={`text-lg font-inter_bold mb-1 ${
@@ -1040,7 +272,7 @@ const SubjectsWeb: React.FC = () => {
                 }`}
                 numberOfLines={1}
               >
-                {item.subjectName}
+                {formatSubjectDisplay(item)}
               </Text>
               <Text
                 className={`text-sm font-inter_semibold mb-1 ${
@@ -1067,11 +299,7 @@ const SubjectsWeb: React.FC = () => {
             </View>
           </View>
 
-          {/* Menu Icon */}
-          <Pressable
-            onPress={(event) => handleOpenMenu(event, item)}
-            className="p-2"
-          >
+          <Pressable onPress={handleMenuPress} className="p-2">
             <MoreVertIcon
               width={20}
               height={20}
@@ -1081,11 +309,816 @@ const SubjectsWeb: React.FC = () => {
         </View>
       </TouchableOpacity>
     );
-  };
+  }
+);
+SubjectItem.displayName = "SubjectItem";
 
-  return (
-    <View className={`flex-1 ${isDarkMode ? "bg-[#1A1A1A]" : "bg-[#F9FAFB]"}`}>
-      {/* Header */}
+/* ------------------------------------------------------------------ */
+/*  Main component                                                     */
+/* ------------------------------------------------------------------ */
+const SubjectsWeb: React.FC = () => {
+  document.title = "Subjects - GracEdLMS";
+  const router = useRouter();
+  const colorScheme = useColorScheme();
+  const { isDarkMode } = useDarkMode();
+  const { user, isLoading } = useAuth();
+  const { width } = useWindowDimensions();
+
+  /* ------------------------- list data state ------------------------- */
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedGradeLevel, setSelectedGradeLevel] = useState<string>("");
+  const [selectedSchoolYear, setSelectedSchoolYear] = useState<string>("");
+
+  /* ------------------------- pagination state ------------------------ */
+  const [displayedCount, setDisplayedCount] = useState(ITEMS_PER_PAGE);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const listRef = useRef<FlatList<Subject>>(null);
+
+  /* ------------------------- network banner -------------------------- */
+  const [forceNetworkBannerVisible, setForceNetworkBannerVisible] = useState(false);
+
+  /* ------------------------- context menu ---------------------------- */
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
+  const [selectedSubject, setSelectedSubject] = useState<Subject | null>(null);
+
+  /* ------------------------- add/edit modal -------------------------- */
+  const [modalVisible, setModalVisible] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [currentSubject, setCurrentSubject] = useState<Subject | null>(null);
+
+  /* ------------------------- form fields ----------------------------- */
+  const [subjectName, setSubjectName] = useState("");
+  const [classCode, setClassCode] = useState("");
+  const [description, setDescription] = useState("");
+  const [gradeLevel, setGradeLevel] = useState("");
+  const [section, setSection] = useState("");
+  const [schoolYear, setSchoolYear] = useState("");
+  const [activeSchoolYear, setActiveSchoolYear] = useState<string | null>(null);
+  const [setSchoolYearSelection, setSetSchoolYearSelection] = useState("");
+  const [settingSchoolYear, setSettingSchoolYear] = useState(false);
+  const [teacherAssignments, setTeacherAssignments] = useState<TeacherAssignment[]>([
+    { teacherId: "", terms: { 1: false, 2: false, 3: false }, isAssignedToAllTerms: false },
+  ]);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+
+  /* ------------------------- sections -------------------------------- */
+  const [sections, setSections] = useState<Section[]>([]);
+  const [selectedSection, setSelectedSection] = useState<string>("");
+  const [activeTab, setActiveTab] = useState<"details" | "sections">("details");
+
+  const [sectionModalVisible, setSectionModalVisible] = useState(false);
+  const [editingSection, setEditingSection] = useState<Section | null>(null);
+  const [newSectionName, setNewSectionName] = useState("");
+  const [sectionGradeLevel, setSectionGradeLevel] = useState("");
+  const [sectionSchoolYear, setSectionSchoolYear] = useState("");
+
+  /* ------------------------- students/teachers ----------------------- */
+  const [allStudents, setAllStudents] = useState<Student[]>([]);
+  const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
+  const [studentSearchQuery, setStudentSearchQuery] = useState("");
+  const [allTeachers, setAllTeachers] = useState<Teacher[]>([]);
+  const [loadingTeachers, setLoadingTeachers] = useState(false);
+
+  const isAdmin = user?.role === "Admin";
+  const isAdminOrTeacher = user?.role === "Admin" || user?.role === "Teacher";
+
+  /* ------------------------- memoized options ------------------------ */
+  const schoolYearOptions = useMemo(() => buildSchoolYearOptions(false), []);
+  const schoolYearFilterOptions = useMemo(() => buildSchoolYearOptions(true), []);
+
+  const teacherOptions: DropdownItem[] = useMemo(() => {
+    const options: DropdownItem[] = [
+      { label: "Select Teacher (Optional)", value: "" },
+    ];
+    allTeachers.forEach((teacher) => {
+      const fullName = teacher.middleName
+        ? `${teacher.firstName} ${teacher.middleName} ${teacher.lastName}`
+        : `${teacher.firstName} ${teacher.lastName}`;
+      options.push({ label: fullName, value: teacher._id });
+    });
+    return options;
+  }, [allTeachers]);
+
+  /* ------------------------- fetch functions ------------------------- */
+  const fetchTeachers = useCallback(async () => {
+    try {
+      setLoadingTeachers(true);
+      const response = await apiClient.get("/users?role=Teacher&status=active");
+      setAllTeachers(response.data.data || []);
+    } catch (error) {
+      console.error("Failed to fetch teachers:", error);
+    } finally {
+      setLoadingTeachers(false);
+    }
+  }, []);
+
+  const fetchActiveSchoolYear = useCallback(async () => {
+    try {
+      const response = await apiClient.get("/subjects/active-school-year");
+      const year = response.data.data?.activeSchoolYear || null;
+      setActiveSchoolYear(year);
+      if (year) setSetSchoolYearSelection(year);
+    } catch (error) {
+      console.error("Failed to fetch active school year:", error);
+    }
+  }, []);
+
+  const fetchSections = useCallback(async (grade?: string, year?: string) => {
+    try {
+      const params = new URLSearchParams();
+      if (grade) params.append("gradeLevel", grade);
+      if (year) params.append("schoolYear", year);
+      const response = await apiClient.get(`/sections?${params.toString()}`);
+      setSections(response.data.data);
+    } catch (error) {
+      console.error("Failed to fetch sections:", error);
+    }
+  }, []);
+
+  const fetchStudents = useCallback(async () => {
+    try {
+      let allStudentsData: Student[] = [];
+      let page = 1;
+      let hasMore = true;
+
+      while (hasMore) {
+        const response = await apiClient.get(
+          `/users?role=Student&status=active&page=${page}&limit=100`
+        );
+        const students = response.data.data || [];
+        if (students.length === 0) hasMore = false;
+        else {
+          allStudentsData = [...allStudentsData, ...students];
+          page++;
+        }
+      }
+      setAllStudents(allStudentsData);
+    } catch (error) {
+      console.error("Failed to fetch students:", error);
+      setAllStudents([]);
+    }
+  }, []);
+
+  const fetchSubjects = useCallback(async () => {
+    setLoading(true);
+    try {
+      let allSubjects: Subject[] = [];
+      let page = 1;
+      let hasMore = true;
+  
+      while (hasMore) {
+        const response = await apiClient.get<{ data: Subject[] }>(
+          `/subjects?page=${page}&limit=100`
+        );
+        const batch = response.data.data || [];
+        if (batch.length === 0) {
+          hasMore = false;
+        } else {
+          allSubjects = [...allSubjects, ...batch];
+          // If the API returns fewer than the limit, we've reached the end
+          if (batch.length < 100) hasMore = false;
+          else page++;
+        }
+      }
+  
+      setSubjects(allSubjects);
+      setDisplayedCount(ITEMS_PER_PAGE);
+      setForceNetworkBannerVisible(false);
+    } catch (error: any) {
+      console.error("Failed to fetch subjects:", error);
+      window.alert("Error: Failed to load subjects.");
+  
+      const isNetworkError =
+        !error?.response ||
+        error?.code === "ECONNABORTED" ||
+        error?.message?.toLowerCase().includes("network") ||
+        error?.message?.toLowerCase().includes("timeout");
+      if (isNetworkError) {
+        setForceNetworkBannerVisible(true);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  /* ------------------------- effects --------------------------------- */
+  useEffect(() => {
+    fetchSubjects();
+  }, [fetchSubjects]);
+
+  useEffect(() => {
+    if (isAdmin) {
+      fetchStudents();
+      fetchTeachers();
+      fetchActiveSchoolYear();
+    }
+  }, [fetchStudents, fetchTeachers, fetchActiveSchoolYear, isAdmin]);
+
+  useEffect(() => {
+    if (gradeLevel && schoolYear && isAdmin) {
+      fetchSections(gradeLevel, schoolYear);
+    }
+  }, [gradeLevel, schoolYear, fetchSections, isAdmin]);
+
+  /* ------------------------- derived data ---------------------------- */
+  const filteredSubjects = useMemo(() => {
+    return subjects.filter((subject) => {
+      const q = searchQuery.toLowerCase();
+      const matchesSearch =
+        subject.subjectName.toLowerCase().includes(q) ||
+        subject.classCode?.toLowerCase().includes(q) ||
+        subject.description?.toLowerCase().includes(q) ||
+        subject.section?.toLowerCase().includes(q);
+      const matchesGradeLevel =
+        !selectedGradeLevel || subject.gradeLevel === selectedGradeLevel;
+      const matchesSchoolYear =
+        !selectedSchoolYear || subject.schoolYear === selectedSchoolYear;
+      return matchesSearch && matchesGradeLevel && matchesSchoolYear;
+    });
+  }, [subjects, searchQuery, selectedGradeLevel, selectedSchoolYear]);
+
+  const displayedSubjects = useMemo(
+    () => filteredSubjects.slice(0, displayedCount),
+    [filteredSubjects, displayedCount]
+  );
+
+  const hasMore = displayedCount < filteredSubjects.length;
+
+  /* ------------------------- reset pagination on filter change ------- */
+  useEffect(() => {
+    setDisplayedCount(ITEMS_PER_PAGE);
+    try {
+      listRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+    } catch {}
+  }, [searchQuery, selectedGradeLevel, selectedSchoolYear]);
+
+  /* ------------------------- infinite scroll ------------------------- */
+  const loadMore = useCallback(() => {
+    if (isLoadingMore || !hasMore) return;
+    setIsLoadingMore(true);
+    // Small delay so the footer spinner is perceivable
+    setTimeout(() => {
+      setDisplayedCount((prev) =>
+        Math.min(prev + ITEMS_PER_PAGE, filteredSubjects.length)
+      );
+      setIsLoadingMore(false);
+    }, 300);
+  }, [isLoadingMore, hasMore, filteredSubjects.length]);
+
+  /* ------------------------- section derived ------------------------- */
+  const availableSections = useMemo(() => {
+    return sections.filter(
+      (s) => s.gradeLevel === gradeLevel && s.schoolYear === schoolYear
+    );
+  }, [sections, gradeLevel, schoolYear]);
+
+  const sectionOptions: DropdownItem[] = useMemo(() => {
+    const options: DropdownItem[] = [{ label: "Select Section", value: "" }];
+    availableSections.forEach((sec) => {
+      options.push({
+        label: `${sec.sectionName} (${sec.students.length} students)`,
+        value: sec.sectionName,
+      });
+    });
+    if (isAdmin) {
+      options.push({ label: "+ Create New Section", value: "__create_new__" });
+    }
+    return options;
+  }, [availableSections, isAdmin]);
+
+  /* ------------------------- filtered students ----------------------- */
+  const filteredStudents = useMemo(() => {
+    const notSelected = allStudents.filter(
+      (s) => !selectedStudents.includes(s._id)
+    );
+    if (!studentSearchQuery.trim()) return notSelected;
+    const q = studentSearchQuery.toLowerCase();
+    return notSelected.filter(
+      (student) =>
+        student.firstName?.toLowerCase().includes(q) ||
+        student.lastName?.toLowerCase().includes(q) ||
+        student.middleName?.toLowerCase().includes(q) ||
+        student.email?.toLowerCase().includes(q) ||
+        student.userId?.toLowerCase().includes(q)
+    );
+  }, [allStudents, studentSearchQuery, selectedStudents]);
+
+  /* ------------------------- handlers -------------------------------- */
+  const handleSetActiveSchoolYear = useCallback(async () => {
+    if (!setSchoolYearSelection) {
+      window.alert("Please select a school year to set.");
+      return;
+    }
+    try {
+      setSettingSchoolYear(true);
+      const response = await apiClient.put("/subjects/active-school-year", {
+        schoolYear: setSchoolYearSelection,
+      });
+      const year = response.data.data?.activeSchoolYear || setSchoolYearSelection;
+      setActiveSchoolYear(year);
+      window.alert(response.data.message || `Active school year set to ${year}`);
+    } catch (error: any) {
+      console.error("Failed to set active school year:", error);
+      window.alert(
+        error.response?.data?.message || "Failed to set active school year."
+      );
+    } finally {
+      setSettingSchoolYear(false);
+    }
+  }, [setSchoolYearSelection]);
+
+  const handleSectionChange = useCallback(
+    (value: string) => {
+      if (value === "__create_new__") {
+        if (!gradeLevel || !schoolYear) {
+          window.alert("Please select grade level and school year first");
+          return;
+        }
+        setEditingSection(null);
+        setNewSectionName("");
+        setSectionGradeLevel(gradeLevel);
+        setSectionSchoolYear(schoolYear);
+        setSelectedStudents([]);
+        setStudentSearchQuery("");
+        setSectionModalVisible(true);
+      } else {
+        setSection(value);
+        setSelectedSection(value);
+      }
+    },
+    [gradeLevel, schoolYear]
+  );
+
+  const handleOpenSectionModal = useCallback(() => {
+    if (!gradeLevel || !schoolYear) {
+      window.alert("Please select grade level and school year first");
+      return;
+    }
+    setEditingSection(null);
+    setNewSectionName("");
+    setSectionGradeLevel(gradeLevel);
+    setSectionSchoolYear(schoolYear);
+    setSelectedStudents([]);
+    setStudentSearchQuery("");
+    setSectionModalVisible(true);
+  }, [gradeLevel, schoolYear]);
+
+  const handleEditSection = useCallback((sec: Section) => {
+    setEditingSection(sec);
+    setNewSectionName(sec.sectionName);
+    setSectionGradeLevel(sec.gradeLevel);
+    setSectionSchoolYear(sec.schoolYear);
+    setSelectedStudents(sec.students.map((s) => s._id));
+    setStudentSearchQuery("");
+    setSectionModalVisible(true);
+  }, []);
+
+  const handleSaveSection = useCallback(async () => {
+    if (!newSectionName.trim()) {
+      window.alert("Please enter section name");
+      return;
+    }
+    try {
+      const sectionData = {
+        sectionName: newSectionName.trim(),
+        gradeLevel: sectionGradeLevel,
+        schoolYear: sectionSchoolYear,
+        studentIds: selectedStudents,
+      };
+      if (editingSection) {
+        await apiClient.put(`/sections/${editingSection._id}`, sectionData);
+        window.alert("Section updated successfully");
+      } else {
+        await apiClient.post("/sections", sectionData);
+        window.alert("Section created successfully");
+      }
+      setSectionModalVisible(false);
+      fetchSections(gradeLevel, schoolYear);
+    } catch (error: any) {
+      console.error("Failed to save section:", error);
+      window.alert(
+        "Error: " + (error.response?.data?.message || "Failed to save section")
+      );
+    }
+  }, [
+    newSectionName,
+    sectionGradeLevel,
+    sectionSchoolYear,
+    selectedStudents,
+    editingSection,
+    fetchSections,
+    gradeLevel,
+    schoolYear,
+  ]);
+
+  const handleDeleteSection = useCallback(
+    async (sectionId: string) => {
+      const confirmDelete = window.confirm(
+        "Are you sure you want to archive this section?"
+      );
+      if (!confirmDelete) return;
+      try {
+        await apiClient.delete(`/sections/${sectionId}`);
+        window.alert("Section archived successfully");
+        fetchSections(gradeLevel, schoolYear);
+      } catch (error: any) {
+        console.error("Failed to delete section:", error);
+        window.alert(
+          "Error: " +
+            (error.response?.data?.message || "Failed to delete section")
+        );
+      }
+    },
+    [fetchSections, gradeLevel, schoolYear]
+  );
+
+  const handleToggleStudent = useCallback((studentId: string) => {
+    setSelectedStudents((prev) =>
+      prev.includes(studentId)
+        ? prev.filter((id) => id !== studentId)
+        : [...prev, studentId]
+    );
+  }, []);
+
+  const handleAddSubject = useCallback(() => {
+    setIsEditing(false);
+    setCurrentSubject(null);
+    setSubjectName("");
+    setClassCode("");
+    setDescription("");
+    setGradeLevel("");
+    setSection("");
+    setSchoolYear("");
+    setTeacherAssignments([
+      { teacherId: "", terms: { 1: false, 2: false, 3: false }, isAssignedToAllTerms: false },
+    ]);
+    setSelectedImage(null);
+    setActiveTab("details");
+    setModalVisible(true);
+  }, []);
+
+  const handleCloseMenu = useCallback(() => {
+    setMenuVisible(false);
+    setSelectedSubject(null);
+  }, []);
+
+  const handleEditSubject = useCallback((subject: Subject) => {
+    setIsEditing(true);
+    setCurrentSubject(subject);
+    setSubjectName(subject.subjectName);
+    setClassCode(subject.classCode || "");
+    setDescription(subject.description || "");
+    setGradeLevel(subject.gradeLevel || "");
+    setSection(subject.section || "");
+    setSchoolYear(subject.schoolYear || "");
+
+    const assignments: TeacherAssignment[] = (subject.teachers || []).map(
+      (ta: any) => ({
+        teacherId: ta.teacher?._id || "",
+        terms: ta.terms || { 1: false, 2: false, 3: false },
+        isAssignedToAllTerms: ta.isAssignedToAllTerms || false,
+      })
+    );
+
+    setTeacherAssignments(
+      assignments.length > 0
+        ? assignments
+        : [
+            {
+              teacherId: "",
+              terms: { 1: false, 2: false, 3: false },
+              isAssignedToAllTerms: false,
+            },
+          ]
+    );
+    setSelectedImage(null);
+    setActiveTab("details");
+    setModalVisible(true);
+    setMenuVisible(false);
+    setSelectedSubject(null);
+  }, []);
+
+  const handleTeacherChange = useCallback((index: number, teacherId: string) => {
+    setTeacherAssignments((prev) => {
+      const updated = [...prev];
+      updated[index] = { ...updated[index], teacherId };
+      return updated;
+    });
+  }, []);
+
+  const handleTermChange = useCallback(
+    (index: number, term: "1" | "2" | "3") => {
+      setTeacherAssignments((prev) => {
+        const updated = [...prev];
+        updated[index] = {
+          ...updated[index],
+          terms: {
+            ...updated[index].terms,
+            [term]: !updated[index].terms[term],
+          },
+        };
+        return updated;
+      });
+    },
+    []
+  );
+
+  const handleAllTermsToggle = useCallback((index: number) => {
+    setTeacherAssignments((prev) => {
+      const updated = [...prev];
+      const isAll = !updated[index].isAssignedToAllTerms;
+      updated[index] = {
+        ...updated[index],
+        isAssignedToAllTerms: isAll,
+        terms: isAll ? { 1: true, 2: true, 3: true } : updated[index].terms,
+      };
+      return updated;
+    });
+  }, []);
+
+  const handleAddTeacherRow = useCallback(() => {
+    setTeacherAssignments((prev) => [
+      ...prev,
+      {
+        teacherId: "",
+        terms: { 1: false, 2: false, 3: false },
+        isAssignedToAllTerms: false,
+      },
+    ]);
+  }, []);
+
+  const handleRemoveTeacherRow = useCallback((index: number) => {
+    setTeacherAssignments((prev) => {
+      if (prev.length === 1) {
+        window.alert("At least one teacher assignment is required");
+        return prev;
+      }
+      return prev.filter((_, i) => i !== index);
+    });
+  }, []);
+
+  const handleUploadImage = useCallback(
+    async (subjectId: string, imageUri: string) => {
+      setUploadingImage(true);
+      try {
+        const formData = new FormData();
+        const response = await fetch(imageUri);
+        const blob = await response.blob();
+        formData.append("subjectImage", blob, "subject-image.jpg");
+
+        await apiClient.put(`/subjects/${subjectId}/upload-image`, formData, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+        window.alert("Success: Subject image uploaded successfully");
+        setSelectedImage(null);
+        fetchSubjects();
+      } catch (error: any) {
+        console.error("Error uploading image:", error);
+        window.alert(
+          "Error: " +
+            (error.response?.data?.message || "Failed to upload image")
+        );
+      } finally {
+        setUploadingImage(false);
+      }
+    },
+    [fetchSubjects]
+  );
+
+  const handleSubmit = useCallback(async () => {
+    if (!teacherAssignments.some((ta) => ta.teacherId.trim())) {
+      window.alert("Error: Please assign at least one teacher");
+      return;
+    }
+
+    const validAssignments = teacherAssignments.filter(
+      (ta) =>
+        ta.teacherId.trim() &&
+        (ta.isAssignedToAllTerms || Object.values(ta.terms).some((t) => t))
+    );
+
+    if (validAssignments.length === 0) {
+      window.alert("Error: Each teacher must be assigned to at least one term");
+      return;
+    }
+
+    if (!classCode.trim()) {
+      window.alert("Error: Class code is required.");
+      return;
+    }
+
+    if (classCode.trim().length > 12) {
+      window.alert("Error: Class code must be at most 12 characters.");
+      return;
+    }
+
+    const formData: SubjectForm = {
+      subjectName,
+      classCode: classCode.trim().toUpperCase(),
+      description,
+      gradeLevel,
+      section,
+      schoolYear,
+      teachers: validAssignments,
+    };
+
+    try {
+      if (isEditing && currentSubject) {
+        const response = await apiClient.put(
+          `/subjects/${currentSubject._id}`,
+          formData
+        );
+        const updated = response.data.data;
+        window.alert(
+          `Success: ${formatSubjectDisplay(
+            updated || {
+              classCode: formData.classCode,
+              subjectName: formData.subjectName,
+            }
+          )}`
+        );
+      } else {
+        const response = await apiClient.post("/subjects", formData);
+        if (selectedImage && response.data.data?._id) {
+          await handleUploadImage(response.data.data._id, selectedImage);
+        }
+        const created = response.data.data;
+        window.alert(`Success: ${formatSubjectDisplay(created)}`);
+      }
+      setModalVisible(false);
+      setSelectedImage(null);
+      setSections([]);
+      fetchSubjects();
+    } catch (error: any) {
+      console.error(
+        "Failed to save subject:",
+        error.response?.data || error.message
+      );
+      const backendErrorMessage = error.response?.data?.message;
+      if (
+        backendErrorMessage?.includes("Class code already exists") ||
+        (backendErrorMessage?.includes("Duplicate field value entered") &&
+          backendErrorMessage?.includes("classCode"))
+      ) {
+        window.alert(
+          "Error: Class code already exists. Please use a different code."
+        );
+      } else {
+        window.alert(
+          "Error: " + (backendErrorMessage || "Failed to save subject.")
+        );
+      }
+    }
+  }, [
+    teacherAssignments,
+    classCode,
+    subjectName,
+    description,
+    gradeLevel,
+    section,
+    schoolYear,
+    isEditing,
+    currentSubject,
+    selectedImage,
+    handleUploadImage,
+    fetchSubjects,
+  ]);
+
+  const handlePickImage = useCallback(async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: "image/*",
+        copyToCacheDirectory: true,
+      });
+      if (!result.canceled && result.assets?.length > 0) {
+        setSelectedImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error("Error picking image:", error);
+      window.alert("Error: Failed to pick image");
+    }
+  }, []);
+
+  const handleDeleteImage = useCallback(
+    async (subjectId: string) => {
+      const confirmDelete = window.confirm(
+        "Are you sure you want to delete this subject image?"
+      );
+      if (!confirmDelete) return;
+      try {
+        await apiClient.delete(`/subjects/${subjectId}/delete-image`);
+        window.alert("Success: Subject image deleted successfully");
+        fetchSubjects();
+      } catch (error: any) {
+        console.error("Error deleting image:", error);
+        window.alert(
+          "Error: " +
+            (error.response?.data?.message || "Failed to delete image")
+        );
+      }
+    },
+    [fetchSubjects]
+  );
+
+  const handleDeleteSubject = useCallback(
+    async (subjectId: string) => {
+      const confirmDelete = window.confirm(
+        "Are you sure you want to delete this subject? This action cannot be undone."
+      );
+      if (!confirmDelete) return;
+      try {
+        await apiClient.delete(`/subjects/${subjectId}`);
+        window.alert("Success: Subject deleted successfully.");
+        handleCloseMenu();
+        fetchSubjects();
+      } catch (error: any) {
+        console.error("Failed to delete subject:", error);
+        window.alert(
+          "Error: " +
+            (error.response?.data?.message || "Failed to delete subject.")
+        );
+      }
+    },
+    [handleCloseMenu, fetchSubjects]
+  );
+
+  const handleOpenMenu = useCallback((event: any, subject: Subject) => {
+    const { pageX, pageY } = event.nativeEvent;
+    setMenuPosition({ x: pageX, y: pageY });
+    setSelectedSubject(subject);
+    setMenuVisible(true);
+  }, []);
+
+  const handleViewSubject = useCallback(
+    (subject: Subject) => {
+      router.push(`/subjects/${subject._id}` as any);
+    },
+    [router]
+  );
+
+  const handleViewingSubjectTab = useCallback((tab: "details" | "sections") => {
+    setActiveTab(tab);
+  }, []);
+
+  const handleCloseSubjectModal = useCallback(() => {
+    setModalVisible(false);
+    setSelectedImage(null);
+    setActiveTab("details");
+  }, []);
+
+  /* ------------------------- renderers ------------------------------- */
+  const renderSubjectItem = useCallback(
+    ({ item }: { item: Subject }) => (
+      <SubjectItem
+        item={item}
+        isDarkMode={isDarkMode}
+        onPress={handleViewSubject}
+        onMenuPress={handleOpenMenu}
+      />
+    ),
+    [isDarkMode, handleViewSubject, handleOpenMenu]
+  );
+
+  /* ------------------------- context menu items ---------------------- */
+  const menuItems = useMemo(
+    () => [
+      {
+        label: "Edit Subject",
+        onPress: () => selectedSubject && handleEditSubject(selectedSubject),
+        icon: (
+          <Image
+            className="w-[20] h-[20] mr-2"
+            contentFit="contain"
+            source={require("@/assets/icons/edit.png")}
+            cachePolicy="memory-disk"
+            tintColor={isDarkMode ? "#E0E0E0" : "#333"}
+          />
+        ),
+      },
+      {
+        label: "Delete Subject",
+        onPress: () =>
+          selectedSubject && handleDeleteSubject(selectedSubject._id),
+        icon: (
+          <DeleteIcon
+            width={20}
+            height={20}
+            style={{ marginRight: 8 }}
+            fill="#EF4444"
+          />
+        ),
+      },
+    ],
+    [selectedSubject, isDarkMode, handleEditSubject, handleDeleteSubject]
+  );
+
+  /* ------------------------- list header ----------------------------- */
+  const listHeader = useMemo(
+    () => (
       <View
         className={`px-5 pt-5 pb-4 border-b ${
           isDarkMode
@@ -1094,7 +1127,7 @@ const SubjectsWeb: React.FC = () => {
         }`}
       >
         <View className="flex-row justify-between items-center">
-          <View>
+          <View style={{ flex: 1 }}>
             <Text
               className={`text-2xl font-inter_bold ${
                 isDarkMode ? "text-[#F9FAFB]" : "text-[#111827]"
@@ -1107,15 +1140,12 @@ const SubjectsWeb: React.FC = () => {
                 isDarkMode ? "text-[#9CA3AF]" : "text-[#6B7280]"
               }`}
             >
-              Showing {startIndex + 1}-
-              {Math.min(endIndex, filteredSubjects.length)} of{" "}
-              {filteredSubjects.length} subjects
+              Showing {displayedSubjects.length} of {filteredSubjects.length}{" "}
+              subjects
             </Text>
           </View>
 
-          {/* Buttons Container */}
           <View className="flex-row gap-1">
-            {/* Add Subject Button */}
             {isAdminOrTeacher && (
               <TouchableOpacity
                 onPress={handleAddSubject}
@@ -1133,7 +1163,6 @@ const SubjectsWeb: React.FC = () => {
                 )}
               </TouchableOpacity>
             )}
-            {/* Refresh Button */}
             <TouchableOpacity
               onPress={fetchSubjects}
               disabled={loading}
@@ -1153,7 +1182,6 @@ const SubjectsWeb: React.FC = () => {
           </View>
         </View>
 
-        {/* Filters */}
         <View className="mt-4">
           <View className="flex-row mb-3">
             <View className="flex-1 mr-2">
@@ -1171,22 +1199,13 @@ const SubjectsWeb: React.FC = () => {
             </View>
             <TouchableOpacity
               onPress={fetchSubjects}
-              className="bg-[#10B981] px-4 py-2 rounded-lg mr-2 justify-center items-center h-[45px]"
+              className="bg-[#10B981] px-4 py-2 rounded-lg justify-center items-center h-[45px]"
             >
               <Text className="text-white font-inter_semibold">Search</Text>
             </TouchableOpacity>
-            <View style={{ width: 100 }}>
-              <Dropdown
-                data={itemsPerPageOptions}
-                selectedValue={itemsPerPage.toString()}
-                onValueChange={(value) => setItemsPerPage(parseInt(value))}
-                placeholder="Items per page"
-              />
-            </View>
           </View>
 
           <View className="flex-row gap-2">
-            {/* Grade Level Filter */}
             <View className="flex-1">
               <Text
                 className={`text-xs font-inter_medium mb-1 ${
@@ -1196,14 +1215,13 @@ const SubjectsWeb: React.FC = () => {
                 Grade Level
               </Text>
               <Dropdown
-                data={gradeLevelFilterOptions}
+                data={GRADE_LEVEL_FILTER_OPTIONS}
                 selectedValue={selectedGradeLevel}
                 onValueChange={setSelectedGradeLevel}
                 placeholder="All Grade Levels"
               />
             </View>
 
-            {/* School Year Filter */}
             <View className="flex-1">
               <Text
                 className={`text-xs font-inter_medium mb-1 ${
@@ -1222,152 +1240,141 @@ const SubjectsWeb: React.FC = () => {
           </View>
         </View>
       </View>
+    ),
+    [
+      isDarkMode,
+      displayedSubjects.length,
+      filteredSubjects.length,
+      isAdminOrTeacher,
+      width,
+      loading,
+      searchQuery,
+      selectedGradeLevel,
+      selectedSchoolYear,
+      schoolYearFilterOptions,
+      handleAddSubject,
+      fetchSubjects,
+    ]
+  );
 
-      {/* Content */}
-      <View className="flex-1">
-        {paginatedSubjects.length > 0 ? (
-          <FlatList
-            data={paginatedSubjects}
-            renderItem={renderSubjectItem}
-            keyExtractor={(item) => item._id}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ padding: 20 }}
-          />
-        ) : (
-          <View className="flex-1 justify-center items-center p-5">
-            <Image
-              source={require("@/assets/images/online-course.png")}
-              className="w-[64] h-[64] mb-4 opacity-45"
-            />
+  /* ------------------------- list empty ------------------------------ */
+  const listEmpty = useMemo(
+    () => (
+      <View className="justify-center items-center p-10" style={{ minHeight: 300 }}>
+        <Image
+          source={require("@/assets/images/online-course.png")}
+          className="w-[64] h-[64] mb-4 opacity-45"
+        />
+        <Text
+          className={`text-lg font-inter_semibold mb-2 ${
+            isDarkMode ? "text-[#9CA3AF]" : "text-[#6B7280]"
+          }`}
+        >
+          No subjects found
+        </Text>
+        <Text
+          className={`text-sm font-inter_regular text-center ${
+            isDarkMode ? "text-[#6B7280]" : "text-[#9CA3AF]"
+          }`}
+        >
+          {searchQuery || selectedGradeLevel || selectedSchoolYear
+            ? "Try adjusting your filters"
+            : "Create your first subject to get started"}
+        </Text>
+      </View>
+    ),
+    [isDarkMode, searchQuery, selectedGradeLevel, selectedSchoolYear]
+  );
+
+  /* ------------------------- list footer ----------------------------- */
+  const listFooter = useMemo(
+    () => (
+      <View className="py-5 items-center">
+        {isLoadingMore ? (
+          <>
+            <ActivityIndicator size="small" color="#3B82F6" />
             <Text
-              className={`text-lg font-inter_semibold mb-2 ${
+              className={`mt-2 text-xs font-inter_regular ${
                 isDarkMode ? "text-[#9CA3AF]" : "text-[#6B7280]"
               }`}
             >
-              No subjects found
+              Loading more subjects...
             </Text>
-            <Text
-              className={`text-sm font-inter_regular text-center ${
-                isDarkMode ? "text-[#6B7280]" : "text-[#9CA3AF]"
-              }`}
-            >
-              {searchQuery || selectedGradeLevel || selectedSchoolYear
-                ? "Try adjusting your filters"
-                : "Create your first subject to get started"}
-            </Text>
-          </View>
-        )}
-
-        {/* Pagination Controls */}
-        {totalPages > 1 && (
-          <View
-            className={`px-5 py-4 border-t ${
-              isDarkMode
-                ? "bg-[#1E1E1E] border-[#333333]"
-                : "bg-white border-[#E5E7EB]"
+          </>
+        ) : !hasMore && filteredSubjects.length > ITEMS_PER_PAGE ? (
+          <Text
+            className={`text-xs font-inter_regular ${
+              isDarkMode ? "text-[#6B7280]" : "text-[#9CA3AF]"
             }`}
           >
-            <View className="flex-row justify-between items-center">
-              {/* Previous Button */}
-              <TouchableOpacity
-                onPress={goToPreviousPage}
-                disabled={currentPage === 1}
-                className={`px-4 py-2 rounded-lg ${
-                  currentPage === 1
-                    ? isDarkMode
-                      ? "bg-[#2A2A2A]"
-                      : "bg-[#F3F4F6]"
-                    : "bg-[#3B82F6]"
-                }`}
-              >
-                <Text
-                  className={`font-inter_semibold ${
-                    currentPage === 1
-                      ? isDarkMode
-                        ? "text-[#6B7280]"
-                        : "text-[#9CA3AF]"
-                      : "text-white"
-                  }`}
-                >
-                  Previous
-                </Text>
-              </TouchableOpacity>
-
-              {/* Page Numbers */}
-              <View className="flex-row gap-2">
-                {getPageNumbers().map((page, index) => {
-                  if (page === "...") {
-                    return (
-                      <View key={`ellipsis-${index}`} className="px-3 py-2">
-                        <Text
-                          className={`font-inter_regular ${
-                            isDarkMode ? "text-[#9CA3AF]" : "text-[#6B7280]"
-                          }`}
-                        >
-                          ...
-                        </Text>
-                      </View>
-                    );
-                  }
-
-                  const isCurrentPage = page === currentPage;
-
-                  return (
-                    <TouchableOpacity
-                      key={page}
-                      onPress={() => goToPage(page as number)}
-                      className={`px-3 py-2 rounded-lg min-w-[40px] items-center ${
-                        isCurrentPage
-                          ? "bg-[#3B82F6]"
-                          : isDarkMode
-                          ? "bg-[#2A2A2A]"
-                          : "bg-[#F3F4F6]"
-                      }`}
-                    >
-                      <Text
-                        className={`font-inter_semibold ${
-                          isCurrentPage
-                            ? "text-white"
-                            : isDarkMode
-                            ? "text-[#E0E0E0]"
-                            : "text-[#111827]"
-                        }`}
-                      >
-                        {page}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              {/* Next Button */}
-              <TouchableOpacity
-                onPress={goToNextPage}
-                disabled={currentPage === totalPages}
-                className={`px-4 py-2 rounded-lg ${
-                  currentPage === totalPages
-                    ? isDarkMode
-                      ? "bg-[#2A2A2A]"
-                      : "bg-[#F3F4F6]"
-                    : "bg-[#3B82F6]"
-                }`}
-              >
-                <Text
-                  className={`font-inter_semibold ${
-                    currentPage === totalPages
-                      ? isDarkMode
-                        ? "text-[#6B7280]"
-                        : "text-[#9CA3AF]"
-                      : "text-white"
-                  }`}
-                >
-                  Next
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
+            All {filteredSubjects.length} subjects loaded
+          </Text>
+        ) : null}
       </View>
+    ),
+    [
+      isLoadingMore,
+      isDarkMode,
+      hasMore,
+      filteredSubjects.length,
+    ]
+  );
+
+  /* ------------------------- early returns --------------------------- */
+  if (isLoading || loading) {
+    return (
+      <SafeAreaView
+        className={`flex-1 items-center justify-center ${
+          isDarkMode ? "bg-[#1A1A1A]" : "bg-[#F9FAFB]"
+        }`}
+      >
+        <NetworkBanner
+          forceVisible={forceNetworkBannerVisible}
+          onRetry={fetchSubjects}
+          onDismiss={() => setForceNetworkBannerVisible(false)}
+        />
+        <ActivityIndicator size="large" color="#3B82F6" />
+        <Text
+          className={`mt-4 text-sm font-inter_regular ${
+            isDarkMode ? "text-[#9CA3AF]" : "text-[#6B7280]"
+          }`}
+        >
+          Loading subjects...
+        </Text>
+        <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
+      </SafeAreaView>
+    );
+  }
+
+  /* ------------------------- main render ----------------------------- */
+  return (
+    <View className={`flex-1 ${isDarkMode ? "bg-[#1A1A1A]" : "bg-[#F9FAFB]"}`}>
+      <NetworkBanner
+        forceVisible={forceNetworkBannerVisible}
+        onRetry={fetchSubjects}
+        onDismiss={() => setForceNetworkBannerVisible(false)}
+      />
+
+      {/* Entire screen scrolls as one unit */}
+      <FlatList
+        ref={listRef}
+        data={displayedSubjects}
+        renderItem={renderSubjectItem}
+        keyExtractor={(item) => item._id}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={listEmpty}
+        ListFooterComponent={listFooter}
+        contentContainerStyle={{ paddingBottom: 20, flexGrow: 1 }}
+        showsVerticalScrollIndicator={false}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.5}
+        initialNumToRender={ITEMS_PER_PAGE}
+        maxToRenderPerBatch={ITEMS_PER_PAGE}
+        windowSize={7}
+        removeClippedSubviews
+        updateCellsBatchingPeriod={50}
+        keyboardShouldPersistTaps="handled"
+      />
 
       <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
 
@@ -1394,9 +1401,9 @@ const SubjectsWeb: React.FC = () => {
       {/* Add/Edit Subject Modal */}
       <Modal
         animationType="fade"
-        transparent={true}
+        transparent
         visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
+        onRequestClose={handleCloseSubjectModal}
       >
         <View className="flex-1 justify-center items-center p-4 bg-black/50">
           <View
@@ -1415,7 +1422,7 @@ const SubjectsWeb: React.FC = () => {
             {/* Tabs */}
             <View className="flex-row mb-4 border-b border-gray-300">
               <TouchableOpacity
-                onPress={() => setActiveTab("details")}
+                onPress={() => handleViewingSubjectTab("details")}
                 className={`flex-1 py-3 ${
                   activeTab === "details" ? "border-b-2 border-blue-500" : ""
                 }`}
@@ -1434,11 +1441,9 @@ const SubjectsWeb: React.FC = () => {
               </TouchableOpacity>
               {isAdmin && (
                 <TouchableOpacity
-                  onPress={() => setActiveTab("sections")}
+                  onPress={() => handleViewingSubjectTab("sections")}
                   className={`flex-1 py-3 ${
-                    activeTab === "sections"
-                      ? "border-b-2 border-blue-500"
-                      : ""
+                    activeTab === "sections" ? "border-b-2 border-blue-500" : ""
                   }`}
                 >
                   <Text
@@ -1456,10 +1461,7 @@ const SubjectsWeb: React.FC = () => {
               )}
             </View>
 
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              className="flex-1"
-            >
+            <ScrollView showsVerticalScrollIndicator={false} className="flex-1">
               {activeTab === "details" ? (
                 <>
                   {/* Subject Image */}
@@ -1468,7 +1470,7 @@ const SubjectsWeb: React.FC = () => {
                       isDarkMode ? "text-[#E0E0E0]" : "text-black"
                     }`}
                   >
-                    Subject Image (Optional):
+                    Subject Image (Optional)
                   </Text>
 
                   {(selectedImage ||
@@ -1529,13 +1531,44 @@ const SubjectsWeb: React.FC = () => {
                     </Text>
                   </TouchableOpacity>
 
-                  {/* Subject Name */}
+                  {/* Class Code */}
                   <Text
                     className={`font-inter_semibold ml-1 mt-2 mb-2 ${
                       isDarkMode ? "text-[#E0E0E0]" : "text-black"
                     }`}
                   >
-                    Subject Name:
+                    Class Code <Text className="text-red-500">*</Text>
+                  </Text>
+                  <TextInput
+                    className={`font-inter_regular border rounded-lg p-3 mb-2 ${
+                      isDarkMode
+                        ? "bg-[#2A2A2A] border-gray-600 text-white"
+                        : "bg-white border-gray-300 text-black"
+                    }`}
+                    placeholder="e.g. SCIBIOG06"
+                    placeholderTextColor={isDarkMode ? "#9ca3af" : "#6b7280"}
+                    value={classCode}
+                    onChangeText={(text) =>
+                      setClassCode(normalizeClassCodeInput(text))
+                    }
+                    maxLength={12}
+                    autoCapitalize="characters"
+                  />
+                  <Text
+                    className={`font-inter_regular text-xs mb-4 ml-1 ${
+                      isDarkMode ? "text-gray-400" : "text-gray-600"
+                    }`}
+                  >
+                    Max 12 characters. Letters and numbers only.
+                  </Text>
+
+                  {/* Subject Name */}
+                  <Text
+                    className={`font-inter_semibold ml-1 mb-2 ${
+                      isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                    }`}
+                  >
+                    Subject Name <Text className="text-red-500">*</Text>
                   </Text>
                   <TextInput
                     className={`font-inter_regular border rounded-lg p-3 mb-4 ${
@@ -1543,19 +1576,19 @@ const SubjectsWeb: React.FC = () => {
                         ? "bg-[#2A2A2A] border-gray-600 text-white"
                         : "bg-white border-gray-300 text-black"
                     }`}
-                    placeholder="Enter subject name"
+                    placeholder="e.g. Science Biology 6"
                     placeholderTextColor={isDarkMode ? "#9ca3af" : "#6b7280"}
                     value={subjectName}
                     onChangeText={setSubjectName}
                   />
 
-                  {/* Teachers Assignment Section (REQUIRED) */}
+                  {/* Teacher Assignments */}
                   <Text
                     className={`font-inter_bold ml-1 mb-3 text-base ${
                       isDarkMode ? "text-[#E0E0E0]" : "text-black"
                     }`}
                   >
-                    Assign Teachers (Required):
+                    Assign Teachers <Text className="text-red-500">*</Text>
                   </Text>
 
                   {teacherAssignments.map((assignment, index) => (
@@ -1567,7 +1600,6 @@ const SubjectsWeb: React.FC = () => {
                           : "bg-gray-50 border-gray-300"
                       }`}
                     >
-                      {/* Teacher Selection */}
                       <View className="flex-row justify-between items-center mb-3">
                         <Text
                           className={`font-inter_semibold ${
@@ -1601,15 +1633,12 @@ const SubjectsWeb: React.FC = () => {
 
                       {assignment.teacherId && (
                         <>
-                          {/* All Quarters Toggle */}
                           <View className="flex-row items-center mb-3 p-2 rounded-lg bg-opacity-50">
                             <Checkbox
-                              value={assignment.isAssignedToAllQuarters}
-                              onValueChange={() =>
-                                handleAllQuartersToggle(index)
-                              }
+                              value={assignment.isAssignedToAllTerms}
+                              onValueChange={() => handleAllTermsToggle(index)}
                               color={
-                                assignment.isAssignedToAllQuarters
+                                assignment.isAssignedToAllTerms
                                   ? "#3B82F6"
                                   : undefined
                               }
@@ -1619,51 +1648,35 @@ const SubjectsWeb: React.FC = () => {
                                 isDarkMode ? "text-[#E0E0E0]" : "text-black"
                               }`}
                             >
-                              Assign to All Quarters
+                              Assign to All Terms
                             </Text>
                           </View>
 
-                          {!assignment.isAssignedToAllQuarters && (
+                          {!assignment.isAssignedToAllTerms && (
                             <>
                               <Text
                                 className={`font-inter_semibold mb-2 text-sm ${
-                                  isDarkMode ? "text-[#9CA3AF]" : "text-gray-600"
+                                  isDarkMode
+                                    ? "text-[#9CA3AF]"
+                                    : "text-gray-600"
                                 }`}
                               >
-                                Select Quarters:
+                                Select Terms:
                               </Text>
 
                               <View className="space-y-2">
-                                {[
-                                  "firstQuarter",
-                                  "secondQuarter",
-                                  "thirdQuarter",
-                                  "fourthQuarter",
-                                ].map((quarter) => (
+                                {(["1", "2", "3"] as const).map((term) => (
                                   <View
-                                    key={quarter}
+                                    key={term}
                                     className="flex-row items-center"
                                   >
                                     <Checkbox
-                                      value={
-                                        assignment.quarters[
-                                          quarter as keyof typeof assignment.quarters
-                                        ]
-                                      }
+                                      value={assignment.terms[term]}
                                       onValueChange={() =>
-                                        handleQuarterChange(
-                                          index,
-                                          quarter as
-                                            | "firstQuarter"
-                                            | "secondQuarter"
-                                            | "thirdQuarter"
-                                            | "fourthQuarter"
-                                        )
+                                        handleTermChange(index, term)
                                       }
                                       color={
-                                        assignment.quarters[
-                                          quarter as keyof typeof assignment.quarters
-                                        ]
+                                        assignment.terms[term]
                                           ? "#3B82F6"
                                           : undefined
                                       }
@@ -1675,14 +1688,9 @@ const SubjectsWeb: React.FC = () => {
                                           : "text-black"
                                       }`}
                                     >
-                                      {quarter === "firstQuarter" &&
-                                        "1st Quarter"}
-                                      {quarter === "secondQuarter" &&
-                                        "2nd Quarter"}
-                                      {quarter === "thirdQuarter" &&
-                                        "3rd Quarter"}
-                                      {quarter === "fourthQuarter" &&
-                                        "4th Quarter"}
+                                      {term === "1" && "1st Term"}
+                                      {term === "2" && "2nd Term"}
+                                      {term === "3" && "3rd Term"}
                                     </Text>
                                   </View>
                                 ))}
@@ -1709,16 +1717,69 @@ const SubjectsWeb: React.FC = () => {
                       isDarkMode ? "text-[#E0E0E0]" : "text-black"
                     }`}
                   >
-                    Grade Level:
+                    Grade Level <Text className="text-red-500">*</Text>
                   </Text>
                   <View className="mb-3">
                     <Dropdown
-                      data={gradeLevelOptions}
+                      data={GRADE_LEVEL_OPTIONS}
                       selectedValue={gradeLevel}
                       onValueChange={setGradeLevel}
                       placeholder="Select Grade Level"
                     />
                   </View>
+
+                  {/* Set School Year (admin only) */}
+                  {isAdmin && (
+                    <View className="mb-4">
+                      <Text
+                        className={`font-inter_semibold ml-1 mb-2 ${
+                          isDarkMode ? "text-[#E0E0E0]" : "text-black"
+                        }`}
+                      >
+                        Set School Year
+                      </Text>
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 8,
+                        }}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Dropdown
+                            data={schoolYearOptions}
+                            selectedValue={setSchoolYearSelection}
+                            onValueChange={setSetSchoolYearSelection}
+                            placeholder="Select School Year"
+                          />
+                        </View>
+                        <TouchableOpacity
+                          onPress={handleSetActiveSchoolYear}
+                          disabled={
+                            settingSchoolYear || !setSchoolYearSelection
+                          }
+                          className={`px-4 py-3 rounded-lg ${
+                            settingSchoolYear || !setSchoolYearSelection
+                              ? "bg-gray-400"
+                              : "bg-blue-500"
+                          }`}
+                        >
+                          <Text className="text-white font-inter_semibold">
+                            {settingSchoolYear ? "Setting..." : "Set"}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                      <Text
+                        className={`font-inter_regular text-xs mt-2 ml-1 ${
+                          isDarkMode ? "text-gray-400" : "text-gray-600"
+                        }`}
+                      >
+                        {activeSchoolYear
+                          ? `Active school year for teachers: ${activeSchoolYear}`
+                          : "No active school year set. Teachers can choose any school year."}
+                      </Text>
+                    </View>
+                  )}
 
                   {/* School Year */}
                   <Text
@@ -1726,7 +1787,7 @@ const SubjectsWeb: React.FC = () => {
                       isDarkMode ? "text-[#E0E0E0]" : "text-black"
                     }`}
                   >
-                    School Year:
+                    School Year <Text className="text-red-500">*</Text>
                   </Text>
                   <View className="mb-3">
                     <Dropdown
@@ -1743,7 +1804,7 @@ const SubjectsWeb: React.FC = () => {
                       isDarkMode ? "text-[#E0E0E0]" : "text-black"
                     }`}
                   >
-                    Section:
+                    Section <Text className="text-red-500">*</Text>
                   </Text>
                   <View className="mb-3">
                     <Dropdown
@@ -1779,7 +1840,7 @@ const SubjectsWeb: React.FC = () => {
                 </>
               ) : (
                 <>
-                  {/* Sections Tab Content */}
+                  {/* Sections tab */}
                   <Text
                     className={`font-inter_bold text-lg mb-4 ${
                       isDarkMode ? "text-[#E0E0E0]" : "text-black"
@@ -1789,15 +1850,20 @@ const SubjectsWeb: React.FC = () => {
                   </Text>
 
                   {!gradeLevel || !schoolYear ? (
-                    <View className={`p-4 rounded-lg border ${
-                      isDarkMode
-                        ? "bg-[#2A2A2A] border-gray-600"
-                        : "bg-gray-100 border-gray-300"
-                    }`}>
-                      <Text className={`font-inter_regular ${
-                        isDarkMode ? "text-gray-400" : "text-gray-600"
-                      }`}>
-                        Please select grade level and school year first on the Subject Details tab
+                    <View
+                      className={`p-4 rounded-lg border ${
+                        isDarkMode
+                          ? "bg-[#2A2A2A] border-gray-600"
+                          : "bg-gray-100 border-gray-300"
+                      }`}
+                    >
+                      <Text
+                        className={`font-inter_regular ${
+                          isDarkMode ? "text-gray-400" : "text-gray-600"
+                        }`}
+                      >
+                        Please select grade level and school year first on the
+                        Subject Details tab
                       </Text>
                     </View>
                   ) : (
@@ -1823,14 +1889,22 @@ const SubjectsWeb: React.FC = () => {
                               }`}
                             >
                               <View className="flex-1">
-                                <Text className={`font-inter_bold ${
-                                  isDarkMode ? "text-[#E0E0E0]" : "text-black"
-                                }`}>
+                                <Text
+                                  className={`font-inter_bold ${
+                                    isDarkMode
+                                      ? "text-[#E0E0E0]"
+                                      : "text-black"
+                                  }`}
+                                >
                                   {sec.sectionName}
                                 </Text>
-                                <Text className={`text-sm font-inter_regular ${
-                                  isDarkMode ? "text-[#9CA3AF]" : "text-[#6B7280]"
-                                }`}>
+                                <Text
+                                  className={`text-sm font-inter_regular ${
+                                    isDarkMode
+                                      ? "text-[#9CA3AF]"
+                                      : "text-[#6B7280]"
+                                  }`}
+                                >
                                   {sec.students.length} students
                                 </Text>
                               </View>
@@ -1856,14 +1930,18 @@ const SubjectsWeb: React.FC = () => {
                           ))}
                         </View>
                       ) : (
-                        <View className={`p-4 rounded-lg border ${
-                          isDarkMode
-                            ? "bg-[#2A2A2A] border-gray-600"
-                            : "bg-gray-100 border-gray-300"
-                        }`}>
-                          <Text className={`font-inter_regular text-center ${
-                            isDarkMode ? "text-gray-400" : "text-gray-600"
-                          }`}>
+                        <View
+                          className={`p-4 rounded-lg border ${
+                            isDarkMode
+                              ? "bg-[#2A2A2A] border-gray-600"
+                              : "bg-gray-100 border-gray-300"
+                          }`}
+                        >
+                          <Text
+                            className={`font-inter_regular text-center ${
+                              isDarkMode ? "text-gray-400" : "text-gray-600"
+                            }`}
+                          >
                             No sections available. Create one to get started.
                           </Text>
                         </View>
@@ -1874,7 +1952,7 @@ const SubjectsWeb: React.FC = () => {
               )}
             </ScrollView>
 
-            {/* Buttons */}
+            {/* Modal buttons */}
             <View className="flex-row mt-4 gap-2">
               <TouchableOpacity
                 onPress={handleSubmit}
@@ -1890,11 +1968,7 @@ const SubjectsWeb: React.FC = () => {
                 )}
               </TouchableOpacity>
               <TouchableOpacity
-                onPress={() => {
-                  setModalVisible(false);
-                  setSelectedImage(null);
-                  setActiveTab("details");
-                }}
+                onPress={handleCloseSubjectModal}
                 className="bg-gray-500 p-3 rounded-xl flex-1 items-center"
               >
                 <Text className="text-white font-inter_semibold text-base">
@@ -1909,7 +1983,7 @@ const SubjectsWeb: React.FC = () => {
       {/* Section Management Modal */}
       <Modal
         animationType="fade"
-        transparent={true}
+        transparent
         visible={sectionModalVisible}
         onRequestClose={() => setSectionModalVisible(false)}
       >
@@ -1928,19 +2002,18 @@ const SubjectsWeb: React.FC = () => {
             </Text>
 
             <ScrollView className="flex-1">
-              {/* Section Name */}
               <Text
                 className={`font-inter_semibold ml-1 mb-2 ${
                   isDarkMode ? "text-[#E0E0E0]" : "text-black"
                 }`}
               >
-                Section Name:
+                Section Name <Text className="text-red-500">*</Text>
               </Text>
               <TextInput
                 className={`font-inter_regular border rounded-lg p-3 mb-4 ${
                   isDarkMode
-                  ? "bg-[#2A2A2A] border-gray-600 text-white"
-                  : "bg-white border-gray-300 text-black"
+                    ? "bg-[#2A2A2A] border-gray-600 text-white"
+                    : "bg-white border-gray-300 text-black"
                 }`}
                 placeholder="Enter section name"
                 placeholderTextColor={isDarkMode ? "#9ca3af" : "#6b7280"}
@@ -1948,20 +2021,20 @@ const SubjectsWeb: React.FC = () => {
                 onChangeText={setNewSectionName}
               />
 
-              {/* Students Search and List */}
               <Text
                 className={`font-inter_semibold ml-1 mb-2 ${
                   isDarkMode ? "text-[#E0E0E0]" : "text-black"
                 }`}
               >
-                Students ({selectedStudents.length}):
+                Students ({selectedStudents.length}){" "}
+                <Text className="text-red-500">*</Text>
               </Text>
 
               <TextInput
                 className={`font-inter_regular border rounded-lg p-3 mb-3 ${
                   isDarkMode
-                  ? "bg-[#2A2A2A] border-gray-600 text-white"
-                  : "bg-white border-gray-300 text-black"
+                    ? "bg-[#2A2A2A] border-gray-600 text-white"
+                    : "bg-white border-gray-300 text-black"
                 }`}
                 placeholder="Search students..."
                 placeholderTextColor={isDarkMode ? "#9ca3af" : "#6b7280"}
@@ -1969,109 +2042,108 @@ const SubjectsWeb: React.FC = () => {
                 onChangeText={setStudentSearchQuery}
               />
 
-              {/* Selected Students */}
               {selectedStudents.length > 0 && (
-              <View className="mb-3">
-                <Text
-                  className={`text-xs font-inter_semibold mb-2 ${
-                    isDarkMode ? "text-[#9CA3AF]" : "text-[#6B7280]"
-                  }`}
-                >
-                  Selected Students:
-                </Text>
-                <View className="flex-row flex-wrap gap-2">
-                {allStudents
-                  .filter((s) => selectedStudents.includes(s._id))
-                  .map((student) => (
-                  <View
-                    key={student._id}
-                    className="bg-blue-500 px-3 py-1 rounded-full flex-row items-center gap-2"
-                  >
-                    <Text className="text-white text-xs font-inter_semibold">
-                    {student.middleName
-                      ? `${student.firstName} ${student.middleName} ${student.lastName}`
-                      : `${student.firstName} ${student.lastName}`}
-                    </Text>
-                    <TouchableOpacity
-                    onPress={() => handleToggleStudent(student._id)}
-                    >
-                    <Text className="text-white font-inter_bold">×</Text>
-                    </TouchableOpacity>
-                  </View>
-                  ))}
-                </View>
-              </View>
-              )}
-
-              {/* Available Students List */}
-              <View
-              className={`border rounded-lg max-h-[300px] ${
-                isDarkMode ? "border-gray-600" : "border-gray-300"
-              }`}
-              >
-              {filteredStudents.length > 0 ? (
-                <FlatList
-                  scrollEnabled={true}
-                  data={filteredStudents}
-                  keyExtractor={(item) => item._id}
-                  renderItem={({ item: student }) => (
-                    <TouchableOpacity
-                      onPress={() => handleToggleStudent(student._id)}
-                      className={`p-3 border-b flex-row items-center ${
-                        isDarkMode
-                        ? "bg-[#2A2A2A] border-gray-600"
-                        : "bg-white border-gray-200"
-                      }`}
-                    >
-                    <Checkbox
-                      value={selectedStudents.includes(student._id)}
-                      onValueChange={() =>
-                      handleToggleStudent(student._id)
-                      }
-                      color={
-                      selectedStudents.includes(student._id)
-                        ? "#3B82F6"
-                        : undefined
-                      }
-                    />
-                    <View className="ml-3 flex-1">
-                      <Text
-                        className={`font-inter_semibold ${
-                          isDarkMode
-                          ? "text-[#E0E0E0]"
-                          : "text-[#111827]"
-                        }`}
-                      >
-                        {student.middleName
-                          ? `${student.firstName} ${student.middleName} ${student.lastName}`
-                          : `${student.firstName} ${student.lastName}`}
-                      </Text>
-                      <Text
-                        className={`text-xs font-inter_regular ${
-                          isDarkMode ? "text-[#9CA3AF]" : "text-[#6B7280]"
-                        }`}
-                      >
-                        {student.email}
-                      </Text>
-                    </View>
-                    </TouchableOpacity>
-                  )}
-                />
-              ) : (
-                <View className="p-4 items-center">
+                <View className="mb-3">
                   <Text
-                    className={`font-inter_regular ${
-                    isDarkMode ? "text-gray-400" : "text-gray-600"
+                    className={`text-xs font-inter_semibold mb-2 ${
+                      isDarkMode ? "text-[#9CA3AF]" : "text-[#6B7280]"
                     }`}
                   >
-                    No students available
+                    Selected Students:
                   </Text>
+                  <View className="flex-row flex-wrap gap-2">
+                    {allStudents
+                      .filter((s) => selectedStudents.includes(s._id))
+                      .map((student) => (
+                        <View
+                          key={student._id}
+                          className="bg-blue-500 px-3 py-1 rounded-full flex-row items-center gap-2"
+                        >
+                          <Text className="text-white text-xs font-inter_semibold">
+                            {student.middleName
+                              ? `${student.firstName} ${student.middleName} ${student.lastName}`
+                              : `${student.firstName} ${student.lastName}`}
+                          </Text>
+                          <TouchableOpacity
+                            onPress={() => handleToggleStudent(student._id)}
+                          >
+                            <Text className="text-white font-inter_bold">×</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                  </View>
                 </View>
               )}
+
+              <View
+                className={`border rounded-lg max-h-[300px] ${
+                  isDarkMode ? "border-gray-600" : "border-gray-300"
+                }`}
+              >
+                {filteredStudents.length > 0 ? (
+                  <FlatList
+                    scrollEnabled
+                    data={filteredStudents}
+                    keyExtractor={(item) => item._id}
+                    renderItem={({ item: student }) => (
+                      <TouchableOpacity
+                        onPress={() => handleToggleStudent(student._id)}
+                        className={`p-3 border-b flex-row items-center ${
+                          isDarkMode
+                            ? "bg-[#2A2A2A] border-gray-600"
+                            : "bg-white border-gray-200"
+                        }`}
+                      >
+                        <Checkbox
+                          value={selectedStudents.includes(student._id)}
+                          onValueChange={() =>
+                            handleToggleStudent(student._id)
+                          }
+                          color={
+                            selectedStudents.includes(student._id)
+                              ? "#3B82F6"
+                              : undefined
+                          }
+                        />
+                        <View className="ml-3 flex-1">
+                          <Text
+                            className={`font-inter_semibold ${
+                              isDarkMode
+                                ? "text-[#E0E0E0]"
+                                : "text-[#111827]"
+                            }`}
+                          >
+                            {student.middleName
+                              ? `${student.firstName} ${student.middleName} ${student.lastName}`
+                              : `${student.firstName} ${student.lastName}`}
+                          </Text>
+                          <Text
+                            className={`text-xs font-inter_regular ${
+                              isDarkMode
+                                ? "text-[#9CA3AF]"
+                                : "text-[#6B7280]"
+                            }`}
+                          >
+                            {student.email}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    )}
+                  />
+                ) : (
+                  <View className="p-4 items-center">
+                    <Text
+                      className={`font-inter_regular ${
+                        isDarkMode ? "text-gray-400" : "text-gray-600"
+                      }`}
+                    >
+                      No students available
+                    </Text>
+                  </View>
+                )}
               </View>
             </ScrollView>
 
-            {/* Buttons */}
             <View className="flex-row mt-4 gap-2">
               <TouchableOpacity
                 onPress={handleSaveSection}

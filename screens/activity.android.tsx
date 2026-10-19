@@ -1,6 +1,6 @@
-import { Text, View, useColorScheme, ActivityIndicator, ScrollView, TouchableOpacity, TextInput, Modal, Platform, Alert, useWindowDimensions } from 'react-native'
+import { Text, View, useColorScheme, ActivityIndicator, ScrollView, TouchableOpacity, TextInput, Modal, Platform, Alert, useWindowDimensions, ToastAndroid } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import React, { useEffect, useState, useMemo, useCallback } from 'react'
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { StatusBar } from 'expo-status-bar'
 import { useDarkMode } from '@/contexts/DarkModeContext'
 import { Image } from 'expo-image'
@@ -14,8 +14,11 @@ import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import DropdownMobile, { DropdownMobileItem } from '@/components/DropdownMobile';
 import DownIcon from '@/assets/icons/down.svg';
+import NetworkBanner from '@/components/NetworkBanner.android';
 
 cssInterop(Image, { className: "style" });
+
+const ITEMS_PER_PAGE = 10;
 
 interface User {
   _id: string;
@@ -41,13 +44,12 @@ interface Subject {
   subjectImage?: string;
   teachers: Array<{
     teacher: User;
-    quarters: {
-      firstQuarter: boolean;
-      secondQuarter: boolean;
-      thirdQuarter: boolean;
-      fourthQuarter: boolean;
+    terms: {
+      1: boolean;
+      2: boolean;
+      3: boolean;
     };
-    isAssignedToAllQuarters: boolean;
+    isAssignedToAllTerms: boolean;
   }>;
   section: string;
   gradeLevel: string;
@@ -86,7 +88,7 @@ interface Activity {
   description?: string;
   visibleDate: string;
   deadline: string;
-  quarter: string;
+  term: string;
   points: number | null;
   createdBy: User;
   subject: Subject;
@@ -129,7 +131,8 @@ const ActivityAndroid: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
-  
+  const [networkError, setNetworkError] = useState(false);
+
   const [subjectFilter, setSubjectFilter] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('');
 
@@ -140,6 +143,16 @@ const ActivityAndroid: React.FC = () => {
   const [fileLoadError, setFileLoadError] = useState<{[key: string]: boolean}>({});
   const [showActivityModal, setShowActivityModal] = useState(false);
 
+  // Pagination state
+  const [displayedCount, setDisplayedCount] = useState(ITEMS_PER_PAGE);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const listRef = useRef<any>(null);
+
+  const isNetworkError = (err: any) =>
+    err?.message?.toLowerCase?.().includes('network') ||
+    err?.status === 0 ||
+    !err?.response;
+
   // Helper function to get teacher names from teachers array
   const getTeacherNames = (subject: Subject): string => {
     if (!subject.teachers || subject.teachers.length === 0) {
@@ -149,7 +162,7 @@ const ActivityAndroid: React.FC = () => {
     return subject.teachers.map((ta) => {
       const teacher = ta.teacher;
       if (!teacher) return 'Unknown';
-      
+
       return getUserFullName(teacher);
     }).join(', ');
   };
@@ -189,9 +202,9 @@ const ActivityAndroid: React.FC = () => {
         const title = activity.title.toLowerCase();
         const description = activity.description?.toLowerCase() || '';
         const subjectName = activity.subject.subjectName.toLowerCase();
-        
-        return title.includes(query) || 
-               description.includes(query) || 
+
+        return title.includes(query) ||
+               description.includes(query) ||
                subjectName.includes(query);
       });
     }
@@ -204,7 +217,7 @@ const ActivityAndroid: React.FC = () => {
       filtered = filtered.filter(activity => {
         const deadline = new Date(activity.deadline);
         const isGraded = activity.myGrade !== undefined;
-        
+
         switch (statusFilter) {
           case 'graded':
             return isGraded;
@@ -221,17 +234,24 @@ const ActivityAndroid: React.FC = () => {
     return filtered.sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime());
   }, [activities, searchQuery, subjectFilter, statusFilter]);
 
+  // Displayed (paginated) activities
+  const displayedActivities = useMemo(
+    () => filteredActivities.slice(0, displayedCount),
+    [filteredActivities, displayedCount]
+  );
+  const hasMore = displayedCount < filteredActivities.length;
+
   const getFileUrl = (fileUrl: string) => {
-    if (fileUrl.startsWith('https://storage.googleapis.com/') || 
+    if (fileUrl.startsWith('https://storage.googleapis.com/') ||
         fileUrl.startsWith('https://firebasestorage.googleapis.com/')) {
       return fileUrl;
     }
-    
+
     if (fileUrl.startsWith('/uploads/') || fileUrl.startsWith('uploads/')) {
       console.warn('Legacy file path detected:', fileUrl);
       return null;
     }
-    
+
     return fileUrl;
   };
 
@@ -245,10 +265,11 @@ const ActivityAndroid: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
+      setNetworkError(false);
 
       const subjectsResponse = await apiClient.get('/subjects');
       const allSubjects = subjectsResponse.data.data || [];
-      
+
       const studentSubjects = allSubjects.filter((subject: Subject) => {
         const isEnrolled = subject.students && subject.students.some((studentId: any) => {
           const id = typeof studentId === 'string' ? studentId : studentId._id;
@@ -264,16 +285,16 @@ const ActivityAndroid: React.FC = () => {
       }
 
       const allActivities: Activity[] = [];
-      
+
       for (const subject of studentSubjects) {
         try {
           const activitiesResponse = await apiClient.get<ActivityResponse>(`/subjects/${subject._id}/activities`);
-          
+
           if (activitiesResponse.data.success && activitiesResponse.data.data) {
             const activitiesWithSubject = activitiesResponse.data.data.map((activity: Activity) => ({
               ...activity,
               subject: subject,
-              quarter: activity.quarter || 'First Quarter',
+              term: activity.term || '1',
               myGrade: undefined
             }));
 
@@ -282,7 +303,7 @@ const ActivityAndroid: React.FC = () => {
               const subjectGrades = gradesResponse.data.data || [];
 
               const activitiesWithGrades = activitiesWithSubject.map((activity: Activity) => {
-                const myGrade = subjectGrades.find((grade: Grade) => 
+                const myGrade = subjectGrades.find((grade: Grade) =>
                   grade && grade.activity && grade.activity._id === activity._id
                 );
 
@@ -304,8 +325,10 @@ const ActivityAndroid: React.FC = () => {
       }
 
       setActivities(allActivities);
+      setDisplayedCount(ITEMS_PER_PAGE);
     } catch (err: any) {
       console.error('Error fetching student activities:', err);
+      if (isNetworkError(err)) setNetworkError(true);
       setError(err.response?.data?.message || err.message || 'Failed to fetch activities');
     } finally {
       setLoading(false);
@@ -315,6 +338,24 @@ const ActivityAndroid: React.FC = () => {
   useEffect(() => {
     fetchStudentActivities();
   }, [user]);
+
+  // Reset pagination when filters/search change
+  useEffect(() => {
+    setDisplayedCount(ITEMS_PER_PAGE);
+    try {
+      listRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+    } catch {}
+  }, [searchQuery, subjectFilter, statusFilter]);
+
+  // Infinite scroll
+  const loadMore = useCallback(() => {
+    if (isLoadingMore || !hasMore) return;
+    setIsLoadingMore(true);
+    setTimeout(() => {
+      setDisplayedCount(prev => Math.min(prev + ITEMS_PER_PAGE, filteredActivities.length));
+      setIsLoadingMore(false);
+    }, 300);
+  }, [isLoadingMore, hasMore, filteredActivities.length]);
 
   const pickDocuments = async () => {
     try {
@@ -358,7 +399,7 @@ const ActivityAndroid: React.FC = () => {
       }
     } catch (err) {
       console.log('Document picking cancelled or failed.', err);
-      Alert.alert('Error', 'Failed to pick documents.');
+      ToastAndroid.show('Failed to pick documents.', ToastAndroid.SHORT);
     }
   };
 
@@ -371,10 +412,10 @@ const ActivityAndroid: React.FC = () => {
 
     try {
       setIsSubmitting(true);
-      
+
       if (submissionFiles.length > 0) {
         const formData = new FormData();
-        
+
         submissionFiles.forEach((file, index) => {
           const mobileFile = file as DocumentPicker.DocumentPickerAsset;
           const fileToUpload = {
@@ -407,13 +448,13 @@ const ActivityAndroid: React.FC = () => {
           }
         );
       }
-      
+
       setSubmissionFiles([]);
-      
+
       const activityResponse = await apiClient.get(`/activities/${selectedActivity._id}`);
       const updatedActivity = activityResponse.data.data;
-      
-      setActivities(prevActivities => 
+
+      setActivities(prevActivities =>
         prevActivities.map(act => {
           if (act._id === selectedActivity._id) {
             return {
@@ -429,7 +470,7 @@ const ActivityAndroid: React.FC = () => {
 
       setSelectedActivity(prevActivity => {
         if (!prevActivity || prevActivity._id !== selectedActivity._id) return prevActivity;
-        
+
         return {
           ...prevActivity,
           ...updatedActivity,
@@ -437,14 +478,15 @@ const ActivityAndroid: React.FC = () => {
           myGrade: prevActivity.myGrade,
         };
       });
-      
+
       setShowActivityModal(false);
-      
-      Alert.alert('Success', 'Activity turned in successfully!');
+
+      ToastAndroid.show('Activity turned in successfully!', ToastAndroid.SHORT);
     } catch (error: any) {
       console.error('🚨 Turn In Activity error:', error);
+      if (isNetworkError(error)) setNetworkError(true);
       const msg = error.response?.data?.message || error.message || 'Failed to turn in activity.';
-      Alert.alert('Error', msg);
+      ToastAndroid.show(msg, ToastAndroid.SHORT);
     } finally {
       setIsSubmitting(false);
     }
@@ -456,14 +498,14 @@ const ActivityAndroid: React.FC = () => {
     try {
       setIsUndoingSubmission(true);
       await apiClient.post(`/activities/${selectedActivity._id}/undo-turn-in`);
-      
-      setActivities(prevActivities => 
+
+      setActivities(prevActivities =>
         prevActivities.map(act => {
           if (act._id === selectedActivity._id) {
-            const updatedSubmissions = act.submissions 
+            const updatedSubmissions = act.submissions
               ? act.submissions.filter(sub => sub.student._id !== user._id)
               : [];
-            
+
             return { ...act, submissions: updatedSubmissions };
           }
           return act;
@@ -472,21 +514,22 @@ const ActivityAndroid: React.FC = () => {
 
       setSelectedActivity(prevActivity => {
         if (!prevActivity || prevActivity._id !== selectedActivity._id) return prevActivity;
-        
-        const updatedSubmissions = prevActivity.submissions 
+
+        const updatedSubmissions = prevActivity.submissions
           ? prevActivity.submissions.filter(sub => sub.student._id !== user._id)
           : [];
-        
+
         return { ...prevActivity, submissions: updatedSubmissions };
       });
-      
+
       setSubmissionFiles([]);
-      
-      Alert.alert('Success', 'Activity turn-in undone successfully!');
+
+      ToastAndroid.show('Activity turn-in undone successfully!', ToastAndroid.SHORT);
     } catch (error: any) {
       console.error('🚨 Undo Turn In Activity error:', error);
+      if (isNetworkError(error)) setNetworkError(true);
       const msg = error.response?.data?.message || error.message || 'Failed to undo turn-in.';
-      Alert.alert('Error', msg);
+      ToastAndroid.show(msg, ToastAndroid.SHORT);
     } finally {
       setIsUndoingSubmission(false);
     }
@@ -498,15 +541,15 @@ const ActivityAndroid: React.FC = () => {
     const isGraded = activity.myGrade !== undefined;
 
     if (isGraded) return { status: 'graded', color: '#8B5CF6', text: 'Graded' };
-    
+
     if (deadline < now && activity.allowLateSubmissions) {
       return { status: 'late-allowed', color: '#F59E0B', text: 'Late OK' };
     }
-    
+
     if (deadline < now && !activity.allowLateSubmissions) {
       return { status: 'overdue', color: '#EF4444', text: 'Overdue' };
     }
-    
+
     return { status: 'active', color: '#10B981', text: 'Active' };
   };
 
@@ -530,7 +573,7 @@ const ActivityAndroid: React.FC = () => {
   };
 
   const getUserFullName = (user: User) => {
-    return user.middleName 
+    return user.middleName
       ? `${user.firstName} ${user.middleName} ${user.lastName}`
       : `${user.firstName} ${user.lastName}`;
   };
@@ -586,7 +629,7 @@ const ActivityAndroid: React.FC = () => {
 
   const renderAttachmentLink = (attachmentPath: string) => {
     const fileUrl = getFileUrl(attachmentPath);
-    
+
     if (!fileUrl || fileLoadError[fileUrl]) {
       return (
         <View
@@ -622,7 +665,7 @@ const ActivityAndroid: React.FC = () => {
                 presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
                 controlsColor: '#1877F2',
               });
-              
+
               if (result.type === 'cancel') {
                 await Linking.openURL(fileUrl);
               }
@@ -631,7 +674,7 @@ const ActivityAndroid: React.FC = () => {
             console.error('Failed to open file:', error);
             setFileLoadError(prev => ({ ...prev, [fileUrl]: true }));
             Alert.alert(
-              'File Error', 
+              'File Error',
               'Unable to open file. The file may not be available or you may not have an app installed to view this file type.',
               [{ text: 'OK' }]
             );
@@ -669,61 +712,85 @@ const ActivityAndroid: React.FC = () => {
   const canSubmit = (activity: Activity) => {
     const deadlinePassed = isDeadlinePassed(activity);
     const isGraded = activity.myGrade !== undefined;
-      
+
     if (isGraded) return false;
     if (!deadlinePassed) return true;
-      
+
     return activity.allowLateSubmissions;
   };
 
-  const sidebarListData = useMemo((): SidebarListItem[] => {
-    if (loading) {
-      return [{ id: 'loading', type: 'loading' }];
-    }
-    
-    if (filteredActivities.length === 0) {
-      return [{ id: 'empty', type: 'empty' }];
-    }
-    
-    return filteredActivities.map(activity => ({
-      id: activity._id,
-      type: 'activity' as SidebarItemType,
-      data: activity
-    }));
-  }, [loading, filteredActivities]);
+  // ---- List header (scrolls with the list now) ----
+  const listHeader = useMemo(() => (
+    <View className={isDarkMode ? 'bg-[#121212]' : 'bg-white'}>
+      <View className={`px-4 py-3 border-b ${isDarkMode ? 'border-gray-700 bg-[#121212]' : 'border-gray-200 bg-white'}`}>
+        <Text className={`font-inter_bold text-2xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+          My Activities
+        </Text>
+        <Text className={`font-inter_regular text-xs mt-1 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+          {displayedActivities.length} of {filteredActivities.length} activities
+        </Text>
+      </View>
 
-  const mainListData = useMemo((): MainListItem[] => {
-    if (error) {
-      return [{ id: 'error', type: 'empty' }];
-    }
-    
-    if (!selectedActivity) {
-      return [{ id: 'empty', type: 'empty' }];
-    }
-    
-    return [
-      { 
-        id: selectedActivity._id, 
-        type: 'activity' as MainItemType, 
-        data: selectedActivity 
-      },
-      { 
-        id: `${selectedActivity._id}-submission`, 
-        type: 'submission' as MainItemType, 
-        data: selectedActivity
-      }
-    ];
-  }, [error, selectedActivity]);
+      <View className={`px-4 py-3 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
+        <View className='mb-3'>
+          <TextInput
+            className={`border rounded-lg px-3 py-2 font-inter_regular ${
+              isDarkMode
+                ? 'border-gray-600 bg-[#1E1E1E] text-[#E0E0E0]'
+                : 'border-gray-300 bg-white text-black'
+            }`}
+            placeholder="Search activities..."
+            placeholderTextColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+        </View>
 
-  const sidebarKeyExtractor = useCallback((item: SidebarListItem) => item.id, []);
-  const mainKeyExtractor = useCallback((item: MainListItem) => item.id, []);
+        <View className='flex-row mb-2' style={{ gap: 8 }}>
+          <View className='flex-1'>
+            <DropdownMobile
+              label="Subject"
+              selectedValue={subjectFilter}
+              onValueChange={setSubjectFilter}
+              items={subjectOptions}
+              placeholder="All Subjects"
+              buttonRightIcon={DownIcon}
+            />
+          </View>
 
+          <View className='flex-1'>
+            <DropdownMobile
+              label="Status"
+              selectedValue={statusFilter}
+              onValueChange={setStatusFilter}
+              items={statusOptions}
+              placeholder="All Status"
+              buttonRightIcon={DownIcon}
+            />
+          </View>
+        </View>
+
+        {(searchQuery || subjectFilter || statusFilter) && (
+          <TouchableOpacity
+            onPress={clearFilters}
+            className='self-end'
+          >
+            <Text className='font-inter_medium text-sm text-blue-600'>
+              Clear Filters
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  ), [isDarkMode, searchQuery, subjectFilter, statusFilter, subjectOptions, statusOptions, displayedActivities.length, filteredActivities.length]);
+
+  // ---- Sidebar item renderer ----
   const renderSidebarItem = useCallback(({ item }: { item: SidebarListItem }) => {
     switch (item.type) {
       case 'loading':
         return (
-          <View 
-            className='w-full items-center rounded-lg p-3 mb-2'
+          <View
+            className='items-center rounded-lg p-3 mb-2 mx-4'
             style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5' }}
           >
             <ActivityIndicator size="small" color="#3B82F6" />
@@ -732,11 +799,11 @@ const ActivityAndroid: React.FC = () => {
             </Text>
           </View>
         );
-      
+
       case 'empty':
         return (
-          <View 
-            className='w-full items-center rounded-lg p-3 mb-2'
+          <View
+            className='items-center rounded-lg p-3 mb-2 mx-4'
             style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5' }}
           >
             <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
@@ -744,7 +811,7 @@ const ActivityAndroid: React.FC = () => {
             </Text>
           </View>
         );
-      
+
       case 'activity':
         if (!item.data) return null;
         const activity = item.data;
@@ -753,20 +820,19 @@ const ActivityAndroid: React.FC = () => {
         const subjectInitials = getSubjectInitials(activity.subject.subjectName);
         const mySubmission = getMySubmission(activity);
         const isSubmitted = mySubmission && mySubmission.status === 'submitted';
-        
+
         return (
           <TouchableOpacity
             onPress={() => handleActivitySelect(activity)}
-            className='w-full rounded-md p-3 mb-2'
-            style={{ 
+            className='rounded-md p-3 mb-2 mx-4'
+            style={{
               backgroundColor: isDarkMode ? '#1E1E1E' : '#F5F5F5',
               borderWidth: 2,
-              borderColor: statusInfo.color
+              borderColor: statusInfo.color,
             }}
             activeOpacity={0.7}
           >
             <View className='flex-row'>
-              {/* Subject Image or Icon */}
               {activity.subject.subjectImage ? (
                 <Image
                   source={{ uri: activity.subject.subjectImage }}
@@ -783,16 +849,16 @@ const ActivityAndroid: React.FC = () => {
                   </Text>
                 </View>
               )}
-              
+
               <View className='flex-1'>
-                <Text 
+                <Text
                   className={`font-inter_bold text-base ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}
                   numberOfLines={2}
                   ellipsizeMode='tail'
                 >
                   {activity.title}
                 </Text>
-                <Text 
+                <Text
                   className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}
                   numberOfLines={1}
                   ellipsizeMode='tail'
@@ -800,7 +866,7 @@ const ActivityAndroid: React.FC = () => {
                   {activity.subject.subjectName}
                 </Text>
                 <View className='flex-row items-center justify-between mt-1'>
-                  <Text 
+                  <Text
                     className={`font-inter_regular text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}
                   >
                     Due: {formatShortDate(activity.deadline)}
@@ -824,11 +890,81 @@ const ActivityAndroid: React.FC = () => {
             </View>
           </TouchableOpacity>
         );
-      
+
       default:
         return null;
     }
   }, [isDarkMode, getActivityStatus, getSubjectColor, getSubjectInitials, formatShortDate, handleActivitySelect, getMySubmission]);
+
+  const sidebarListData = useMemo((): SidebarListItem[] => {
+    if (loading) {
+      return [{ id: 'loading', type: 'loading' }];
+    }
+
+    if (filteredActivities.length === 0) {
+      return [{ id: 'empty', type: 'empty' }];
+    }
+
+    return displayedActivities.map(activity => ({
+      id: activity._id,
+      type: 'activity' as SidebarItemType,
+      data: activity
+    }));
+  }, [loading, filteredActivities.length, displayedActivities]);
+
+  const sidebarKeyExtractor = useCallback((item: SidebarListItem) => item.id, []);
+
+  // ---- List footer ----
+  const listFooter = useMemo(() => (
+    <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+      {isLoadingMore ? (
+        <>
+          <ActivityIndicator size="small" color="#3B82F6" />
+          <Text style={{
+            marginTop: 8,
+            fontSize: 12,
+            fontFamily: 'Inter-Regular',
+            color: isDarkMode ? '#9CA3AF' : '#6B7280',
+          }}>
+            Loading more activities...
+          </Text>
+        </>
+      ) : !hasMore && filteredActivities.length > ITEMS_PER_PAGE ? (
+        <Text style={{
+          fontSize: 12,
+          fontFamily: 'Inter-Regular',
+          color: isDarkMode ? '#6B7280' : '#9CA3AF',
+        }}>
+          All {filteredActivities.length} activities loaded
+        </Text>
+      ) : null}
+    </View>
+  ), [isLoadingMore, isDarkMode, hasMore, filteredActivities.length]);
+
+  const mainListData = useMemo((): MainListItem[] => {
+    if (error) {
+      return [{ id: 'error', type: 'empty' }];
+    }
+
+    if (!selectedActivity) {
+      return [{ id: 'empty', type: 'empty' }];
+    }
+
+    return [
+      {
+        id: selectedActivity._id,
+        type: 'activity' as MainItemType,
+        data: selectedActivity
+      },
+      {
+        id: `${selectedActivity._id}-submission`,
+        type: 'submission' as MainItemType,
+        data: selectedActivity
+      }
+    ];
+  }, [error, selectedActivity]);
+
+  const mainKeyExtractor = useCallback((item: MainListItem) => item.id, []);
 
   const renderMainItem = useCallback(({ item }: { item: MainListItem }) => {
     switch (item.type) {
@@ -842,7 +978,7 @@ const ActivityAndroid: React.FC = () => {
             </View>
           );
         }
-        
+
         return (
           <View className={`w-full items-center ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} rounded-lg p-8 mt-2`}>
             <Image
@@ -855,16 +991,16 @@ const ActivityAndroid: React.FC = () => {
             </Text>
           </View>
         );
-      
+
       case 'activity':
         if (!item.data) return null;
         const activity = item.data;
         const statusInfo = getActivityStatus(activity);
         const subjectColor = getSubjectColor(activity.subject._id);
         const subjectInitials = getSubjectInitials(activity.subject.subjectName);
-        
+
         return (
-          <View 
+          <View
             className={`w-full ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} p-4 mb-4 rounded-lg`}
             style={{
               borderLeftWidth: 8,
@@ -890,10 +1026,8 @@ const ActivityAndroid: React.FC = () => {
               {activity.title}
             </Text>
 
-            {/* Subject Information with Image */}
             <View className='mb-3 p-3 rounded-lg' style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F3F4F6' }}>
               <View className='flex-row items-center mb-2'>
-                {/* Subject Image or Icon */}
                 {activity.subject.subjectImage ? (
                   <Image
                     source={{ uri: activity.subject.subjectImage }}
@@ -910,7 +1044,7 @@ const ActivityAndroid: React.FC = () => {
                     </Text>
                   </View>
                 )}
-                
+
                 <View className='flex-1'>
                   <Text className={`font-inter_semibold text-base mb-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
                     {activity.subject.subjectName}
@@ -920,9 +1054,9 @@ const ActivityAndroid: React.FC = () => {
                   </Text>
                 </View>
               </View>
-              
+
               <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                Quarter: {activity.quarter} ({activity.subject.schoolYear})
+                Term: {activity.term} ({activity.subject.schoolYear})
               </Text>
               <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
                 Teacher: {getTeacherNames(activity.subject)}
@@ -1009,7 +1143,7 @@ const ActivityAndroid: React.FC = () => {
             )}
           </View>
         );
-      
+
       case 'submission':
         if (!item.data) return null;
         const activityData = item.data;
@@ -1018,13 +1152,13 @@ const ActivityAndroid: React.FC = () => {
         const deadlinePassed = isDeadlinePassed(activityData);
         const isGraded = activityData.myGrade !== undefined;
         const canStillSubmit = canSubmit(activityData);
-        
+
         return (
           <View className={`w-full ${isDarkMode ? 'bg-[#121212]' : 'bg-white'} p-4 rounded-lg`}>
             <Text className={`font-inter_bold text-xl mb-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
               Your Submission
             </Text>
-            
+
             <View className='mb-4 p-3 rounded-lg' style={{ backgroundColor: isDarkMode ? '#1E1E1E' : '#F3F4F6', borderTopWidth: 2, borderTopColor: isDarkMode ? '#374151' : '#D1D5DB' }}>
               {isSubmitted && mySubmission ? (
                 <View>
@@ -1148,7 +1282,7 @@ const ActivityAndroid: React.FC = () => {
                         <Text className={`font-inter_semibold text-sm mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
                           Attach Files (Optional):
                         </Text>
-                        
+
                         <TouchableOpacity
                           onPress={pickDocuments}
                           style={{
@@ -1255,149 +1389,98 @@ const ActivityAndroid: React.FC = () => {
             </View>
           </View>
         );
-      
+
       default:
         return null;
     }
   }, [isDarkMode, error, formatDate, getUserFullName, getActivityStatus, getMySubmission, isDeadlinePassed, submissionFiles, pickDocuments, removeFile, handleTurnInActivity, handleUndoTurnInActivity, isSubmitting, isUndoingSubmission, getTimeRemaining, getSubjectColor, getSubjectInitials, getTeacherNames]);
 
-  if (loading) {
+  if (loading && activities.length === 0) {
     return (
       <SafeAreaView className={`flex-1 ${isDarkMode ? 'bg-[#0A0A0A]' : 'bg-gray-50'} justify-center items-center`}>
         <ActivityIndicator size="large" color="#3B82F6" />
         <Text className={`font-inter_regular mt-4 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
           Loading activities...
         </Text>
+        <NetworkBanner
+          forceVisible={networkError}
+          onRetry={() => {
+            setNetworkError(false);
+            fetchStudentActivities();
+          }}
+        />
         <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       </SafeAreaView>
     );
   }
 
   return (
-    <View className={`flex-1 ${isDarkMode ? 'bg-[#0A0A0A]' : 'bg-gray-50'}`}>
-      <View className='flex-1'>
-        <View className={`px-4 py-3 border-b ${isDarkMode ? 'border-gray-700 bg-[#121212]' : 'border-gray-200 bg-white'}`}>
-          <Text className={`font-inter_bold text-2xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-            My Activities
-          </Text>
-        </View>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: isDarkMode ? '#0A0A0A' : '#F9FAFB' }}
+      edges={['left', 'right']}
+    >
+      {/* Entire screen scrolls as one unit */}
+      <FlashList
+        ref={listRef}
+        data={sidebarListData}
+        renderItem={renderSidebarItem}
+        keyExtractor={sidebarKeyExtractor}
+        showsVerticalScrollIndicator={false}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.5}
+        ListHeaderComponent={listHeader}
+        ListFooterComponent={listFooter}
+        contentContainerStyle={{ paddingBottom: 20, flexGrow: 1 }}
+        extraData={isDarkMode}
+        keyboardShouldPersistTaps="handled"
+      />
 
-        <View className={`px-4 py-3 ${isDarkMode ? 'bg-[#121212]' : 'bg-white'}`}>
-          <View className='mb-3'>
-            <TextInput
-              className={`border rounded-lg px-3 py-2 font-inter_regular ${
-                isDarkMode 
-                  ? 'border-gray-600 bg-[#1E1E1E] text-[#E0E0E0]' 
-                  : 'border-gray-300 bg-white text-black'
-              }`}
-              placeholder="Search activities..."
-              placeholderTextColor={isDarkMode ? '#9CA3AF' : '#6B7280'}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-            />
-          </View>
-
-          <View className='flex-row space-x-2 mb-2'>
-            <View className='flex-1'>
-              <DropdownMobile
-                label="Subject"
-                selectedValue={subjectFilter}
-                onValueChange={setSubjectFilter}
-                items={subjectOptions}
-                placeholder="All Subjects"
-                buttonRightIcon={DownIcon}
-              />
-            </View>
-
-            <View className='flex-1'>
-              <DropdownMobile
-                label="Status"
-                selectedValue={statusFilter}
-                onValueChange={setStatusFilter}
-                items={statusOptions}
-                placeholder="All Status"
-                buttonRightIcon={DownIcon}
-              />
-            </View>
-          </View>
-
-          {(searchQuery || subjectFilter || statusFilter) && (
-            <TouchableOpacity
-              onPress={clearFilters}
-              className='self-end'
-            >
-              <Text className='font-inter_medium text-sm text-blue-600'>
-                Clear Filters
+      {/* Activity details modal */}
+      <Modal
+        visible={showActivityModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowActivityModal(false)}
+      >
+        <View className={`flex-1 ${isDarkMode ? 'bg-[#0A0A0A]' : 'bg-gray-50'}`}>
+          <SafeAreaView className='flex-1'>
+            <View className={`px-4 py-3 border-b flex-row justify-between items-center ${isDarkMode ? 'border-gray-700 bg-[#121212]' : 'border-gray-200 bg-white'}`}>
+              <Text className={`font-inter_bold text-xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                Activity Details
               </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        <View className='flex-1 px-4'>
-          {loading ? (
-            <View className='flex-1 justify-center items-center'>
-              <ActivityIndicator size="large" color="#3B82F6" />
-              <Text className={`font-inter_regular text-center mt-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                Loading activities...
-              </Text>
-            </View>
-          ) : error ? (
-            <View className='flex-1 justify-center items-center bg-red-100 rounded-lg p-4 mx-4'>
-              <Text className='font-inter_regular text-red-800 text-center'>
-                {error}
-              </Text>
-            </View>
-          ) : (
-            <FlashList
-              data={sidebarListData}
-              renderItem={renderSidebarItem}
-              keyExtractor={sidebarKeyExtractor}
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ paddingVertical: 8 }}
-              extraData={isDarkMode}
-              estimatedItemSize={100}
-            />
-          )}
-        </View>
-
-        <Modal
-          visible={showActivityModal}
-          animationType="slide"
-          presentationStyle="pageSheet"
-          onRequestClose={() => setShowActivityModal(false)}
-        >
-          <View className={`flex-1 ${isDarkMode ? 'bg-[#0A0A0A]' : 'bg-gray-50'}`}>
-            <SafeAreaView className='flex-1'>
-              <View className={`px-4 py-3 border-b flex-row justify-between items-center ${isDarkMode ? 'border-gray-700 bg-[#121212]' : 'border-gray-200 bg-white'}`}>
-                <Text className={`font-inter_bold text-xl ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                  Activity Details
+              <TouchableOpacity
+                onPress={() => setShowActivityModal(false)}
+                className={`p-2 rounded-lg ${isDarkMode ? 'bg-gray-600' : 'bg-gray-200'}`}
+              >
+                <Text className={`font-inter_semibold ${isDarkMode ? 'text-white' : 'text-black'}`}>
+                  Close
                 </Text>
-                <TouchableOpacity
-                  onPress={() => setShowActivityModal(false)}
-                  className={`p-2 rounded-lg ${isDarkMode ? 'bg-gray-600' : 'bg-gray-200'}`}
-                >
-                  <Text className={`font-inter_semibold ${isDarkMode ? 'text-white' : 'text-black'}`}>
-                    Close
-                  </Text>
-                </TouchableOpacity>
-              </View>
+              </TouchableOpacity>
+            </View>
 
-              <FlashList
-                data={mainListData}
-                renderItem={renderMainItem}
-                keyExtractor={mainKeyExtractor}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 8 }}
-                extraData={isDarkMode}
-                estimatedItemSize={400}
-              />
-            </SafeAreaView>
-          </View>
-        </Modal>
+            <FlashList
+              data={mainListData}
+              renderItem={renderMainItem}
+              keyExtractor={mainKeyExtractor}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 8 }}
+              extraData={isDarkMode}
+            />
+          </SafeAreaView>
+        </View>
+      </Modal>
 
-        <StatusBar style={isDarkMode ? 'light' : 'dark'} />
-      </View>
-    </View>
+      {/* Animated network banner overlay */}
+      <NetworkBanner
+        forceVisible={networkError}
+        onRetry={() => {
+          setNetworkError(false);
+          fetchStudentActivities();
+        }}
+      />
+
+      <StatusBar style={isDarkMode ? 'light' : 'dark'} />
+    </SafeAreaView>
   );
 };
 

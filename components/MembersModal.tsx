@@ -9,6 +9,7 @@ import {
   TouchableOpacity,
   View,
   Platform,
+  ToastAndroid,
 } from 'react-native';
 import { useAuth } from '@/contexts/AuthContext';
 import React, { useState, useEffect } from 'react'
@@ -48,13 +49,12 @@ interface SubjectData {
   subjectName: string;
   teachers: Array<{
     teacher: User | string;
-    quarters: {
-      firstQuarter: boolean;
-      secondQuarter: boolean;
-      thirdQuarter: boolean;
-      fourthQuarter: boolean;
+    terms: {
+      "1": string,
+      "2": string,
+      "3": string,
     };
-    isAssignedToAllQuarters: boolean;
+    isAssignedToAllTerms: boolean;
   }>;
   students: User[] | string[];
   gradeLevel: string;
@@ -87,15 +87,17 @@ const MembersModal: React.FC<MembersModalProps> = ({
   const [bulkLoading, setBulkLoading] = useState<boolean>(false);
   const [teacherDetails, setTeacherDetails] = useState<Array<{
     teacher: User;
-    quarters: {
-      firstQuarter: boolean;
-      secondQuarter: boolean;
-      thirdQuarter: boolean;
-      fourthQuarter: boolean;
+    terms: {
+      1: boolean;
+      2: boolean;
+      3: boolean;
     };
-    isAssignedToAllQuarters: boolean;
+    isAssignedToAllTerms: boolean;
   }>>([]);
   const [teacherLoading, setTeacherLoading] = useState<boolean>(true);
+
+  // NEW: Bulk search query state
+  const [bulkSearchQuery, setBulkSearchQuery] = useState<string>('');
 
   // Constants for capacity management
   const MAX_STUDENTS = 30;
@@ -135,8 +137,8 @@ const MembersModal: React.FC<MembersModalProps> = ({
           const teacherResponse = await apiClient.get(`/users/${teacherId}`);
           return {
             teacher: teacherResponse.data.data,
-            quarters: teacherAssignment.quarters,
-            isAssignedToAllQuarters: teacherAssignment.isAssignedToAllQuarters,
+            terms: teacherAssignment.terms,
+            isAssignedToAllTerms: teacherAssignment.isAssignedToAllTerms,
           };
         } catch (error) {
           console.error(`Failed to fetch teacher ${teacherId}:`, error);
@@ -290,6 +292,13 @@ const MembersModal: React.FC<MembersModalProps> = ({
     }
   }, [subjectId]);
 
+  // NEW: Reset bulk search when modal closes
+  useEffect(() => {
+    if (!addStudentModalVisible) {
+      setBulkSearchQuery('');
+    }
+  }, [addStudentModalVisible]);
+
   const getAvailableStudents = () => {
     const enrolledIds = enrolledStudents.map(student => student._id);
     console.log('getAvailableStudents: enrolledIds =', enrolledIds);
@@ -297,6 +306,39 @@ const MembersModal: React.FC<MembersModalProps> = ({
     const available = allStudents.filter(student => !enrolledIds.includes(student._id));
     console.log('getAvailableStudents: available.length =', available.length);
     return available;
+  };
+
+  // NEW: Filter available students by search query
+  const getFilteredAvailableStudents = () => {
+    const available = getAvailableStudents();
+    if (!bulkSearchQuery.trim()) return available;
+    const query = bulkSearchQuery.toLowerCase().trim();
+    return available.filter(student =>
+      (student.firstName?.toLowerCase().includes(query) || false) ||
+      (student.lastName?.toLowerCase().includes(query) || false) ||
+      (student.email?.toLowerCase().includes(query) || false)
+    );
+  };
+
+  // NEW: Handle "Select All" for filtered students
+  const handleSelectAll = () => {
+    const filtered = getFilteredAvailableStudents();
+    const selectable = filtered.slice(0, availableSlots);
+    const allIds = selectable.map(s => s._id);
+    const alreadyAllSelected = allIds.every(id => selectedStudents.includes(id));
+    if (alreadyAllSelected && allIds.length === selectedStudents.length) {
+      setSelectedStudents([]);
+    } else {
+      setSelectedStudents(allIds);
+    }
+  };
+
+  // Check if all filtered students are selected (for "Select All" checkbox state)
+  const areAllFilteredSelected = () => {
+    const filtered = getFilteredAvailableStudents();
+    const selectable = filtered.slice(0, availableSlots);
+    if (selectable.length === 0) return false;
+    return selectable.every(s => selectedStudents.includes(s._id));
   };
 
   const handleAddSingleStudent = async () => {
@@ -328,7 +370,7 @@ const MembersModal: React.FC<MembersModalProps> = ({
       if (Platform.OS === 'web') {
         window.alert('Success: Student enrolled successfully');
       } else {
-        Alert.alert('Success', 'Student enrolled successfully');
+        ToastAndroid.show('Student enrolled successfully', ToastAndroid.SHORT);
       }
       setEmail('');
       setAddStudentModalVisible(false);
@@ -339,7 +381,7 @@ const MembersModal: React.FC<MembersModalProps> = ({
       if (Platform.OS === 'web') {
         window.alert(`Error: ${errorMessage}`);
       } else {
-        Alert.alert('Error', errorMessage);
+        ToastAndroid.show(errorMessage, ToastAndroid.SHORT);
       }
     } finally {
       setAdding(false);
@@ -406,7 +448,7 @@ const MembersModal: React.FC<MembersModalProps> = ({
       if (Platform.OS === 'web') {
         window.alert(`Success: ${message}`);
       } else {
-        Alert.alert('Success', message);
+        ToastAndroid.show(message, ToastAndroid.SHORT);
       }
       
       setSelectedStudents([]);
@@ -418,7 +460,7 @@ const MembersModal: React.FC<MembersModalProps> = ({
       if (Platform.OS === 'web') {
         window.alert(`Error: ${errorMessage}`);
       } else {
-        Alert.alert('Error', errorMessage);
+        ToastAndroid.show(errorMessage, ToastAndroid.SHORT);
       }
     } finally {
       setBulkLoading(false);
@@ -455,12 +497,12 @@ const MembersModal: React.FC<MembersModalProps> = ({
               setDeleting(true);
               try {
                 await apiClient.put(`/subjects/${subjectId}/unenroll-student/${studentId}`);
-                Alert.alert('Success', 'Student removed successfully');
+                ToastAndroid.show('Student removed successfully', ToastAndroid.SHORT);
                 fetchEnrolledStudents();
                 fetchActiveStudents();
               } catch (error: any) {
                 const errorMessage = error.response?.data?.message || 'Failed to remove student';
-                Alert.alert('Error', errorMessage);
+                ToastAndroid.show(errorMessage, ToastAndroid.SHORT);
               } finally {
                 setDeleting(false);
               }
@@ -588,17 +630,16 @@ const MembersModal: React.FC<MembersModalProps> = ({
             {teacherDetails.map((teacherAssignment, index) => {
               const teacher = teacherAssignment.teacher;
               
-              // Build quarter info string
-              let quarterInfo = '';
-              if (!teacherAssignment.isAssignedToAllQuarters) {
-                const quarters = [];
-                if (teacherAssignment.quarters.firstQuarter) quarters.push('1st');
-                if (teacherAssignment.quarters.secondQuarter) quarters.push('2nd');
-                if (teacherAssignment.quarters.thirdQuarter) quarters.push('3rd');
-                if (teacherAssignment.quarters.fourthQuarter) quarters.push('4th');
+              // Build term info string
+              let termInfo = '';
+              if (!teacherAssignment.isAssignedToAllTerms) {
+                const terms = [];
+                if (teacherAssignment.terms["1"]) terms.push('1st Term');
+                if (teacherAssignment.terms["2"]) terms.push('2nd Term');
+                if (teacherAssignment.terms["3"]) terms.push('3rd Term');
                 
-                if (quarters.length > 0) {
-                  quarterInfo = ` (${quarters.join(', ')} Quarter${quarters.length > 1 ? 's' : ''})`;
+                if (terms.length > 0) {
+                  termInfo = ` (${terms.join(', ')})`;
                 }
               }
 
@@ -634,9 +675,9 @@ const MembersModal: React.FC<MembersModalProps> = ({
                         ? `${teacher.firstName} ${teacher.middleName} ${teacher.lastName}`
                         : `${teacher.firstName} ${teacher.lastName}`
                     }
-                    {quarterInfo && (
+                    {termInfo && (
                       <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                        {quarterInfo}
+                        {termInfo}
                       </Text>
                     )}
                     </Text>
@@ -818,48 +859,102 @@ const MembersModal: React.FC<MembersModalProps> = ({
               </View>
             )}
 
-            {/* Add Bulk Students Tab */}
+            {/* Add Bulk Students Tab - WITH FILTERS */}
             {activeTab === 'add_bulk' && (
-              <View >
+              <View>
+                {/* NEW: Search input */}
+                <View style={{ marginBottom: 12 }}>
+                  <Text className={`font-inter_semibold mb-1 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                    Search Students
+                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <TextInput
+                      className={`font-inter_regular flex-1 ${isDarkMode ? 'bg-[#1E1E1E] text-[#E0E0E0]' : 'bg-white text-black'}`}
+                      style={{
+                        borderWidth: 1,
+                        borderColor: isDarkMode ? '#555' : '#DDD',
+                        borderRadius: 8,
+                        padding: 10,
+                        marginRight: 8,
+                      }}
+                      placeholder="Search by name or email..."
+                      placeholderTextColor={isDarkMode ? '#9ca3af' : '#6b7280'}
+                      value={bulkSearchQuery}
+                      onChangeText={setBulkSearchQuery}
+                      editable={!isAtCapacity}
+                    />
+                    {bulkSearchQuery.length > 0 && (
+                      <TouchableOpacity
+                        onPress={() => setBulkSearchQuery('')}
+                        style={{ padding: 6 }}
+                      >
+                        <Text style={{ color: '#EF4444', fontFamily: 'Inter-Medium' }}>Clear</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+
+                {/* NEW: Select All checkbox */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                  <Checkbox
+                    value={areAllFilteredSelected() && selectedStudents.length > 0}
+                    onValueChange={handleSelectAll}
+                    color={areAllFilteredSelected() ? '#A78BFA' : undefined}
+                    disabled={isAtCapacity || getFilteredAvailableStudents().length === 0}
+                  />
+                  <Text className={`font-inter_regular ml-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                    Select All (filtered)
+                  </Text>
+                  <Text className={`font-inter_regular ml-auto text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                    {selectedStudents.length} selected
+                  </Text>
+                </View>
+
                 <Text className={`font-inter_semibold mb-2 ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                  Available Students:
+                  Available Students ({getFilteredAvailableStudents().length}):
                 </Text>
                 <ScrollView style={{ maxHeight: 300, marginBottom: 16 }}>
-                  {getAvailableStudents().map((student) => (
-                    <View
-                      key={student._id}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        padding: 8,
-                        backgroundColor: isDarkMode ? '#1A1A1A' : '#F5F5F5',
-                        marginBottom: 8,
-                        borderRadius: 8,
-                      }}
-                    >
-                      <Checkbox
-                        value={selectedStudents.includes(student._id)}
-                        onValueChange={() => toggleStudentSelection(student._id)}
-                        color={selectedStudents.includes(student._id) ? '#A78BFA' : undefined}
-                        disabled={isAtCapacity}
-                      />
-                      <Image
-                        style={{ width: 32, height: 32, borderRadius: 16, marginHorizontal: 8 }}
-                        source={student.profilePicture ? { uri: student.profilePicture } : require('@/assets/images/sample_profile_picture.png')}
-                      />
-                      <View className='flex-1'>
-                        <Text className={`font-inter_semibold ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
-                          {student.middleName
-                            ? `${student.firstName} ${student.middleName} ${student.lastName}`
-                            : `${student.firstName} ${student.lastName}`
-                        }
-                        </Text>
-                        <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                          {student.email}
-                        </Text>
+                  {getFilteredAvailableStudents().length > 0 ? (
+                    getFilteredAvailableStudents().map((student) => (
+                      <View
+                        key={student._id}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          padding: 8,
+                          backgroundColor: isDarkMode ? '#1A1A1A' : '#F5F5F5',
+                          marginBottom: 8,
+                          borderRadius: 8,
+                        }}
+                      >
+                        <Checkbox
+                          value={selectedStudents.includes(student._id)}
+                          onValueChange={() => toggleStudentSelection(student._id)}
+                          color={selectedStudents.includes(student._id) ? '#A78BFA' : undefined}
+                          disabled={isAtCapacity}
+                        />
+                        <Image
+                          style={{ width: 32, height: 32, borderRadius: 16, marginHorizontal: 8 }}
+                          source={student.profilePicture ? { uri: student.profilePicture } : require('@/assets/images/sample_profile_picture.png')}
+                        />
+                        <View className='flex-1'>
+                          <Text className={`font-inter_semibold ${isDarkMode ? 'text-[#E0E0E0]' : 'text-black'}`}>
+                            {student.middleName
+                              ? `${student.firstName} ${student.middleName} ${student.lastName}`
+                              : `${student.firstName} ${student.lastName}`
+                          }
+                          </Text>
+                          <Text className={`font-inter_regular text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                            {student.email}
+                          </Text>
+                        </View>
                       </View>
-                    </View>
-                  ))}
+                    ))
+                  ) : (
+                    <Text className={`font-inter_regular text-center ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                      No students match your search.
+                    </Text>
+                  )}
                 </ScrollView>
                 <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
                   <TouchableOpacity

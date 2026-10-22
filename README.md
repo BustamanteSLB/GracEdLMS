@@ -2,7 +2,7 @@
 
 **GracEd LMS** (GracEd Learning Management System) is a cross-platform learning management app for Grace Community Christian School. It helps administrators, teachers, and students manage school life in one place such as subjects, activities, quizzes, grades, announcements, calendars, and user accounts.
 
-This app is built with **Expo SDK 54** (React Native + Expo Router) and runs on **web** and **Android**. The API is a Node.js / Express backend with MongoDB, plus Firebase for file storage. Both the backend and the web frontend are deployed in DigitalOcean with Cloudflare DNS.
+This app is built with **Expo SDK 54** (React Native + Expo Router) and runs on **web** and **Android**. The API is a Node.js / Express backend with MongoDB, plus Firebase for file storage. Both the backend and the web frontend are deployed in DigitalOcean with a [Cloudflare domain](https://www.cloudflare.com/domains/).
 
 ---
 
@@ -14,6 +14,7 @@ This app is built with **Expo SDK 54** (React Native + Expo Router) and runs on 
 - A MongoDB database (local or hosted, e.g. MongoDB Atlas)
 - Firebase project credentials (for uploads / storage)
 - OpenAI API key (used for quiz-related AI features)
+- (Optional) A [Cloudflare domain](https://www.cloudflare.com/domains/). This comes with a free SSL certificate plus a few security features as well
 
 ---
 
@@ -134,10 +135,27 @@ Then choose how to open the app:
 
 Make sure `EXPO_PUBLIC_API_URL` points at a reachable backend before signing in.
 
+### Test Accounts:
+1. Admin:
+   ```
+   Username/User ID: admin
+   Password: root_admin
+   ```
+2. Teacher:
+   ```
+   Username/User ID: teacher1
+   Password: Teacher1
+   ```
+3. Student:
+   ```
+   Username/User ID: 2025-154651
+   Password: Chowchow_25
+   ```
+
 ## (Optional) Upload backend to a separate Github repository to deploy in DigitalOcean
 1. Create a new GitHub repository just for your backend files (e.g., [GracEdLMS-backend](https://github.com/BustamanteSLB/GracEdLMS-backend)), then upload all your backend files there. Do NOT (under any circumstances) upload your .env because this contains all the sensitive keys.
-2. If you are a student, make sure you have already applied for GitHub Education and have it's perks.
-3. If you are a student, sign up to DigitalOcean with your GitHub account that has GitHub Education perks active. This will give you free $200 credits for DigitalOcean that will allow you to deploy both web frontend and the backend for free for a year (if your credits aren't all used up).
+2. If you are a student/teacher, make sure you have already applied for GitHub Education and have it's perks.
+3. If you are a student/teacher, sign up to DigitalOcean with your GitHub account that has GitHub Education perks active. This will give you free $200 credits for DigitalOcean that will allow you to deploy both web frontend and the backend for free for a year (if your credits aren't all used up).
 4. In DigitalOcean, click `Create App` then select the backend repository (e.g., [GracEdLMS-backend](https://github.com/BustamanteSLB/GracEdLMS-backend)).
 5. Select the branch you want to deploy (usually main) then make sure auto-deploy is checked.
 6. Make sure the details are correct first. Choose the optimal datacenter region, and edit the deployment settings and HTTP routes if necessary. Add all the keys and values from your backend's .env file here as well.
@@ -149,8 +167,8 @@ Make sure `EXPO_PUBLIC_API_URL` points at a reachable backend before signing in.
 2. Wait for the dist folder to appear. Generating static HTML, CSS, and JS web assets for your web application may take a while.
 3. Once it's done, look at your project directory for a `dist` folder.
 4. Create a new GitHub repository just for your web static files (e.g., [GracEdLMS-web](https://github.com/BustamanteSLB/GracEdLMS-web)), then upload all your web static files there.
-5. If you are a student, make sure you have already applied for GitHub Education and have it's perks.
-6. If you are a student, sign up to DigitalOcean with your GitHub account that has GitHub Education perks active. This will give you free $200 credits for DigitalOcean that will allow you to deploy both web frontend and the backend for free for a year (if your credits aren't all used up).
+5. If you are a student/teacher, make sure you have already applied for GitHub Education and have it's perks.
+6. If you are a student/teacher, sign up to DigitalOcean with your GitHub account that has GitHub Education perks active. This will give you free $200 credits for DigitalOcean that will allow you to deploy both web frontend and the backend for free for a year (if your credits aren't all used up).
 7. In DigitalOcean, click `Create App` then select the static web repository (e.g., [GracEdLMS-web](https://github.com/BustamanteSLB/GracEdLMS-web)).
 8. Select the branch you want to deploy (usually main) then make sure auto-deploy is checked.
 9. Deploying the static web is usually free. Make sure the details are correct first. Choose the optimal datacenter region, and edit the deployment settings and HTTP routes if necessary. For the environmental variables and App-Level Environment Variables, add the `EXPO_PUBLIC_API_URL` key and the value should be the link for your backend + /api/v1 (e.g., `https://api.domain.xyz/api/v1`)
@@ -196,6 +214,11 @@ Make sure `EXPO_PUBLIC_API_URL` points at a reachable backend before signing in.
 5. Build your apk. Since we want the production build, run: `eas build -p android`. If prompted to generate an Android Keystore or Application ID, press Y or Enter to allow Expo to manage it automatically
 6. Once the build finishes, the terminal will provide a QR code and a download link to fetch your completed .apk file.
 7. Go to your `Expo Go Dashboard > Select Project (GracEdLMS) > Environmental Variables`. Click `Add variables` then add the all the keys from the .env files on your root folder and backend folder or import both of those files for easy adding. For `EXPO_PUBLIC_API_URL`, the value should be your backend domain's link (e.g., `https://api.domain.xyz/api/v1`)
+
+## Run out of DigitalOcean credits?
+After a year or less, your free $200 credits have either run out or expired. At this point, you have to pay for the credits yourself. In the `Accounts > Billing` section of your DigitalOcean account, you will start to see the estimated balance of your site for the current month. Payment options are PayPal, Crypto, AliPay, and credit/debit cards only (Mastercard or VISA).
+
+If you don't pay in time, your deployed website (frontend and backend) will stop working altogether. If this happens, you have to pay then redeploy both sites again.
 
 ---
 
